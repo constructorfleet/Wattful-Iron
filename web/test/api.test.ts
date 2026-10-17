@@ -1,16 +1,23 @@
 import { describe, expect, it, vi } from 'vitest'
-import { compareProjectRevisions, createProject, getManufacturingArchive, getManufacturingPreflight, getManufacturingProfiles, getProjectFile, getProjectHistory, restoreProjectRevision, saveProjectFile, type Project } from '../src/api'
+import { compareProjectRevisions, createProject, getManufacturingArchive, getManufacturingPreflight, getManufacturingProfiles, getProjectFile, getProjectHistory, listProjectTemplates, restoreProjectRevision, saveProjectFile, type Project } from '../src/api'
 
 describe('project API', () => {
   it('creates a named project and returns the server project record', async () => {
     const project: Project = { id: 'p-1', name: 'LED board', entrypoint: 'index.tsx', revision: 'r1' }
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(project), { status: 201 }))
 
-    await expect(createProject('LED board', fetcher)).resolves.toEqual(project)
+    await expect(createProject('LED board', 'led-indicator', fetcher)).resolves.toEqual(project)
     expect(fetcher).toHaveBeenCalledWith('/api/projects', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ name: 'LED board' }),
+      body: JSON.stringify({ name: 'LED board', templateId: 'led-indicator' }),
     }))
+  })
+
+  it('lists built-in project templates', async () => {
+    const examples = [{ id: 'led-indicator', name: 'Connected LED indicator', description: 'A powered LED circuit.' }]
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(examples), { status: 200 }))
+    await expect(listProjectTemplates(fetcher)).resolves.toEqual(examples)
+    expect(fetcher).toHaveBeenCalledWith('/api/examples', {})
   })
 
   it('loads source together with the revision needed for optimistic writes', async () => {

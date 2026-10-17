@@ -16,19 +16,22 @@ type ProjectState = { project: ProjectData; preview?: unknown }
 type ProjectSnapshot = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes: number; files: Record<string, string> }
 type ServerEvent = "project" | "file" | "build.status" | "build.ready" | "build.failed"
 type BuildFn = (projectDir: string, entrypoint: string) => Promise<unknown>
-type AppOptions = { projectsDir?: string; buildCircuit?: BuildFn; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string }
+type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string }
 
-const starter = `export default () => (
-  <board width="20mm" height="20mm" routingDisabled>
-    <schematicsheet name="Main" displayName="Main" sheetIndex={0}>
-      <schematictext text="New circuit" schX={0} schY={0} />
-    </schematicsheet>
-  </board>
-)`
+const templates = [
+  { id: "blank-board", name: "Blank starter", description: "An empty board ready for your circuit." },
+  { id: "manufacturing-board", name: "Manufacturing preview", description: "A small board with components and mounting holes." },
+  { id: "footprint-comparison", name: "Footprint comparison", description: "Compare common resistor package sizes." },
+  { id: "mounting-pattern", name: "Mounting pattern", description: "Explore component placement and mounting holes." },
+  { id: "led-indicator", name: "Connected LED indicator", description: "A powered LED circuit with named nets." },
+  { id: "voltage-divider", name: "Filtered voltage divider", description: "A connected divider with a low-pass capacitor." },
+] as const
+
 const HISTORY_RETENTION = 50
 
 class ProjectService {
   readonly root: string
+  readonly examplesDir: string
   readonly buildCircuit: BuildFn
   readonly watchFiles: boolean
   readonly eventClients = new Map<string, Set<Response>>()
@@ -48,6 +51,7 @@ class ProjectService {
 
   constructor(options: AppOptions) {
     this.root = path.resolve(options.projectsDir ?? process.env.PROJECTS_DIR ?? "/data/projects")
+    this.examplesDir = path.resolve(options.examplesDir ?? path.join(process.cwd(), "examples"))
     this.buildCircuit = options.buildCircuit ?? runTscircuitBuild
     this.watchFiles = options.watchFiles ?? true
     this.appNodeModules = path.resolve(process.cwd(), "node_modules")
@@ -71,15 +75,18 @@ class ProjectService {
     return [...this.states.values()].map(({ project }) => project)
   }
 
-  async create(name: string) {
+  async create(name: string, templateId?: string) {
+    const template = templateId ? templates.find((item) => item.id === templateId) : undefined
+    if (templateId && !template) throw badRequest("Unknown project template")
+    const source = await readFile(path.join(this.examplesDir, template?.id ?? "blank-board", "index.circuit.tsx"), "utf8")
     const id = randomUUID()
     const dir = this.projectDir(id)
     await mkdir(path.join(dir, ".workbench"), { recursive: true })
     const project: ProjectData = { id, name: name.trim(), entrypoint: "index.circuit.tsx", revision: newRevision() }
-    await writeFile(path.join(dir, project.entrypoint), starter)
+    await writeFile(path.join(dir, project.entrypoint), source)
     const projectPackage = JSON.stringify({ name: safePackageName(name), private: true, dependencies: { tscircuit: "0.0.2930" } }, null, 2) + "\n"
     await writeFile(path.join(dir, "package.json"), projectPackage)
-    this.ownFileHashes.set(path.join(dir, project.entrypoint), digest(starter))
+    this.ownFileHashes.set(path.join(dir, project.entrypoint), digest(source))
     this.ownFileHashes.set(path.join(dir, "package.json"), digest(projectPackage))
     await this.linkNodeModules(dir)
     const state: ProjectState = { project }
@@ -519,11 +526,14 @@ export function createApp(options: AppOptions = {}): Express {
   app.get("/api/projects", async (_request, response, next) => {
     try { response.json(await service.list()) } catch (error) { next(error) }
   })
+  app.get("/api/examples", (_request, response) => response.json(templates))
   app.post("/api/projects", async (request, response, next) => {
     try {
       const name = typeof request.body?.name === "string" ? request.body.name.trim() : ""
       if (!name || name.length > 100) throw badRequest("Project name must contain 1 to 100 characters")
-      response.status(201).json(await service.create(name))
+      const templateId = request.body?.templateId
+      if (templateId !== undefined && typeof templateId !== "string") throw badRequest("Project template must be a string")
+      response.status(201).json(await service.create(name, templateId))
     } catch (error) { next(error) }
   })
   app.get("/api/projects/:id", async (request, response, next) => {

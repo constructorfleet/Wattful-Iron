@@ -48,6 +48,9 @@ button { color: inherit; cursor: pointer; }
 .create-form label { display: block; margin-bottom: 7px; color: #b4bcc5; font-size: 11px; }
 .create-form input { width: 100%; height: 32px; padding: 0 8px; color: var(--text); outline: none; border: 1px solid #414b55; border-radius: 4px; background: #12161a; font-size: 12px; }
 .create-form input:focus { border-color: var(--accent-dark); }
+.create-form select { width: 100%; height: 32px; padding: 0 8px; color: var(--text); border: 1px solid #414b55; border-radius: 4px; background: #12161a; font-size: 12px; }
+.create-form select:focus { outline: none; border-color: var(--accent-dark); }
+.template-description { display: block; margin-top: 6px; color: #7d8792; font-size: 10px; line-height: 1.5; }
 .form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 11px; }
 .quiet-button { padding: 5px; color: #98a2ad; border: 0; background: transparent; font-size: 11px; }
 .small-primary { min-height: 28px; padding: 0 10px; font-size: 11px; }

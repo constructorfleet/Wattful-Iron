@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
@@ -10,18 +10,15 @@ test("example circuits build with their expected PCB geometry and electrical rou
   const projectsDir = await mkdtemp(path.join(tmpdir(), "circuits-examples-http-"))
   const app = createApp({ projectsDir, watchFiles: false })
   try {
-    for (const example of ["footprint-comparison", "mounting-pattern", "led-indicator", "voltage-divider"]) {
-      const source = await readFile(path.resolve(`examples/${example}/index.circuit.tsx`), "utf8")
-      const { body: project } = await request(app).post("/api/projects").send({ name: example }).expect(201)
-      const currentFile = await request(app).get(`/api/projects/${project.id}/files`).query({ path: project.entrypoint }).expect(200)
-      const saved = await request(app).put(`/api/projects/${project.id}/files`).query({ path: project.entrypoint })
-        .set("If-Match", currentFile.body.revision)
-        .send({ content: source, revision: currentFile.body.revision }).expect(200)
-      const built = await waitForBuild(app, project.id, saved.body.revision)
+    for (const example of ["blank-board", "manufacturing-board", "footprint-comparison", "mounting-pattern", "led-indicator", "voltage-divider"]) {
+      const { body: project } = await request(app).post("/api/projects")
+        .send({ name: example, templateId: example }).expect(201)
+      const built = await waitForBuild(app, project.id, project.revision)
       const circuit = await request(app).get(`/api/projects/${project.id}/preview`).query({ kind: "pcb" }).expect(200)
       const elements = circuit.body.circuitJson as Array<{ type: string }>
       assert.ok(elements.some((element) => element.type === "pcb_board"), `${example} has no PCB board`)
-      assert.ok(elements.filter((element) => element.type === "pcb_component").length >= 3, `${example} has too few placed components`)
+      const minComponents = example === "blank-board" ? 0 : example === "manufacturing-board" ? 2 : 3
+      assert.ok(elements.filter((element) => element.type === "pcb_component").length >= minComponents, `${example} has too few placed components`)
       assert.equal(built.status, "ready")
       if (example === "led-indicator" || example === "voltage-divider") {
         const components = elements.filter((element) => element.type === "source_component") as Array<{ name?: string }>
