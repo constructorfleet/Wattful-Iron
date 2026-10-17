@@ -23,6 +23,13 @@ export type ProjectEvent =
 
 export type Preview = { revision: string; kind: PreviewKind; circuitJson: unknown }
 export type PreviewKind = 'schematic' | 'pcb' | '3d'
+export type Simulation = {
+  revision: string
+  status: 'complete' | 'failed' | 'not_configured'
+  experiments: Array<{ id: string; name: string; type: string }>
+  signals: Array<{ id: string; name: string; unit: 'V' | 'A'; netId?: string; samples: Array<{ x: number; y: number }> }>
+  diagnostics: Array<{ message: string; severity: 'error' }>
+}
 type Fetcher = typeof fetch
 
 async function request<T>(url: string, init: RequestInit = {}, fetcher: Fetcher = fetch): Promise<T> {
@@ -66,6 +73,18 @@ export const getPreview = (id: string, kind: PreviewKind, fetcher?: Fetcher) => 
   undefined,
   fetcher,
 )
+
+export const getSimulation = (id: string, fetcher?: Fetcher) => request<Simulation>(`/api/projects/${encodeURIComponent(id)}/simulation`, undefined, fetcher)
+
+export async function getManufacturingArchive(id: string, fetcher: Fetcher = fetch) {
+  const response = await fetcher(`/api/projects/${encodeURIComponent(id)}/manufacturing.zip`)
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as { error?: string; preflight?: { checks?: Array<{ status: string; message: string }> } }
+    const failures = payload.preflight?.checks?.filter((check) => check.status === 'fail').map((check) => check.message) ?? []
+    throw new Error([payload.error || `Manufacturing export failed (${response.status})`, ...failures].join(': '))
+  }
+  return response.blob()
+}
 
 export function subscribeToProject(id: string, onEvent: (event: ProjectEvent) => void): () => void {
   const source = new EventSource(`/api/projects/${encodeURIComponent(id)}/events`)

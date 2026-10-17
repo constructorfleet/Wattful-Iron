@@ -4,6 +4,9 @@ import { access, lstat, mkdir, readFile, readdir, rename, rm, symlink, writeFile
 import path from "node:path"
 import express, { type Express, type Request, type Response } from "express"
 import chokidar, { type FSWatcher } from "chokidar"
+import { mountMcp } from "./mcp.js"
+import { createGerberArchive, mountManufacturingRoutes } from "./manufacturing.js"
+import { getSimulationResults } from "./simulation.js"
 
 export type Diagnostic = { severity: "error" | "warning" | "info"; message: string; path?: string; line?: number; column?: number }
 type BuildStatus = "idle" | "compiling" | "ready" | "failed"
@@ -12,7 +15,7 @@ type ProjectData = { id: string; name: string; entrypoint: string; revision: str
 type ProjectState = { project: ProjectData; preview?: unknown }
 type ServerEvent = "project" | "file" | "build.status" | "build.ready" | "build.failed"
 type BuildFn = (projectDir: string, entrypoint: string) => Promise<unknown>
-type AppOptions = { projectsDir?: string; buildCircuit?: BuildFn; watchFiles?: boolean; webDist?: string }
+type AppOptions = { projectsDir?: string; buildCircuit?: BuildFn; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string }
 
 const starter = `export default () => (
   <board width="20mm" height="20mm" routingDisabled>
@@ -32,9 +35,11 @@ class ProjectService {
   readonly timers = new Map<string, NodeJS.Timeout>()
   readonly buildsRunning = new Set<string>()
   readonly rerunBuild = new Set<string>()
+  readonly queuedBuilds = new Map<string, { buildId: string; revision: string }>()
   readonly deletingProjects = new Set<string>()
   readonly writeQueues = new Map<string, Promise<void>>()
   readonly ownFileHashes = new Map<string, string>()
+  readonly closeHandlers: Array<() => Promise<void>> = []
   readonly ready: Promise<void>
   readonly appNodeModules: string
 
@@ -84,6 +89,11 @@ class ProjectService {
 
   async get(id: string) {
     return this.state(id).project
+  }
+
+  async exportGerbers(id: string) {
+    const project = this.state(id).project
+    return createGerberArchive(this.projectDir(id), ".workbench/circuit.json")
   }
 
   async renameProject(id: string, name: string, expectedRevision: string) {
@@ -188,7 +198,10 @@ class ProjectService {
     state.project.lastBuild = { buildId, revision, status: "compiling", diagnostics: [], updatedAt: new Date().toISOString() }
     this.persist(state).catch(() => undefined)
     this.emit(id, "build.status", { buildId, revision, status: "compiling", step: "compiling" })
-    if (this.buildsRunning.has(id)) this.rerunBuild.add(id)
+    if (this.buildsRunning.has(id)) {
+      this.queuedBuilds.set(id, { buildId, revision })
+      this.rerunBuild.add(id)
+    }
     else this.scheduleBuild(id, 0, buildId, revision)
     return { buildId, status: "compiling" }
   }
@@ -197,6 +210,12 @@ class ProjectService {
     for (const timer of this.timers.values()) clearTimeout(timer)
     await Promise.all([...this.watchers.values()].map((watcher) => watcher.close()))
     this.watchers.clear()
+    while (this.buildsRunning.size > 0) await new Promise((resolve) => setTimeout(resolve, 10))
+    await Promise.all(this.closeHandlers.map((close) => close()))
+  }
+
+  onClose(close: () => Promise<void>) {
+    this.closeHandlers.push(close)
   }
 
   private async withWriteLock<T>(id: string, operation: () => Promise<T>): Promise<T> {
@@ -330,7 +349,11 @@ class ProjectService {
     if (old) clearTimeout(old)
     const timer = setTimeout(() => {
       this.timers.delete(id)
-      if (this.buildsRunning.has(id)) { this.rerunBuild.add(id); return }
+      if (this.buildsRunning.has(id)) {
+        if (buildId && revision) this.queuedBuilds.set(id, { buildId, revision })
+        this.rerunBuild.add(id)
+        return
+      }
       void this.performBuild(id, buildId ?? randomUUID(), revision ?? this.state(id).project.revision)
     }, delay)
     this.timers.set(id, timer)
@@ -362,7 +385,11 @@ class ProjectService {
       this.emit(id, "build.failed", { buildId, revision, diagnostics })
     } finally {
       this.buildsRunning.delete(id)
-      if (this.rerunBuild.delete(id)) this.scheduleBuild(id, 0)
+      if (this.rerunBuild.delete(id)) {
+        const queuedBuild = this.queuedBuilds.get(id)
+        this.queuedBuilds.delete(id)
+        this.scheduleBuild(id, 0, queuedBuild?.buildId, queuedBuild?.revision)
+      }
     }
   }
 
@@ -385,6 +412,9 @@ export function createApp(options: AppOptions = {}): Express {
   })
 
   app.get("/healthz", (_request, response) => response.json({ status: "ok" }))
+  const token = options.mcpAuthToken ?? process.env.MCP_AUTH_TOKEN
+  mountMcp(app, service, token)
+  mountManufacturingRoutes(app, service)
   app.get("/api/projects", async (_request, response, next) => {
     try { response.json(await service.list()) } catch (error) { next(error) }
   })
@@ -447,6 +477,12 @@ export function createApp(options: AppOptions = {}): Express {
       if (!["schematic", "pcb", "3d"].includes(String(kind))) throw badRequest("kind must be schematic, pcb, or 3d")
       const preview = await service.preview(request.params.id!)
       response.json({ ...preview, kind })
+    } catch (error) { next(error) }
+  })
+  app.get("/api/projects/:id/simulation", async (request, response, next) => {
+    try {
+      const preview = await service.preview(request.params.id!)
+      response.json({ revision: preview.revision, ...getSimulationResults(preview.circuitJson) })
     } catch (error) { next(error) }
   })
 

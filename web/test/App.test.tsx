@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
   saveProjectFile: vi.fn(),
   startBuild: vi.fn(),
   getPreview: vi.fn(),
+  getSimulation: vi.fn(),
   subscribeToProject: vi.fn(() => () => {}),
 }))
 
@@ -31,6 +32,7 @@ beforeEach(() => {
   api.getProject.mockResolvedValue(existingProject)
   api.getProjectFile.mockResolvedValue({ path: 'index.tsx', content: 'export default () => <board />', revision: 'rev-1' })
   api.getPreview.mockResolvedValue({ kind: 'schematic', revision: 'rev-1', circuitJson: [] })
+  api.getSimulation.mockResolvedValue({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], diagnostics: [] })
   api.createProject.mockResolvedValue({ ...existingProject, id: 'new-1', name: 'Sensor Board' })
 })
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createProject, getProjectFile, saveProjectFile, type Project } from '../src/api'
+import { createProject, getManufacturingArchive, getProjectFile, saveProjectFile, type Project } from '../src/api'
 
 describe('project API', () => {
   it('creates a named project and returns the server project record', async () => {
@@ -26,5 +26,18 @@ describe('project API', () => {
       method: 'PUT',
       headers: expect.objectContaining({ 'If-Match': 'r2' }),
     }))
+  })
+
+  it('downloads manufacturing ZIP data from the project endpoint', async () => {
+    const blob = new Blob(['zip-bytes'], { type: 'application/zip' })
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, blob: async () => blob } as Response)
+    const downloaded = await getManufacturingArchive('p-1', fetcher)
+    expect(downloaded).toBe(blob)
+    expect(fetcher).toHaveBeenCalledWith('/api/projects/p-1/manufacturing.zip')
+  })
+
+  it('surfaces manufacturing preflight failures to the UI', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'Manufacturing preflight failed', preflight: { checks: [{ status: 'fail', message: 'Missing footprint' }] } }), { status: 422 }))
+    await expect(getManufacturingArchive('p-1', fetcher)).rejects.toThrow('Missing footprint')
   })
 })

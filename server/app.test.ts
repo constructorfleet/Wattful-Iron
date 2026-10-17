@@ -126,6 +126,24 @@ test("failed builds expose diagnostics and keep the most recent successful Circu
   }
 })
 
+test("simulation endpoint returns retained tscircuit waveforms with net correlation", async () => {
+  const simulatedCircuit = [
+    { type: "simulation_experiment", simulation_experiment_id: "e1", name: "Transient", experiment_type: "transient" },
+    { type: "simulation_voltage_probe", simulation_voltage_probe_id: "p1", name: "OUT", signal_input_source_net_id: "net1" },
+    { type: "simulation_transient_voltage_graph", simulation_transient_voltage_graph_id: "g1", simulation_experiment_id: "e1", timestamps_ms: [0, 1], voltage_levels: [0, 5], time_per_step: 1, start_time_ms: 0, end_time_ms: 1 },
+    { type: "simulation_oscilloscope_trace", simulation_oscilloscope_trace_id: "t1", simulation_transient_voltage_graph_id: "g1", simulation_voltage_probe_id: "p1" },
+  ]
+  const f = await fixture(async () => simulatedCircuit)
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Simulation" }).expect(201)
+    await waitForBuild(f.app, project.id, "ready")
+    const result = await request(f.app).get(`/api/projects/${project.id}/simulation`).expect(200)
+    assert.equal(result.body.status, "complete")
+    assert.equal(result.body.signals[0].netId, "net1")
+    assert.deepEqual(result.body.signals[0].samples, [{ x: 0, y: 0 }, { x: 1, y: 5 }])
+  } finally { await f.cleanup() }
+})
+
 test("new projects build Circuit JSON through the documented tscircuit CLI", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "circuits-cli-integration-"))
   const app = createApp({ projectsDir: root, watchFiles: false })

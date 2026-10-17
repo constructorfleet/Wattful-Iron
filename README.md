@@ -4,7 +4,8 @@
 
 `Wattful-Iron` is an early, self-hosted electronics design workbench built around
 tscircuit. The current slice provides browser project management and editing,
-build diagnostics, and schematic, PCB, and 3D previews. It is still a prototype;
+build diagnostics, schematic, PCB, and 3D previews, and inspection of transient
+SPICE results produced by tscircuit. It is still a prototype;
 see [current scope](docs/architecture.md) before relying on it for engineering
 sign-off or fabrication.
 
@@ -34,13 +35,20 @@ limits; tune them for the circuits and number of concurrent users you expect.
 
 This prototype supports project create/list/open and file read/write, a browser
 source editor, tscircuit builds, retained Circuit JSON preview data, live SSE
-updates, diagnostics, and schematic/PCB/3D preview panels. Treat those views as
-development previews rather than engineering approval.
+updates, diagnostics, schematic/PCB/3D previews, and a waveform panel for
+transient results included in the successful build. Add tscircuit analog
+simulation elements and probes to the circuit source to configure a simulation.
+Results are not re-run on demand, and the panel only displays transient graph
+data emitted by tscircuit. Treat all views as development previews rather than
+engineering approval.
 
-MCP/ACP agent interfaces, authentication, isolated execution of untrusted
-project code, simulation, dedicated ERC/DRC, and manufacturing exports are not
-implemented in this slice. Do not expose the service to untrusted users or use
-its output as a manufacturing release. More detail is in
+ACP agent interfaces, user-level authentication, isolated execution of
+untrusted project code, and dedicated ERC/DRC are not implemented in this
+slice. An optional shared-token MCP endpoint, manufacturing preflight, and
+preflight-gated Gerber/drill/BOM/pick-and-place ZIP export are available. These
+do not provide user-level authorization or engineering sign-off. Do not expose
+the service to untrusted users or treat its output as a manufacturing release.
+More detail is in
 [security limitations](docs/security.md).
 
 ## Development
@@ -59,5 +67,6 @@ it to `/data/projects`). `GET /healthz` is the container health endpoint.
 ## Documentation
 
 - [Architecture and feature status](docs/architecture.md)
+- [Manufacturing preflight and exports](docs/manufacturing.md)
 - [Deployment, proxy, backups, upgrades, and Swarm](docs/deployment.md)
 - [Security model and limitations](docs/security.md)

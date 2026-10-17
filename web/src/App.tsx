@@ -2,9 +2,11 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import Editor from '@monaco-editor/react'
 import {
   createProject,
+  getManufacturingArchive,
   getPreview,
   getProject,
   getProjectFile,
+  getSimulation,
   listProjects,
   saveProjectFile,
   startBuild,
@@ -13,12 +15,14 @@ import {
   type PreviewKind,
   type Project,
   type ProjectEvent,
+  type Simulation,
 } from './api'
 
-const views: Array<{ kind: PreviewKind; label: string; tab: 'schematic' | 'pcb' | 'cad' }> = [
+const views: Array<{ kind: PreviewKind | 'simulation'; label: string; tab: 'schematic' | 'pcb' | 'cad' | 'simulation' }> = [
   { kind: 'schematic', label: 'Schematic', tab: 'schematic' },
   { kind: 'pcb', label: 'PCB', tab: 'pcb' },
   { kind: '3d', label: '3D', tab: 'cad' },
+  { kind: 'simulation', label: 'Simulation', tab: 'simulation' },
 ]
 
 const initialBuild: BuildStatus = { status: 'idle' }
@@ -31,14 +35,16 @@ export default function App() {
   const [source, setSource] = useState('')
   const [revision, setRevision] = useState('')
   const [dirty, setDirty] = useState(false)
-  const [view, setView] = useState<PreviewKind>('schematic')
+  const [view, setView] = useState<PreviewKind | 'simulation'>('schematic')
   const [preview, setPreview] = useState<unknown>(null)
+  const [simulation, setSimulation] = useState<Simulation | null>(null)
   const [build, setBuild] = useState<BuildStatus>(initialBuild)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [projectName, setProjectName] = useState('')
   const [saving, setSaving] = useState(false)
+  const [exportingManufacturing, setExportingManufacturing] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sourceRef = useRef(source)
   const revisionRef = useRef(revision)
@@ -46,10 +52,12 @@ export default function App() {
   useEffect(() => { sourceRef.current = source }, [source])
   useEffect(() => { revisionRef.current = revision }, [revision])
 
-  const refreshPreview = useCallback(async (id: string, kind: PreviewKind) => {
+  const refreshPreview = useCallback(async (id: string, kind: PreviewKind | 'simulation') => {
     try {
-      const result = await getPreview(id, kind)
-      if (kind === view) setPreview(result.circuitJson)
+      const result = await getPreview(id, kind === 'simulation' ? 'schematic' : kind)
+      if (kind === view && kind !== 'simulation') setPreview(result.circuitJson)
+      const sim = await getSimulation(id)
+      if (sim.revision === result.revision) setSimulation(sim)
     } catch {
       if (kind === view) setPreview(null)
     }
@@ -58,6 +66,7 @@ export default function App() {
   const openProject = useCallback(async (listedProject: Project) => {
     setError('')
     setPreview(null)
+    setSimulation(null)
     setBuild(initialBuild)
     try {
       const opened = await getProject(listedProject.id)
@@ -163,6 +172,25 @@ export default function App() {
     }
   }
 
+  const downloadManufacturing = async () => {
+    if (!project) return
+    setError('')
+    setExportingManufacturing(true)
+    try {
+      const blob = await getManufacturingArchive(project.id)
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `${project.name.replace(/[^a-zA-Z0-9_-]+/g, '-')}-manufacturing.zip`
+      anchor.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to export manufacturing files')
+    } finally {
+      setExportingManufacturing(false)
+    }
+  }
+
   const reloadFile = async () => {
     if (!project) return
     try {
@@ -179,6 +207,10 @@ export default function App() {
 
   const statusText = build.status === 'idle' ? 'Idle' : build.step || build.status[0].toUpperCase() + build.status.slice(1)
 
+  useEffect(() => {
+    if (project && view === 'simulation') getSimulation(project.id).then(setSimulation).catch(() => setSimulation(null))
+  }, [project, view, build.status, build.revision])
+
   return (
     <main className="workbench">
       <header className="topbar">
@@ -190,6 +222,7 @@ export default function App() {
         </div>
         <div className="top-actions">
           <div className={`build-state ${build.status}`} aria-live="polite"><span className="status-dot" />{statusText}</div>
+          <button className="build-button manufacturing-button" disabled={!project || dirty || build.status !== 'ready' || build.revision !== revision || exportingManufacturing} onClick={downloadManufacturing}>{exportingManufacturing ? 'Exporting…' : 'Manufacturing ZIP'}</button>
           <button className="build-button" disabled={!project || build.status === 'compiling'} onClick={runBuild}><span>▶</span> Build</button>
         </div>
       </header>
@@ -238,7 +271,7 @@ export default function App() {
           </div>
           <div className="preview-content">
             {build.status === 'failed' && <div className="build-errors" role="alert"><div className="error-title"><span>!</span> Build failed</div>{build.diagnostics?.length ? build.diagnostics.map((diagnostic, index) => { const path = diagnostic.path || diagnostic.file; return <div className="diagnostic" key={`${path}-${diagnostic.line}-${index}`}><strong>{path}{diagnostic.line ? `:${diagnostic.line}` : ''}</strong><span>{diagnostic.message}</span></div> }) : <p>Check the source and build output for details.</p>}</div>}
-            {preview ? <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={views.find((item) => item.kind === view)?.tab} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : <div className="preview-placeholder">
+            {view === 'simulation' ? <SimulationPanel simulation={simulation} /> : preview ? <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={view === '3d' ? 'cad' : view} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : <div className="preview-placeholder">
               <div className="placeholder-board"><span className="board-edge edge-a" /><span className="board-edge edge-b" /><span className="board-chip chip-a" /><span className="board-chip chip-b" /><span className="board-pad pad-a" /><span className="board-pad pad-b" /><span className="board-route route-a" /><span className="board-route route-b" /></div>
               <h2>{project ? build.status === 'failed' ? 'Last good preview is unavailable' : 'Waiting for first build' : 'Your design workspace'}</h2>
               <p>{project ? build.status === 'failed' ? 'Fix the source and build again to update this view.' : 'Build the project to generate a schematic, PCB layout, and 3D preview.' : 'Create a project to see your design take shape.'}</p>
@@ -251,4 +284,28 @@ export default function App() {
       {error && <div className="toast-error" role="alert"><span>{error}</span>{error.includes('changed on disk') || error.includes('changed outside') ? <button className="reload-button" onClick={reloadFile}>Reload file</button> : null}<button aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
     </main>
   )
+}
+
+function SimulationPanel({ simulation }: { simulation: Simulation | null }) {
+  if (!simulation) return <div className="simulation-empty">Build the project to inspect supported simulation results.</div>
+  if (simulation.status === 'not_configured') return <div className="simulation-empty"><h2>No simulation configured</h2><p>Add tscircuit <code>&lt;analogsimulation /&gt;</code> and voltage/current probes to the circuit source, then build again.</p></div>
+  if (simulation.status === 'failed') return <div className="simulation-empty" role="alert"><h2>Simulation failed</h2>{simulation.diagnostics.map((item) => <p key={item.message}>{item.message}</p>)}</div>
+  return <div className="simulation-results"><div className="simulation-heading"><h2>{simulation.experiments.map((item) => item.name).join(', ') || 'Simulation results'}</h2><span>{simulation.signals.length} signals · build {simulation.revision.slice(0, 8)}</span></div>
+    {simulation.signals.map((signal) => <div className="waveform" key={signal.id}><div className="waveform-label"><strong>{signal.name}</strong><span>{signal.netId ? `Net ${signal.netId}` : 'Unmapped net'} · {signal.unit}</span></div><svg viewBox="0 0 600 150" role="img" aria-label={`${signal.name} waveform`} preserveAspectRatio="none">
+      <path className="waveform-grid" d="M0 30H600M0 75H600M0 120H600M150 0V150M300 0V150M450 0V150" />
+      {signal.samples.length > 1 && <polyline className="waveform-line" points={waveformPoints(signal.samples)} />}
+    </svg><div className="waveform-axis"><span>{signal.samples[0]?.x ?? 0} ms</span><span>{signal.samples.at(-1)?.x ?? 0} ms</span><span>{signal.unit}</span></div></div>)}
+  </div>
+}
+
+function waveformPoints(samples: Array<{ x: number; y: number }>) {
+  const xMin = samples[0]?.x ?? 0
+  const xMax = samples.at(-1)?.x ?? xMin
+  const values = samples.map((sample) => sample.y)
+  const yMin = Math.min(...values)
+  const yMax = Math.max(...values)
+  const xSpan = xMax - xMin || 1
+  const ySpan = yMax - yMin || 1
+  const stride = Math.max(1, Math.ceil(samples.length / 1500))
+  return samples.filter((_, index) => index % stride === 0 || index === samples.length - 1).map((sample) => `${((sample.x - xMin) / xSpan) * 600},${145 - ((sample.y - yMin) / ySpan) * 135}`).join(' ')
 }
