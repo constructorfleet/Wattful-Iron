@@ -7,6 +7,9 @@ const api = vi.hoisted(() => ({
   createProject: vi.fn(),
   getProject: vi.fn(),
   getProjectFile: vi.fn(),
+  getProjectHistory: vi.fn(),
+  compareProjectRevisions: vi.fn(),
+  restoreProjectRevision: vi.fn(),
   saveProjectFile: vi.fn(),
   startBuild: vi.fn(),
   getPreview: vi.fn(),
@@ -37,13 +40,19 @@ beforeEach(() => {
   api.listProjects.mockResolvedValue([existingProject])
   api.getProject.mockResolvedValue(existingProject)
   api.getProjectFile.mockResolvedValue({ path: 'index.tsx', content: 'export default () => <board />', revision: 'rev-1' })
+  api.getProjectHistory.mockResolvedValue({ revisions: [
+    { revision: 'rev-1', createdAt: '2026-01-02T00:00:00.000Z', changedFiles: ['index.tsx'], sizeBytes: 120 },
+    { revision: 'rev-2', createdAt: '2026-01-01T00:00:00.000Z', changedFiles: ['index.tsx'], sizeBytes: 110 },
+  ] })
+  api.compareProjectRevisions.mockResolvedValue({ from: 'rev-2', to: 'rev-1', files: [{ path: 'index.tsx', before: 'old source', after: 'new source' }] })
+  api.restoreProjectRevision.mockResolvedValue({ revision: 'rev-3', restoredFrom: 'rev-2', changedFiles: ['index.tsx'] })
   api.getPreview.mockResolvedValue({ kind: 'schematic', revision: 'rev-1', circuitJson: [] })
-  api.getSimulation.mockResolvedValue({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], diagnostics: [] })
   api.getManufacturingProfiles.mockResolvedValue({ profiles: [
     { id: 'board-default', label: 'Board defaults', description: 'Use board rules.', rules: { minTraceWidthMm: 0, minNonPlatedHoleMm: 0, copperToBoardEdgeMm: 0 } },
     { id: 'jlcpcb-2layer-1oz', label: 'JLCPCB rigid PCB, 2-layer, 1 oz', description: 'JLCPCB baseline.', rules: { minTraceWidthMm: 0.1, minNonPlatedHoleMm: 0.5, copperToBoardEdgeMm: 0.2 } },
   ] })
   api.getManufacturingPreflight.mockResolvedValue({ preflight: { ready: true, profile: { id: 'board-default', label: 'Board defaults' }, checks: [{ id: 'circuit-errors', status: 'pass', message: 'No Circuit JSON ERC/DRC errors were reported.' }] } })
+  api.getSimulation.mockResolvedValue({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], diagnostics: [] })
   api.createProject.mockResolvedValue({ ...existingProject, id: 'new-1', name: 'Sensor Board' })
 })
 
@@ -81,6 +90,21 @@ describe('workbench', () => {
     fireEvent.click(screen.getByLabelText('Project name').closest('form')!.querySelector('button[type="submit"]')!)
 
     await waitFor(() => expect(api.createProject).toHaveBeenCalledWith('Sensor Board'))
+    expect(await screen.findByLabelText('TSX source editor')).toHaveValue('export default () => <board />')
+  })
+
+  it('browses, compares, and restores a saved source revision', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'History' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Project source history' })).toBeInTheDocument()
+    expect(await screen.findByText('old source')).toBeInTheDocument()
+    expect(screen.getByText('new source')).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: /index\.tsx/ })[1]!)
+    fireEvent.click(screen.getByRole('button', { name: 'Restore selected revision' }))
+
+    await waitFor(() => expect(api.restoreProjectRevision).toHaveBeenCalledWith('led-1', 'rev-2', 'rev-1'))
     expect(await screen.findByLabelText('TSX source editor')).toHaveValue('export default () => <board />')
   })
 

@@ -123,6 +123,32 @@ button { color: inherit; cursor: pointer; }
 .toast-error { position: fixed; z-index: 5; right: 18px; bottom: 18px; display: flex; align-items: center; gap: 18px; max-width: 460px; padding: 11px 12px 11px 15px; color: #f1cccc; border: 1px solid #80474b; border-radius: 6px; background: #351f23; box-shadow: 0 10px 30px #0006; font-size: 11px; }
 .toast-error button { border: 0; color: #c99a9d; background: transparent; font-size: 17px; }
 .toast-error .reload-button { padding: 6px 8px; color: #13231c; border-radius: 4px; background: var(--accent); font-size: 10px; white-space: nowrap; }
+.history-overlay { position: fixed; z-index: 7; inset: 0; display: grid; place-items: center; padding: 18px; background: #070a0dcc; }
+.history-dialog { display: flex; width: min(1040px, 100%); height: min(760px, 92vh); flex-direction: column; overflow: hidden; color: var(--text); border: 1px solid #39434c; border-radius: 9px; background: #191e24; box-shadow: 0 24px 80px #0009; }
+.history-dialog > header, .history-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 15px 19px; }
+.history-dialog > header { border-bottom: 1px solid #2c343c; }
+.history-dialog > header h2 { margin: 0 0 5px; color: #e1e9e5; font-size: 15px; }
+.history-dialog > header p { margin: 0; color: #87939c; font-size: 10px; }
+.history-dialog > header button { color: #a1adb6; border: 0; background: transparent; font-size: 22px; }
+.history-layout { display: grid; flex: 1; min-height: 0; grid-template-columns: minmax(220px, .72fr) minmax(0, 1.6fr); }
+.history-revision-list { overflow: auto; padding: 10px; border-right: 1px solid #2c343c; }
+.history-revision { position: relative; display: flex; width: 100%; flex-direction: column; gap: 5px; margin-bottom: 6px; padding: 10px 9px; color: #c4cdd3; border: 1px solid transparent; border-radius: 5px; background: transparent; text-align: left; }
+.history-revision:hover { background: #20272d; }
+.history-revision.selected { border-color: #385747; background: #202d27; }
+.history-revision strong { font-size: 10px; font-weight: 600; }
+.history-revision small { color: #87929a; font-size: 9px; line-height: 1.4; }
+.history-revision code { color: #70cba7; font: 9px var(--mono); }
+.history-compare { min-width: 0; overflow: auto; padding: 12px; }
+.history-selects { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.history-selects label { display: flex; flex-direction: column; gap: 5px; color: #aeb9c1; font-size: 9px; }
+.history-selects select { height: 30px; min-width: 0; padding: 0 7px; color: #dce5e0; border: 1px solid #3b464f; border-radius: 4px; background: #12171b; font: 9px var(--mono); }
+.history-file-diff { margin-bottom: 12px; border: 1px solid #303942; border-radius: 5px; overflow: hidden; }
+.history-file-diff h3 { margin: 0; padding: 8px 10px; color: #cbd5da; border-bottom: 1px solid #303942; background: #20262c; font: 10px var(--mono); }
+.history-file-diff > div { display: grid; grid-template-columns: 1fr 1fr; }
+.history-file-diff pre { min-width: 0; max-height: 300px; overflow: auto; margin: 0; padding: 10px; color: #c5cec9; background: #151a1f; font: 10px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.history-file-diff pre + pre { border-left: 1px solid #303942; background: #171e1a; }
+.history-empty { margin: auto; padding: 22px; color: #87939c; font-size: 11px; text-align: center; }
+.history-dialog > footer { border-top: 1px solid #2c343c; color: #849099; font-size: 9px; }
 .manufacturing-overlay { position: fixed; z-index: 8; inset: 0; display: grid; place-items: center; padding: 20px; background: #070a0dcc; }
 .manufacturing-dialog { display: flex; width: min(620px, 100%); max-height: min(760px, 90vh); flex-direction: column; overflow: hidden; color: var(--text); border: 1px solid #39434c; border-radius: 9px; background: #191e24; box-shadow: 0 24px 80px #0009; }
 .manufacturing-dialog > header, .manufacturing-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 17px 20px; }

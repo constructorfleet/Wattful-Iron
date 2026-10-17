@@ -81,6 +81,7 @@ it to `/data/projects`). `GET /healthz` is the container health endpoint.
 - [Quickstart: run the workbench and build a first circuit](docs/quickstart.md)
 - [Workbench how-tos: edit, preview, simulate, export, and connect MCP](docs/workbench-howtos.md)
 - [Architecture and feature status](docs/architecture.md)
+- [Project source history, compare, restore, and retention](docs/source-history.md)
 - [Manufacturing preflight and exports](docs/manufacturing.md)
 - [Deployment, proxy, backups, upgrades, and Swarm](docs/deployment.md)
 - [Security model and limitations](docs/security.md)

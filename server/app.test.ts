@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
@@ -97,6 +97,96 @@ test("simultaneous writes using one revision allow only one save", async () => {
   }
 })
 
+test("project history lists snapshots and compares changed source files", async () => {
+  const f = await fixture(async () => circuit)
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "History" }).expect(201)
+    const initial = await request(f.app).get(`/api/projects/${project.id}/history`).expect(200)
+    assert.equal(initial.body.revisions.length, 1)
+    const before = initial.body.revisions[0]
+    const file = await request(f.app).get(`/api/projects/${project.id}/files`).query({ path: project.entrypoint }).expect(200)
+    const saved = await request(f.app).put(`/api/projects/${project.id}/files`).query({ path: project.entrypoint })
+      .set("If-Match", file.body.revision).send({ content: "export default () => <board width='24mm' />", revision: file.body.revision }).expect(200)
+    const history = await request(f.app).get(`/api/projects/${project.id}/history`).expect(200)
+    assert.equal(history.body.revisions.length, 2)
+    const after = history.body.revisions.find((revision: { revision: string }) => revision.revision === saved.body.revision)
+    assert.deepEqual(after.changedFiles, [project.entrypoint])
+    assert.equal(typeof after.createdAt, "string")
+    const compared = await request(f.app).get(`/api/projects/${project.id}/history/compare`).query({ from: before.revision, to: after.revision }).expect(200)
+    assert.equal(compared.body.files.length, 1)
+    assert.match(compared.body.files[0].before, /20mm/)
+    assert.match(compared.body.files[0].after, /24mm/)
+  } finally { await f.cleanup() }
+})
+
+test("history restore writes a new current revision and rejects stale restores", async () => {
+  const f = await fixture(async () => circuit)
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Restore" }).expect(201)
+    const initial = await request(f.app).get(`/api/projects/${project.id}/history`).expect(200)
+    const originalRevision = initial.body.revisions[0].revision
+    const file = await request(f.app).get(`/api/projects/${project.id}/files`).query({ path: project.entrypoint }).expect(200)
+    const changed = await request(f.app).put(`/api/projects/${project.id}/files`).query({ path: project.entrypoint })
+      .set("If-Match", file.body.revision).send({ content: "temporary source", revision: file.body.revision }).expect(200)
+    const added = await request(f.app).put(`/api/projects/${project.id}/files`).query({ path: "notes.txt" })
+      .set("If-Match", changed.body.revision).send({ content: "new file", revision: changed.body.revision }).expect(200)
+    const restored = await request(f.app).post(`/api/projects/${project.id}/history/${originalRevision}/restore`)
+      .set("If-Match", added.body.revision).expect(200)
+    assert.equal(restored.body.restoredFrom, originalRevision)
+    assert.notEqual(restored.body.revision, changed.body.revision)
+    const source = await request(f.app).get(`/api/projects/${project.id}/files`).query({ path: project.entrypoint }).expect(200)
+    assert.match(source.body.content, /<board/)
+    const files = await request(f.app).get(`/api/projects/${project.id}/file-list`).expect(200)
+    assert.equal(files.body.includes("notes.txt"), false)
+    await request(f.app).post(`/api/projects/${project.id}/history/${originalRevision}/restore`)
+      .set("If-Match", added.body.revision).expect(409)
+    const unchanged = await request(f.app).get(`/api/projects/${project.id}/files`).query({ path: project.entrypoint }).expect(200)
+    assert.equal(unchanged.body.content, source.body.content)
+  } finally { await f.cleanup() }
+})
+
+test("history retains the newest 50 snapshots and reports per-revision storage size", async () => {
+  const f = await fixture(async () => circuit)
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Retention" }).expect(201)
+    const originalRevision = project.revision
+    let revision = project.revision
+    for (let index = 0; index < 50; index++) {
+      const result = await request(f.app).put(`/api/projects/${project.id}/files`).query({ path: project.entrypoint })
+        .set("If-Match", revision).send({ content: `revision ${index}`, revision }).expect(200)
+      revision = result.body.revision
+    }
+    const history = await request(f.app).get(`/api/projects/${project.id}/history`).expect(200)
+    assert.equal(history.body.revisions.length, 50)
+    assert.equal(history.body.revisions[0].revision, revision)
+    assert.equal(history.body.revisions.some((item: { revision: string }) => item.revision === originalRevision), false)
+    assert.ok(history.body.revisions.every((item: { sizeBytes: number }) => item.sizeBytes > 0))
+    await request(f.app).get(`/api/projects/${project.id}/history/compare`).query({ from: originalRevision, to: revision }).expect(404)
+  } finally { await f.cleanup() }
+})
+
+test("project history remains available after the server restarts", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "circuits-history-restart-"))
+  const firstApp = createApp({ projectsDir: root, buildCircuit: async () => circuit, watchFiles: false })
+  let restartedApp: ReturnType<typeof createApp> | undefined
+  try {
+    const { body: project } = await request(firstApp).post("/api/projects").send({ name: "Persistent history" }).expect(201)
+    const source = await request(firstApp).get(`/api/projects/${project.id}/files`).query({ path: project.entrypoint }).expect(200)
+    const saved = await request(firstApp).put(`/api/projects/${project.id}/files`).query({ path: project.entrypoint })
+      .set("If-Match", source.body.revision).send({ content: "restart snapshot", revision: source.body.revision }).expect(200)
+    await (firstApp.locals.projectService as { close: () => Promise<void> }).close()
+
+    restartedApp = createApp({ projectsDir: root, buildCircuit: async () => circuit, watchFiles: false })
+    const history = await request(restartedApp).get(`/api/projects/${project.id}/history`).expect(200)
+    assert.equal(history.body.revisions.length, 2)
+    assert.equal(history.body.revisions[0].revision, saved.body.revision)
+  } finally {
+    if (restartedApp) await (restartedApp.locals.projectService as { close: () => Promise<void> }).close()
+    else await (firstApp.locals.projectService as { close: () => Promise<void> }).close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("failed builds expose diagnostics and keep the most recent successful Circuit JSON", async () => {
   let shouldFail = false
   const f = await fixture(async () => {
@@ -174,6 +264,13 @@ test("the server does not report its own atomic file write as an external edit",
     const current = await request(app).get("/api/projects/" + project.id + "/files")
       .query({ path: project.entrypoint }).expect(200)
     assert.equal(current.body.revision, saved.body.revision)
+    const historyBeforeExternalEdit = await request(app).get(`/api/projects/${project.id}/history`).expect(200)
+    assert.equal(historyBeforeExternalEdit.body.revisions.length, 2)
+    await writeFile(path.join(root, project.id, project.entrypoint), "outside update", "utf8")
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    const historyAfterExternalEdit = await request(app).get(`/api/projects/${project.id}/history`).expect(200)
+    assert.equal(historyAfterExternalEdit.body.revisions.length, 3)
+    assert.deepEqual(historyAfterExternalEdit.body.revisions[0].changedFiles, [project.entrypoint])
   } finally {
     await (app.locals.projectService as { close: () => Promise<void> }).close()
     await rm(root, { recursive: true, force: true })

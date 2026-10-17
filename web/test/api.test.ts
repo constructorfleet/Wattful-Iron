@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createProject, getManufacturingArchive, getManufacturingPreflight, getManufacturingProfiles, getProjectFile, saveProjectFile, type Project } from '../src/api'
+import { compareProjectRevisions, createProject, getManufacturingArchive, getManufacturingPreflight, getManufacturingProfiles, getProjectFile, getProjectHistory, restoreProjectRevision, saveProjectFile, type Project } from '../src/api'
 
 describe('project API', () => {
   it('creates a named project and returns the server project record', async () => {
@@ -28,14 +28,31 @@ describe('project API', () => {
     }))
   })
 
+  it('lists revisions, compares source snapshots, and restores with the current revision token', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ revisions: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ from: 'r1', to: 'r2', files: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ revision: 'r3', restoredFrom: 'r1', changedFiles: ['index.tsx'] }), { status: 200 }))
+    await getProjectHistory('p-1', fetcher)
+    await compareProjectRevisions('p-1', 'r1', 'r2', fetcher)
+    await restoreProjectRevision('p-1', 'r1', 'r2', fetcher)
+    expect(fetcher).toHaveBeenNthCalledWith(1, '/api/projects/p-1/history', {})
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/projects/p-1/history/compare?from=r1&to=r2', {})
+    expect(fetcher).toHaveBeenNthCalledWith(3, '/api/projects/p-1/history/r1/restore', { method: 'POST', headers: { 'If-Match': 'r2' } })
+  })
+
   it('downloads manufacturing ZIP data from the project endpoint', async () => {
     const blob = new Blob(['zip-bytes'], { type: 'application/zip' })
     const fetcher = vi.fn().mockResolvedValue({ ok: true, blob: async () => blob } as Response)
-    const downloaded = await getManufacturingArchive('p-1', 'jlcpcb-2layer-1oz', fetcher)
+    const downloaded = await getManufacturingArchive('p-1', fetcher)
     expect(downloaded).toBe(blob)
-    expect(fetcher).toHaveBeenCalledWith('/api/projects/p-1/manufacturing.zip?profile=jlcpcb-2layer-1oz')
+    expect(fetcher).toHaveBeenCalledWith('/api/projects/p-1/manufacturing.zip')
   })
 
+  it('surfaces manufacturing preflight failures to the UI', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'Manufacturing preflight failed', preflight: { checks: [{ status: 'fail', message: 'Missing footprint' }] } }), { status: 422 }))
+    await expect(getManufacturingArchive('p-1', fetcher)).rejects.toThrow('Missing footprint')
+  })
   it('loads manufacturing profiles and preflight for the selected profile', async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ profiles: [] }), { status: 200 }))

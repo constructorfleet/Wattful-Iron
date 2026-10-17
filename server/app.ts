@@ -13,6 +13,7 @@ type BuildStatus = "idle" | "compiling" | "ready" | "failed"
 type BuildRecord = { buildId: string; revision: string; status: BuildStatus; diagnostics: Diagnostic[]; updatedAt: string }
 type ProjectData = { id: string; name: string; entrypoint: string; revision: string; previewRevision?: string; lastBuild?: BuildRecord }
 type ProjectState = { project: ProjectData; preview?: unknown }
+type ProjectSnapshot = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes: number; files: Record<string, string> }
 type ServerEvent = "project" | "file" | "build.status" | "build.ready" | "build.failed"
 type BuildFn = (projectDir: string, entrypoint: string) => Promise<unknown>
 type AppOptions = { projectsDir?: string; buildCircuit?: BuildFn; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string }
@@ -24,6 +25,7 @@ const starter = `export default () => (
     </schematicsheet>
   </board>
 )`
+const HISTORY_RETENTION = 50
 
 class ProjectService {
   readonly root: string
@@ -39,6 +41,7 @@ class ProjectService {
   readonly deletingProjects = new Set<string>()
   readonly writeQueues = new Map<string, Promise<void>>()
   readonly ownFileHashes = new Map<string, string>()
+  readonly ownFileDeletes = new Set<string>()
   readonly closeHandlers: Array<() => Promise<void>> = []
   readonly ready: Promise<void>
   readonly appNodeModules: string
@@ -58,6 +61,7 @@ class ProjectService {
       const state = await this.load(dirent.name)
       if (state) {
         this.states.set(state.project.id, state)
+        if ((await this.readSnapshots(state.project.id)).length === 0) await this.storeSnapshot(state.project.id, state.project.revision, await this.getFileList(state.project.id))
         if (this.watchFiles) this.watch(state.project.id)
       }
     }
@@ -80,6 +84,7 @@ class ProjectService {
     await this.linkNodeModules(dir)
     const state: ProjectState = { project }
     this.states.set(id, state)
+    await this.storeSnapshot(id, project.revision, [project.entrypoint, "package.json"])
     await this.persist(state)
     this.watch(id)
     this.emit(id, "project", { project })
@@ -148,6 +153,7 @@ class ProjectService {
       await rename(temporary, absolute)
       this.ownFileHashes.set(absolute, digest(content))
       state.project.revision = newRevision()
+      await this.storeSnapshot(id, state.project.revision, [cleanRelative(relativePath)])
       await this.persist(state)
       const result = { path: cleanRelative(relativePath), revision: state.project.revision }
       this.emit(id, "file", result)
@@ -169,6 +175,57 @@ class ProjectService {
     }
     await visit(dir, "")
     return out.sort()
+  }
+
+  async listHistory(id: string) {
+    return (await this.readSnapshots(id)).map(({ revision, createdAt, changedFiles, sizeBytes }) => ({ revision, createdAt, changedFiles, sizeBytes }))
+  }
+
+  async compareHistory(id: string, from: string, to: string) {
+    const snapshots = await this.readSnapshots(id)
+    const before = snapshots.find((snapshot) => snapshot.revision === from)
+    const after = snapshots.find((snapshot) => snapshot.revision === to)
+    if (!before || !after) throw Object.assign(new Error("Project revision not found in retained history"), { status: 404 })
+    const changedPaths = [...new Set([...Object.keys(before.files), ...Object.keys(after.files)])]
+      .filter((file) => before.files[file] !== after.files[file]).sort()
+    return { from: before.revision, to: after.revision, files: changedPaths.map((file) => ({ path: file, before: before.files[file] ?? null, after: after.files[file] ?? null })) }
+  }
+
+  async restoreHistory(id: string, revision: string, expectedRevision: string) {
+    return this.withWriteLock(id, async () => {
+      const state = this.state(id)
+      this.assertRevision(state.project, expectedRevision)
+      const snapshot = (await this.readSnapshots(id)).find((item) => item.revision === revision)
+      if (!snapshot) throw Object.assign(new Error("Project revision not found in retained history"), { status: 404 })
+      const currentFiles = await this.getFileList(id)
+      const currentContent = new Map<string, string>()
+      for (const relative of currentFiles) currentContent.set(relative, await readFile(await this.safeFile(id, relative, false), "utf8"))
+      const actualChangedFiles = [...new Set([...currentFiles, ...Object.keys(snapshot.files)])]
+        .filter((relative) => currentContent.get(relative) !== snapshot.files[relative])
+      for (const relative of Object.keys(snapshot.files)) {
+        if (!actualChangedFiles.includes(relative)) continue
+        const target = await this.safeFile(id, relative, true)
+        await mkdir(path.dirname(target), { recursive: true })
+        const temporary = target + "." + randomUUID() + ".tmp"
+        await writeFile(temporary, snapshot.files[relative]!, "utf8")
+        await rename(temporary, target)
+        this.ownFileHashes.set(target, digest(snapshot.files[relative]!))
+      }
+      for (const relative of currentFiles) {
+        if (Object.hasOwn(snapshot.files, relative)) continue
+        const target = await this.safeFile(id, relative, false)
+        this.ownFileDeletes.add(target)
+        this.ownFileHashes.delete(target)
+        await rm(target, { force: true })
+      }
+      state.project.revision = newRevision()
+      await this.storeSnapshot(id, state.project.revision, actualChangedFiles)
+      await this.persist(state)
+      const result = { revision: state.project.revision, restoredFrom: snapshot.revision, changedFiles: actualChangedFiles.sort() }
+      for (const relative of result.changedFiles) this.emit(id, "file", { path: relative, revision: result.revision })
+      this.scheduleBuild(id, 250, undefined, result.revision)
+      return result
+    })
   }
 
   async preview(id: string) {
@@ -300,6 +357,46 @@ class ProjectService {
     await rename(temporary, path.join(metadataDir, "project.json"))
   }
 
+  private async storeSnapshot(id: string, revision: string, changedFiles: string[]) {
+    const previous = await this.readSnapshots(id)
+    const now = Date.now()
+    const previousTime = previous[0] ? Date.parse(previous[0].createdAt) : 0
+    const files = Object.create(null) as Record<string, string>
+    for (const relative of await this.getFileList(id)) {
+      try { files[relative] = await readFile(await this.safeFile(id, relative, false), "utf8") } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+      }
+    }
+    const snapshot: ProjectSnapshot = {
+      revision,
+      createdAt: new Date(Math.max(now, previousTime + 1)).toISOString(),
+      changedFiles: [...new Set(changedFiles)].sort(),
+      sizeBytes: Object.entries(files).reduce((total, [name, content]) => total + Buffer.byteLength(name) + Buffer.byteLength(content), 0),
+      files,
+    }
+    const historyDir = path.join(this.projectDir(id), ".workbench", "history")
+    await mkdir(historyDir, { recursive: true })
+    const temporary = path.join(historyDir, revision + ".json." + randomUUID() + ".tmp")
+    await writeFile(temporary, JSON.stringify(snapshot))
+    await rename(temporary, path.join(historyDir, revision + ".json"))
+    const retained = await this.readSnapshots(id)
+    for (const old of retained.slice(HISTORY_RETENTION)) await rm(path.join(historyDir, old.revision + ".json"), { force: true })
+  }
+
+  private async readSnapshots(id: string): Promise<ProjectSnapshot[]> {
+    const historyDir = path.join(this.projectDir(id), ".workbench", "history")
+    let names: string[]
+    try { names = (await readdir(historyDir)).filter((name) => name.endsWith(".json")) } catch { return [] }
+    const snapshots: ProjectSnapshot[] = []
+    for (const name of names) {
+      try {
+        const snapshot = JSON.parse(await readFile(path.join(historyDir, name), "utf8")) as ProjectSnapshot
+        if (snapshot && typeof snapshot.revision === "string" && snapshot.files && typeof snapshot.files === "object") snapshots.push(snapshot)
+      } catch { /* Ignore incomplete snapshot files. */ }
+    }
+    return snapshots.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }
+
   private async linkNodeModules(projectDir: string) {
     try { await access(path.join(projectDir, "node_modules")); return } catch { /* link shared pinned CLI packages */ }
     try { await symlink(this.appNodeModules, path.join(projectDir, "node_modules"), "dir") } catch (error) {
@@ -329,18 +426,22 @@ class ProjectService {
         }).catch(() => this.recordExternalChange(id, absolutePath))
         return
       }
+      if (this.ownFileDeletes.delete(absolutePath)) return
       this.recordExternalChange(id, absolutePath)
     })
   }
 
   private recordExternalChange(id: string, absolutePath: string) {
-      const relative = path.relative(this.projectDir(id), absolutePath).split(path.sep).join("/")
+    const relative = path.relative(this.projectDir(id), absolutePath).split(path.sep).join("/")
+    void this.withWriteLock(id, async () => {
       const state = this.states.get(id)
       if (!state) return
       state.project.revision = newRevision()
-      void this.persist(state)
+      await this.storeSnapshot(id, state.project.revision, [relative])
+      await this.persist(state)
       this.emit(id, "file", { path: relative, revision: state.project.revision })
       this.scheduleBuild(id, 300)
+    })
   }
 
   private scheduleBuild(id: string, delay: number, buildId?: string, revision?: string) {
@@ -460,6 +561,22 @@ export function createApp(options: AppOptions = {}): Express {
   })
   app.get("/api/projects/:id/file-list", async (request, response, next) => {
     try { response.json(await service.getFileList(request.params.id!)) } catch (error) { next(error) }
+  })
+  app.get("/api/projects/:id/history", async (request, response, next) => {
+    try { response.json({ revisions: await service.listHistory(request.params.id!) }) } catch (error) { next(error) }
+  })
+  app.get("/api/projects/:id/history/compare", async (request, response, next) => {
+    try {
+      if (typeof request.query.from !== "string" || typeof request.query.to !== "string") throw badRequest("Query parameters from and to are required")
+      response.json(await service.compareHistory(request.params.id!, request.query.from, request.query.to))
+    } catch (error) { next(error) }
+  })
+  app.post("/api/projects/:id/history/:revision/restore", async (request, response, next) => {
+    try {
+      const match = request.get("If-Match")?.replace(/^"|"$/g, "")
+      if (!match) throw badRequest("If-Match is required to restore project history")
+      response.json(await service.restoreHistory(request.params.id!, request.params.revision!, match))
+    } catch (error) { next(error) }
   })
   app.post("/api/projects/:id/build", (request, response, next) => {
     try { response.status(202).json(service.requestBuild(request.params.id!)) } catch (error) { next(error) }
