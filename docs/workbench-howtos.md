@@ -18,6 +18,26 @@ example manufacturing board source is at
 
 ![The 3D preview of a board](images/workbench-3d.png)
 
+## Compare footprints and board mechanics
+
+Open **Footprint Comparison Study** to compare 0402, 0603, and 0805 resistor
+footprints at the same scale. The two rows use different resistance values;
+the plated holes mark the board ends. Edit the `pcbX` and `pcbY` values to
+reposition a part, or change the board dimensions to see how the outline moves.
+The example is a placement study: it has no electrical connections or copper
+routing, so it is not a manufacturing-ready circuit.
+
+Open **Mounting Pattern Study** to explore how a larger outline, four mounting
+holes, two plated holes, and a small resistor group fit together. Try moving
+the mounting holes as a set, then inspect the PCB bounds and spacing in the
+viewer. This is also a mechanical layout study, not a connected sensor design.
+
+The source for both examples lives in
+[`examples/footprint-comparison`](../examples/footprint-comparison) and
+[`examples/mounting-pattern`](../examples/mounting-pattern). Copy an example's
+`index.circuit.tsx` into a project to experiment without changing the saved
+demo.
+
 ## Read a simulation result
 
 Add tscircuit analog simulation elements and voltage or current probes to the
@@ -79,13 +99,3 @@ keep it private and use HTTPS for connections over a network.
 - **The editor reports that JSX is disabled:** reload the workbench so Monaco
   applies its JSX-enabled TypeScript settings. Use the server's **Ready** or
   **Failed** build result to check the tscircuit build.
-
-## Browser behavior observed during this guide
-
-The schematic, simulation panel, and 3D canvas loaded in the fresh local
-browser session. The 3D screenshot uses the blank starter board, so it shows
-the board plane without components. A prior sequence of switching between
-preview tabs produced a preview-bundle error once; it did not recur after
-reloading the app. The PCB grid-only result described above did
-recur for the included manufacturing example. Treat all previews as
-development aids and read [architecture](architecture.md) for current scope.
