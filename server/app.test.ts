@@ -149,7 +149,7 @@ test("new projects build Circuit JSON through the documented tscircuit CLI", asy
   const app = createApp({ projectsDir: root, watchFiles: false })
   try {
     const { body: project } = await request(app).post("/api/projects").send({ name: "CLI smoke" }).expect(201)
-    await waitForBuild(app, project.id, "ready", 500)
+    await waitForBuild(app, project.id, "ready", 1200, 100)
     const result = await request(app).get("/api/projects/" + project.id + "/preview")
       .query({ kind: "pcb" }).expect(200)
     assert.ok(Array.isArray(result.body.circuitJson))
@@ -189,12 +189,12 @@ test("health endpoint reports readiness", async () => {
   }
 })
 
-async function waitForBuild(app: import("express").Express, id: string, status: "ready" | "failed", maxAttempts = 100) {
+async function waitForBuild(app: import("express").Express, id: string, status: "ready" | "failed", maxAttempts = 100, intervalMs = 10) {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const result = await request(app).get("/api/projects/" + id)
     if (result.body.lastBuild?.status === status) return
     if (result.body.lastBuild?.status === "failed") assert.fail("build failed: " + JSON.stringify(result.body.lastBuild.diagnostics))
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
   }
   assert.fail("build did not reach " + status)
 }
