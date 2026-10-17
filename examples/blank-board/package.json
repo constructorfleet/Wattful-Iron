@@ -1,0 +1,7 @@
+{
+  "name": "blank-board",
+  "private": true,
+  "dependencies": {
+    "tscircuit": "0.0.2930"
+  }
+}

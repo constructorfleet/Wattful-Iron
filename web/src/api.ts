@@ -1,0 +1,83 @@
+export type Project = {
+  id: string
+  name: string
+  entrypoint: string
+  revision: string
+  updatedAt?: string
+}
+
+export type ProjectFile = { path: string; content: string; revision: string }
+export type BuildStatus = {
+  buildId?: string
+  revision?: string
+  status: 'idle' | 'running' | 'compiling' | 'validating' | 'routing' | 'rendering' | 'ready' | 'failed'
+  step?: string
+  diagnostics?: Array<{ message: string; path?: string; file?: string; line?: number; column?: number; severity?: string }>
+}
+export type ProjectEvent =
+  | { type: 'project'; project: Project }
+  | { type: 'file'; path: string; revision: string }
+  | ({ type: 'build.status' } & BuildStatus)
+  | { type: 'build.ready'; buildId: string; revision: string; artifacts?: { circuitJsonUrl?: string } }
+  | { type: 'build.failed'; buildId: string; revision: string; diagnostics: BuildStatus['diagnostics'] }
+
+export type Preview = { revision: string; kind: PreviewKind; circuitJson: unknown }
+export type PreviewKind = 'schematic' | 'pcb' | '3d'
+type Fetcher = typeof fetch
+
+async function request<T>(url: string, init: RequestInit = {}, fetcher: Fetcher = fetch): Promise<T> {
+  const response = await fetcher(url, init)
+  if (response.status === 409 || response.status === 412) {
+    throw new Error('This file changed on disk. Reload it before saving again.')
+  }
+  if (!response.ok) {
+    const detail = await response.text()
+    throw new Error(detail || `Request failed (${response.status})`)
+  }
+  if (response.status === 204) return undefined as T
+  return response.json() as Promise<T>
+}
+
+export const listProjects = (fetcher?: Fetcher) => request<Project[]>('/api/projects', undefined, fetcher)
+
+export const createProject = (name: string, fetcher?: Fetcher) => request<Project>('/api/projects', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ name }),
+}, fetcher)
+
+export const getProject = (id: string, fetcher?: Fetcher) => request<Project>(`/api/projects/${encodeURIComponent(id)}`, undefined, fetcher)
+
+const fileUrl = (id: string, path: string) => `/api/projects/${encodeURIComponent(id)}/files?path=${encodeURIComponent(path)}`
+export const getProjectFile = (id: string, path: string, fetcher?: Fetcher) => request<ProjectFile>(fileUrl(id, path), undefined, fetcher)
+
+export const saveProjectFile = (id: string, path: string, content: string, revision: string, fetcher?: Fetcher) => request<ProjectFile>(fileUrl(id, path), {
+  method: 'PUT',
+  headers: { 'Content-Type': 'application/json', 'If-Match': revision },
+  body: JSON.stringify({ content, revision }),
+}, fetcher)
+
+export const startBuild = (id: string, fetcher?: Fetcher) => request<{ buildId: string; status: BuildStatus['status'] }>(`/api/projects/${encodeURIComponent(id)}/build`, {
+  method: 'POST',
+}, fetcher)
+
+export const getPreview = (id: string, kind: PreviewKind, fetcher?: Fetcher) => request<Preview>(
+  `/api/projects/${encodeURIComponent(id)}/preview?kind=${encodeURIComponent(kind)}`,
+  undefined,
+  fetcher,
+)
+
+export function subscribeToProject(id: string, onEvent: (event: ProjectEvent) => void): () => void {
+  const source = new EventSource(`/api/projects/${encodeURIComponent(id)}/events`)
+  const eventNames = ['project', 'file', 'build.status', 'build.ready', 'build.failed'] as const
+  for (const type of eventNames) {
+    source.addEventListener(type, (event) => {
+      try {
+        onEvent({ type, ...JSON.parse((event as MessageEvent<string>).data) } as ProjectEvent)
+      } catch {
+        // Ignore malformed events; the next valid event or reload can recover state.
+      }
+    })
+  }
+  return () => source.close()
+}

@@ -1,0 +1,48 @@
+services:
+  circuits:
+    image: ${CIRCUITS_IMAGE:-ghcr.io/constructorfleet/circuits:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    read_only: true
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      PROJECTS_DIR: /data/projects
+    volumes:
+      - projects:/data/projects
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    deploy:
+      restart_policy:
+        condition: any
+      update_config:
+        order: stop-first
+        failure_action: rollback
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+          pids: 256
+
+volumes:
+  projects:
+    name: circuits-projects

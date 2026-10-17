@@ -1,0 +1,154 @@
+name: Container
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-image:
+    name: Build container image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix web
+      - name: Set up Bun for circuit build tests
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - name: Run server and browser tests
+        run: npm test
+      - name: Build application
+        run: npm run build
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build image without publishing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: circuits:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test container
+        run: |
+          docker volume create circuits-smoke-projects
+          cleanup() {
+            docker rm -f circuits-smoke >/dev/null 2>&1 || true
+            docker volume rm circuits-smoke-projects >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run -d --name circuits-smoke -p 3000:3000 \
+            -v circuits-smoke-projects:/data/projects circuits:ci
+          for attempt in $(seq 1 30); do
+            health_state=$(docker inspect --format '{{.State.Health.Status}}' circuits-smoke 2>/dev/null || true)
+            [ "$health_state" = healthy ] && break
+            sleep 2
+          done
+          if [ "$health_state" != healthy ]; then
+            docker logs circuits-smoke
+            exit 1
+          fi
+          curl --fail --silent --show-error http://127.0.0.1:3000/healthz
+          curl --fail --silent --show-error http://127.0.0.1:3000/ | grep -Eq 'Circuits|circuits|<div id="root"'
+          project_json=$(curl --fail --silent --show-error \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"Container smoke"}' \
+            http://127.0.0.1:3000/api/projects)
+          project_id=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).id)' "$project_json")
+          curl --fail --silent --show-error -X POST \
+            "http://127.0.0.1:3000/api/projects/$project_id/build"
+          for attempt in $(seq 1 60); do
+            project_state=$(curl --fail --silent --show-error \
+              "http://127.0.0.1:3000/api/projects/$project_id")
+            build_state=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).lastBuild?.status ?? "none")' "$project_state")
+            if [ "$build_state" = ready ]; then
+              curl --fail --silent --show-error \
+                "http://127.0.0.1:3000/api/projects/$project_id/preview?kind=pcb" |
+                node -e 'let data=""; process.stdin.on("data", chunk => data += chunk); process.stdin.on("end", () => { const result = JSON.parse(data); if (!result.circuitJson) process.exit(1) })'
+              exit 0
+            fi
+            if [ "$build_state" = failed ]; then
+              printf '%s\n' "$project_state"
+              docker logs circuits-smoke
+              exit 1
+            fi
+            sleep 2
+          done
+          docker logs circuits-smoke
+          exit 1
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: circuits:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          scanners: vuln
+
+  publish:
+    name: Publish to GitHub Container Registry
+    if: >-
+      github.event_name == 'push' &&
+      github.repository == 'ConstructorFleet/circuits' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: validate-image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up QEMU for ARM64 build
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate image tags and labels
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/constructorfleet/circuits
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+      - name: Build and publish image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
