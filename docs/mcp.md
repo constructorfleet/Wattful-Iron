@@ -29,11 +29,18 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `build_project` | Run the CLI build and return its result or diagnostics. |
 | `get_diagnostics` | Read diagnostics from the latest build. |
 | `get_preview` | Read the last successful Circuit JSON for `schematic`, `pcb`, or `3d`. |
+| `list_components` | List `source_component` elements, including a matching `pcb_component` placement when one is present. |
+| `list_nets` | List `source_trace` logical connections with their connected `source_port` elements. |
+| `trace_net` | Inspect `source_trace` elements by net name or trace ID, connected ports and components, and matching `pcb_trace` routes. |
+| `get_pin_connections` | List a component's `source_port` elements and the source traces that include each port. Match components by name or `source_component_id`. |
+| `get_board_properties` | Return the emitted `pcb_board` elements, including dimensions, material, stackup, and design-rule properties. |
 | `run_simulation` | Build the current source and return transient SPICE results emitted by tscircuit, when configured. |
 | `get_simulation_results` | Read waveform data and probe/net information from the latest successful build. |
 | `check_manufacturability` | Run the same current-revision completeness checks used by the manufacturing download route. |
 
 `update_project_file` requires the `revision` returned by `read_project_file`; stale writes return a tool error. There are no delete or component-ordering tools.
+
+Circuit inspection reads the most recent successful build. These tools expose the fields present in Circuit JSON: logical nets come from `source_trace` and `connected_source_port_ids`, pin details from `source_port`, PCB placement from `pcb_component`, and board data from `pcb_board`. `trace_net` accepts a source trace name or ID and can return multiple matching traces when a name is reused. These tools do not infer missing component, pin, or board properties.
 
 Simulation uses the existing tscircuit build integration. Add supported analog
 simulation elements and probes to the source; `run_simulation` rebuilds the

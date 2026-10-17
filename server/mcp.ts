@@ -6,6 +6,7 @@ import { timingSafeEqual } from "node:crypto"
 import { z } from "zod4"
 import { getSimulationResults } from "./simulation.js"
 import { checkManufacturability } from "./manufacturing.js"
+import { getBoardProperties, getPinConnections, listComponents, listNets, traceNet } from "./circuit-inspection.js"
 
 type Project = {
   id: string
@@ -130,6 +131,36 @@ function createServer(service: ProjectService): McpServer {
     description: "Get the most recent successfully built Circuit JSON for schematic, PCB, or 3D preview contexts.",
     inputSchema: z.object({ projectId, kind: z.enum(["schematic", "pcb", "3d"]) }),
   }, async ({ projectId, kind }) => safeTool(async () => ({ ...await service.preview(projectId), kind })))
+
+  server.registerTool("list_components", {
+    title: "List circuit components",
+    description: "List source components and their matching PCB placement when present in the latest successful Circuit JSON build.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => listComponents((await service.preview(projectId)).circuitJson)))
+
+  server.registerTool("list_nets", {
+    title: "List circuit nets",
+    description: "List logical connections represented by source_trace elements and their connected source ports.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => listNets((await service.preview(projectId)).circuitJson)))
+
+  server.registerTool("trace_net", {
+    title: "Trace a circuit net",
+    description: "Inspect source_trace elements matching a net name or source_trace_id, their connected ports and components, and matching PCB routes.",
+    inputSchema: z.object({ projectId, net: z.string().trim().min(1) }),
+  }, async ({ projectId, net }) => safeTool(async () => traceNet((await service.preview(projectId)).circuitJson, net)))
+
+  server.registerTool("get_pin_connections", {
+    title: "Get component pin connections",
+    description: "List source ports for a component matched by name or source_component_id and the source_trace names that include each port.",
+    inputSchema: z.object({ projectId, component: z.string().trim().min(1) }),
+  }, async ({ projectId, component }) => safeTool(async () => getPinConnections((await service.preview(projectId)).circuitJson, component)))
+
+  server.registerTool("get_board_properties", {
+    title: "Get PCB board properties",
+    description: "Return pcb_board elements from the latest successful Circuit JSON build, including dimensions, material, stackup, and emitted design-rule fields.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => getBoardProperties((await service.preview(projectId)).circuitJson)))
 
   server.registerTool("run_simulation", {
     title: "Build and inspect simulation",
