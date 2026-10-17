@@ -51,6 +51,18 @@ the service to untrusted users or treat its output as a manufacturing release.
 More detail is in
 [security limitations](docs/security.md).
 
+## Screenshots
+
+The screenshots below were captured from a running local build. See the
+[quickstart](docs/quickstart.md) and [workbench how-tos](docs/workbench-howtos.md)
+to reproduce the workflow.
+
+![Wattful-Iron workbench with no project selected](docs/images/workbench-home.png)
+
+![A tscircuit source file beside its generated schematic preview](docs/images/workbench-schematic.png)
+
+![The workbench simulation tab when a project has no simulation configured](docs/images/workbench-simulation.png)
+
 ## Development
 
 ```sh
@@ -66,6 +78,8 @@ it to `/data/projects`). `GET /healthz` is the container health endpoint.
 
 ## Documentation
 
+- [Quickstart: run the workbench and build a first circuit](docs/quickstart.md)
+- [Workbench how-tos: edit, preview, simulate, export, and connect MCP](docs/workbench-howtos.md)
 - [Architecture and feature status](docs/architecture.md)
 - [Manufacturing preflight and exports](docs/manufacturing.md)
 - [Deployment, proxy, backups, upgrades, and Swarm](docs/deployment.md)
