@@ -1,5 +1,6 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Editor from '@monaco-editor/react'
+import { configureMonaco } from './configureMonaco'
 import {
   createProject,
   getManufacturingArchive,
@@ -27,6 +28,8 @@ const views: Array<{ kind: PreviewKind | 'simulation'; label: string; tab: 'sche
 
 const initialBuild: BuildStatus = { status: 'idle' }
 const CircuitJsonPreview = lazy(() => import('@tscircuit/runframe').then((module) => ({ default: module.CircuitJsonPreview })))
+const PCBViewer = lazy(() => import('@tscircuit/pcb-viewer').then((module) => ({ default: module.PCBViewer })))
+type PcbCircuitJson = NonNullable<Parameters<typeof PCBViewer>[0]['circuitJson']>
 
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([])
@@ -214,7 +217,7 @@ export default function App() {
   return (
     <main className="workbench">
       <header className="topbar">
-        <a className="brand" href="#" aria-label="Circuits Workbench home"><span className="brand-mark">C</span><span>circuits</span></a>
+        <a className="brand" href="#" aria-label="Wattful-Iron workbench home"><img className="brand-logo" src="/Wattful-Iron.png" alt="" /><span>Wattful-Iron</span></a>
         <div className="project-heading">
           <span className="project-crumb">Projects</span>
           <span className="crumb-divider">/</span>
@@ -254,6 +257,7 @@ export default function App() {
           {project ? <Editor
             height="100%"
             language="typescript"
+            beforeMount={configureMonaco}
             path={filePath}
             theme="vs-dark"
             value={source}
@@ -271,7 +275,7 @@ export default function App() {
           </div>
           <div className="preview-content">
             {build.status === 'failed' && <div className="build-errors" role="alert"><div className="error-title"><span>!</span> Build failed</div>{build.diagnostics?.length ? build.diagnostics.map((diagnostic, index) => { const path = diagnostic.path || diagnostic.file; return <div className="diagnostic" key={`${path}-${diagnostic.line}-${index}`}><strong>{path}{diagnostic.line ? `:${diagnostic.line}` : ''}</strong><span>{diagnostic.message}</span></div> }) : <p>Check the source and build output for details.</p>}</div>}
-            {view === 'simulation' ? <SimulationPanel simulation={simulation} /> : preview ? <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={view === '3d' ? 'cad' : view} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : <div className="preview-placeholder">
+            {view === 'simulation' ? <SimulationPanel simulation={simulation} /> : preview ? view === 'pcb' ? <Suspense fallback={<div className="preview-loading">Loading PCB preview…</div>}><PcbPreview circuitJson={preview as PcbCircuitJson} /></Suspense> : <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview className="circuit-preview" key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={view === '3d' ? 'cad' : view} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : <div className="preview-placeholder">
               <div className="placeholder-board"><span className="board-edge edge-a" /><span className="board-edge edge-b" /><span className="board-chip chip-a" /><span className="board-chip chip-b" /><span className="board-pad pad-a" /><span className="board-pad pad-b" /><span className="board-route route-a" /><span className="board-route route-b" /></div>
               <h2>{project ? build.status === 'failed' ? 'Last good preview is unavailable' : 'Waiting for first build' : 'Your design workspace'}</h2>
               <p>{project ? build.status === 'failed' ? 'Fix the source and build again to update this view.' : 'Build the project to generate a schematic, PCB layout, and 3D preview.' : 'Create a project to see your design take shape.'}</p>
@@ -284,6 +288,27 @@ export default function App() {
       {error && <div className="toast-error" role="alert"><span>{error}</span>{error.includes('changed on disk') || error.includes('changed outside') ? <button className="reload-button" onClick={reloadFile}>Reload file</button> : null}<button aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
     </main>
   )
+}
+
+function PcbPreview({ circuitJson }: { circuitJson: PcbCircuitJson }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [height, setHeight] = useState(620)
+
+  useLayoutEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const updateHeight = () => setHeight(Math.min(Math.max(container.clientHeight, 620), window.innerHeight))
+    updateHeight()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateHeight)
+    observer?.observe(container)
+    window.addEventListener('resize', updateHeight)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', updateHeight)
+    }
+  }, [])
+
+  return <div ref={containerRef} className="pcb-preview"><PCBViewer circuitJson={circuitJson} height={height} /></div>
 }
 
 function SimulationPanel({ simulation }: { simulation: Simulation | null }) {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import App from '../src/App'
 
 const api = vi.hoisted(() => ({
@@ -21,12 +21,16 @@ vi.mock('@monaco-editor/react', () => ({
   ),
 }))
 vi.mock('@tscircuit/runframe', () => ({
-  CircuitJsonPreview: () => <div data-testid="circuit-preview">Circuit JSON preview</div>,
+  CircuitJsonPreview: ({ className }: { className?: string }) => <div className={className} data-testid="circuit-preview">Circuit JSON preview</div>,
+}))
+vi.mock('@tscircuit/pcb-viewer', () => ({
+  PCBViewer: ({ circuitJson }: { circuitJson: Array<{ type: string }> }) => <div data-testid="pcb-viewer" data-circuit-types={circuitJson.map((item) => item.type).join(',')} />,
 }))
 
 const existingProject = { id: 'led-1', name: 'LED Board', entrypoint: 'index.tsx', revision: 'rev-1' }
 
 beforeEach(() => {
+  cleanup()
   vi.clearAllMocks()
   api.listProjects.mockResolvedValue([existingProject])
   api.getProject.mockResolvedValue(existingProject)
@@ -44,9 +48,20 @@ describe('workbench', () => {
 
     expect(await screen.findByLabelText('TSX source editor')).toHaveValue('export default () => <board />')
     expect(await screen.findByTestId('circuit-preview')).toBeInTheDocument()
+    expect(screen.getByTestId('circuit-preview')).toHaveClass('circuit-preview')
     expect(screen.getByRole('tab', { name: 'Schematic' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'PCB' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '3D' })).toBeInTheDocument()
+  })
+
+  it('passes built circuit data into the PCB viewer', async () => {
+    api.getPreview.mockResolvedValue({ kind: 'pcb', revision: 'rev-1', circuitJson: [{ type: 'pcb_board' }, { type: 'pcb_component' }] })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board/ }))
+    fireEvent.click(screen.getByRole('tab', { name: 'PCB' }))
+
+    expect(await screen.findByTestId('pcb-viewer')).toHaveAttribute('data-circuit-types', 'pcb_board,pcb_component')
   })
 
   it('creates a project from the explorer and opens its entry file', async () => {

@@ -1,0 +1,5 @@
+{
+  "name": "footprint-comparison",
+  "private": true,
+  "dependencies": { "tscircuit": "0.0.2930" }
+}
