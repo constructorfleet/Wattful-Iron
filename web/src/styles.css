@@ -76,7 +76,7 @@ button { color: inherit; cursor: pointer; }
 .empty-glyph { display: grid; width: 46px; height: 46px; place-items: center; margin-bottom: 14px; border: 1px solid #34423c; border-radius: 12px; color: var(--accent); background: #202a26; font: 15px var(--mono); }
 .empty-editor h2, .preview-placeholder h2 { margin: 0 0 8px; color: #dce1e5; font-size: 14px; font-weight: 600; }
 .empty-editor p, .preview-placeholder p { max-width: 275px; margin: 0 0 17px; color: #7d8792; font-size: 11px; line-height: 1.6; }
-.preview-panel { display: flex; min-width: 0; min-height: 0; flex-direction: column; background: #171b20; }
+.preview-panel { display: flex; min-width: 0; min-height: 0; flex-direction: column; isolation: isolate; background: #171b20; }
 .preview-toolbar { padding: 0 16px; background: #191d23; }
 .view-tabs { display: flex; align-self: stretch; gap: 15px; }
 .view-tab { position: relative; padding: 1px 2px 0; color: #89939e; border: 0; background: none; font-size: 11px; }
