@@ -4,6 +4,7 @@ import App from '../src/App'
 
 const api = vi.hoisted(() => ({
   listProjects: vi.fn(),
+  listProjectTemplates: vi.fn(),
   createProject: vi.fn(),
   getProject: vi.fn(),
   getProjectFile: vi.fn(),
@@ -38,6 +39,10 @@ beforeEach(() => {
   cleanup()
   vi.clearAllMocks()
   api.listProjects.mockResolvedValue([existingProject])
+  api.listProjectTemplates.mockResolvedValue([
+    { id: 'blank-board', name: 'Blank starter', description: 'An empty board ready for your circuit.' },
+    { id: 'led-indicator', name: 'Connected LED indicator', description: 'A powered LED circuit with named nets.' },
+  ])
   api.getProject.mockResolvedValue(existingProject)
   api.getProjectFile.mockResolvedValue({ path: 'index.tsx', content: 'export default () => <board />', revision: 'rev-1' })
   api.getProjectHistory.mockResolvedValue({ revisions: [
@@ -89,8 +94,19 @@ describe('workbench', () => {
     fireEvent.change(screen.getByLabelText('Project name'), { target: { value: 'Sensor Board' } })
     fireEvent.click(screen.getByLabelText('Project name').closest('form')!.querySelector('button[type="submit"]')!)
 
-    await waitFor(() => expect(api.createProject).toHaveBeenCalledWith('Sensor Board'))
+    await waitFor(() => expect(api.createProject).toHaveBeenCalledWith('Sensor Board', 'blank-board'))
     expect(await screen.findByLabelText('TSX source editor')).toHaveValue('export default () => <board />')
+  })
+
+  it('creates a project from a selected built-in example', async () => {
+    render(<App />)
+    fireEvent.click(screen.getAllByRole('button', { name: /New project/ })[1])
+    fireEvent.change(screen.getByLabelText('Project name'), { target: { value: 'LED example' } })
+    await screen.findByRole('option', { name: 'Connected LED indicator' })
+    fireEvent.change(screen.getByLabelText('Start from'), { target: { value: 'led-indicator' } })
+    fireEvent.click(screen.getByLabelText('Project name').closest('form')!.querySelector('button[type="submit"]')!)
+
+    await waitFor(() => expect(api.createProject).toHaveBeenCalledWith('LED example', 'led-indicator'))
   })
 
   it('browses, compares, and restores a saved source revision', async () => {

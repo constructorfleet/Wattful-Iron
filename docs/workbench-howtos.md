@@ -20,23 +20,21 @@ example manufacturing board source is at
 
 ## Compare footprints and board mechanics
 
-Open **Footprint Comparison Study** to compare 0402, 0603, and 0805 resistor
+Create a **Footprint comparison** project to compare 0402, 0603, and 0805 resistor
 footprints at the same scale. The two rows use different resistance values;
 the plated holes mark the board ends. Edit the `pcbX` and `pcbY` values to
 reposition a part, or change the board dimensions to see how the outline moves.
 The example is a placement study: it has no electrical connections or copper
 routing, so it is not a manufacturing-ready circuit.
 
-Open **Mounting Pattern Study** to explore how a larger outline, four mounting
+Create a **Mounting pattern** project to explore how a larger outline, four mounting
 holes, two plated holes, and a small resistor group fit together. Try moving
 the mounting holes as a set, then inspect the PCB bounds and spacing in the
 viewer. This is also a mechanical layout study, not a connected sensor design.
 
-The source for both examples lives in
-[`examples/footprint-comparison`](../examples/footprint-comparison) and
-[`examples/mounting-pattern`](../examples/mounting-pattern). Copy an example's
-`index.circuit.tsx` into a project to experiment without changing the saved
-demo.
+Create either example from **New project** by choosing **Footprint comparison**
+or **Mounting pattern** under **Start from**. Wattful-Iron copies the source
+into your project, so edits do not change the repository example.
 
 ## Read a simulation result
 
@@ -104,10 +102,9 @@ keep it private and use HTTPS for connections over a network.
 
 ## Trace a powered example circuit
 
-Create a blank project for each example, copy the source from
-[`examples/led-indicator`](../examples/led-indicator) or
-[`examples/voltage-divider`](../examples/voltage-divider) into its entry file,
-then build and inspect both the Schematic and PCB tabs. The LED
+Create a project for each example from **New project** by choosing **Connected
+LED indicator** or **Filtered voltage divider** under **Start from**, then
+build and inspect both the Schematic and PCB tabs. The LED
 indicator connects a 2-pin JST-PH power connector through a 1 kΩ resistor and
 green LED.
 The voltage-divider example uses two 10 kΩ resistors for a half-supply `SENSE`

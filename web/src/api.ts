@@ -5,6 +5,7 @@ export type Project = {
   revision: string
   updatedAt?: string
 }
+export type ProjectTemplate = { id: string; name: string; description: string }
 
 export type ProjectFile = { path: string; content: string; revision: string }
 export type ProjectRevision = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes: number }
@@ -51,11 +52,12 @@ async function request<T>(url: string, init: RequestInit = {}, fetcher: Fetcher 
 }
 
 export const listProjects = (fetcher?: Fetcher) => request<Project[]>('/api/projects', undefined, fetcher)
+export const listProjectTemplates = (fetcher?: Fetcher) => request<ProjectTemplate[]>('/api/examples', undefined, fetcher)
 
-export const createProject = (name: string, fetcher?: Fetcher) => request<Project>('/api/projects', {
+export const createProject = (name: string, templateId?: string, fetcher?: Fetcher) => request<Project>('/api/projects', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ name }),
+  body: JSON.stringify({ name, templateId }),
 }, fetcher)
 
 export const getProject = (id: string, fetcher?: Fetcher) => request<Project>(`/api/projects/${encodeURIComponent(id)}`, undefined, fetcher)

@@ -13,6 +13,7 @@ import {
   getProjectHistory,
   getSimulation,
   listProjects,
+  listProjectTemplates,
   saveProjectFile,
   restoreProjectRevision,
   startBuild,
@@ -23,6 +24,7 @@ import {
   type ManufacturingProfile,
   type PreviewKind,
   type Project,
+  type ProjectTemplate,
   type ProjectEvent,
   type ProjectRevision,
   type RevisionComparison,
@@ -64,6 +66,8 @@ export default function App() {
   const [restoringHistory, setRestoringHistory] = useState(false)
   const [creating, setCreating] = useState(false)
   const [projectName, setProjectName] = useState('')
+  const [projectTemplate, setProjectTemplate] = useState('blank-board')
+  const [projectTemplates, setProjectTemplates] = useState<ProjectTemplate[]>([])
   const [saving, setSaving] = useState(false)
   const [exportingManufacturing, setExportingManufacturing] = useState(false)
   const [manufacturingProfile, setManufacturingProfile] = useState('board-default')
@@ -120,6 +124,10 @@ export default function App() {
       if (active) setError(cause instanceof Error ? cause.message : 'Unable to load projects')
     }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    listProjectTemplates().then(setProjectTemplates).catch(() => setProjectTemplates([]))
   }, [])
 
   useEffect(() => {
@@ -201,7 +209,7 @@ export default function App() {
     if (!name) return
     setError('')
     try {
-      const created = await createProject(name)
+      const created = await createProject(name, projectTemplate)
       setProjects((current) => [created, ...current.filter((item) => item.id !== created.id)])
       setCreating(false)
       setProjectName('')
@@ -318,6 +326,11 @@ export default function App() {
           {creating && <form className="create-form" onSubmit={handleCreate}>
             <label htmlFor="project-name">Project name</label>
             <input id="project-name" autoFocus value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="e.g. Sensor board" />
+            <label htmlFor="project-template">Start from</label>
+            <select id="project-template" value={projectTemplate} onChange={(event) => setProjectTemplate(event.target.value)}>
+              {projectTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+            </select>
+            {projectTemplates.find((template) => template.id === projectTemplate) && <small className="template-description">{projectTemplates.find((template) => template.id === projectTemplate)?.description}</small>}
             <div className="form-actions"><button type="button" className="quiet-button" onClick={() => setCreating(false)}>Cancel</button><button className="small-primary" type="submit">Create project</button></div>
           </form>}
           <button className="new-project-link" onClick={() => setCreating(true)}><span>＋</span> New project</button>

@@ -38,20 +38,20 @@ defaults.
 
 ## Create and build a board
 
-1. Select **New project** and enter a project name.
-2. Wait for the build indicator in the top bar to say **Ready**. New projects
-   start with a small editable board source file.
+1. Select **New project**, enter a project name, and choose **Blank starter** or
+   one of the built-in examples from **Start from**.
+2. Wait for the build indicator in the top bar to say **Ready**. The selected
+   example is copied into a normal editable project in your workspace.
 3. Edit `index.circuit.tsx`. Changes are saved automatically after a short
    pause. Use **Build** to request a fresh build; the top bar shows its state.
 4. Select **Schematic** or **PCB** above the preview to inspect those views.
    The **3D** tab opens the CAD view when it is available.
 
-To use the example shown below, copy the source from
-[`examples/manufacturing-board/index.circuit.tsx`](../examples/manufacturing-board/index.circuit.tsx)
-into the editor, wait for the save indicator, and select **Build**. It defines
-a 20 mm by 12 mm board, two resistors, a plated hole, and a non-plated hole.
-The source editor enables JSX parsing for TypeScript source. Use the top-bar
-build status and preview diagnostics to check the server build result.
+Choose **Manufacturing preview** in **Start from** to open the example shown
+below. It defines a 20 mm by 12 mm board, two resistors, a plated hole, and a
+non-plated hole. The source editor enables JSX parsing for TypeScript source.
+Use the top-bar build status and preview diagnostics to check the server build
+result.
 
 ![Example source and its generated schematic](images/workbench-schematic.png)
 

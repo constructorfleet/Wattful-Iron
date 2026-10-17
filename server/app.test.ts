@@ -33,6 +33,33 @@ test("project creation returns an editable tscircuit starter and project listing
   }
 })
 
+test("built-in examples are listed and copied into independent editable projects", async () => {
+  const f = await fixture(async () => circuit)
+  try {
+    const examples = await request(f.app).get("/api/examples").expect(200)
+    assert.ok(examples.body.some((example: { id: string }) => example.id === "blank-board"))
+    assert.ok(examples.body.some((example: { id: string }) => example.id === "led-indicator"))
+    assert.ok(examples.body.some((example: { id: string }) => example.id === "voltage-divider"))
+    for (const example of examples.body as Array<{ id: string; name: string }>) {
+      const created = await request(f.app).post("/api/projects").send({ name: example.name, templateId: example.id }).expect(201)
+      const file = await request(f.app).get(`/api/projects/${created.body.id}/files`).query({ path: created.body.entrypoint }).expect(200)
+      assert.match(file.body.content, /export default/)
+      assert.ok(file.body.content.length > 30, `${example.id} should have its own circuit source`)
+      assert.ok(file.body.revision)
+      assert.equal(file.body.content, await readFile(path.resolve(`examples/${example.id}/index.circuit.tsx`), "utf8"))
+      if (example.id === "led-indicator") {
+        const sharedSource = await readFile(path.resolve("examples/led-indicator/index.circuit.tsx"), "utf8")
+        await request(f.app).put(`/api/projects/${created.body.id}/files`).query({ path: created.body.entrypoint })
+          .set("If-Match", file.body.revision).send({ content: `${file.body.content}\n// local edit`, revision: file.body.revision }).expect(200)
+        assert.equal(await readFile(path.resolve("examples/led-indicator/index.circuit.tsx"), "utf8"), sharedSource)
+      }
+    }
+    await request(f.app).post("/api/projects").send({ name: "Invalid", templateId: "../outside" }).expect(400)
+  } finally {
+    await f.cleanup()
+  }
+})
+
 test("project metadata can be renamed and deletion requires current revision and explicit name confirmation", async () => {
   const f = await fixture(async () => circuit)
   try {
