@@ -27,7 +27,11 @@
     "zod4": "npm:zod@4.6.7"
   },
   "overrides": {
-    "sharp": "0.35.5"
+    "sharp": "0.35.5",
+    "tscircuit": {
+      "react-router": "7.18.4",
+      "react-router-dom": "7.18.4"
+    }
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.3.1",
