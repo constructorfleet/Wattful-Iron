@@ -21,7 +21,7 @@ vi.mock('@monaco-editor/react', () => ({
   ),
 }))
 vi.mock('@tscircuit/runframe', () => ({
-  CircuitJsonPreview: () => <div data-testid="circuit-preview">Circuit JSON preview</div>,
+  CircuitJsonPreview: ({ className }: { className?: string }) => <div className={className} data-testid="circuit-preview">Circuit JSON preview</div>,
 }))
 
 const existingProject = { id: 'led-1', name: 'LED Board', entrypoint: 'index.tsx', revision: 'rev-1' }
@@ -44,6 +44,7 @@ describe('workbench', () => {
 
     expect(await screen.findByLabelText('TSX source editor')).toHaveValue('export default () => <board />')
     expect(await screen.findByTestId('circuit-preview')).toBeInTheDocument()
+    expect(screen.getByTestId('circuit-preview')).toHaveClass('circuit-preview')
     expect(screen.getByRole('tab', { name: 'Schematic' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'PCB' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '3D' })).toBeInTheDocument()

@@ -83,6 +83,7 @@ button { color: inherit; cursor: pointer; }
 .preview-meta { color: #727d87; font: 9px var(--mono); }
 .preview-content { position: relative; flex: 1; min-height: 0; overflow: hidden; background-color: #15191e; background-image: radial-gradient(#293039 0.65px, transparent 0.65px); background-size: 15px 15px; }
 .preview-content > div { height: 100%; }
+.circuit-preview [role="tablist"] { display: none; }
 .preview-loading { display: grid; height: 100%; place-items: center; color: #87918c; font: 11px var(--mono); }
 .simulation-empty { display: flex; height: 100%; flex-direction: column; align-items: center; justify-content: center; padding: 28px; color: #aeb9c2; text-align: center; }
 .simulation-empty h2,.simulation-heading h2 { margin: 0 0 9px; color: #d7e0e6; font-size: 13px; }
