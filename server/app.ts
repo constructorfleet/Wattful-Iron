@@ -4,6 +4,8 @@ import { access, lstat, mkdir, readFile, readdir, rename, rm, symlink, writeFile
 import path from "node:path"
 import express, { type Express, type Request, type Response } from "express"
 import chokidar, { type FSWatcher } from "chokidar"
+import { KicadToCircuitJsonConverter } from "kicad-to-circuit-json"
+import { convertCircuitJsonToTscircuit } from "circuit-json-to-tscircuit"
 import { mountMcp } from "./mcp.js"
 import { createGerberArchive, mountManufacturingRoutes } from "./manufacturing.js"
 import { getSimulationResults } from "./simulation.js"
@@ -99,6 +101,54 @@ class ProjectService {
     return project
   }
 
+  async importSchematics(name: string, files: Array<{ name: string; content: string }>) {
+    const converter = new KicadToCircuitJsonConverter()
+    for (const file of files) converter.addFile(file.name, file.content)
+    try { converter.runUntilFinished() } catch (error) {
+      throw badRequest(`Unable to convert KiCad schematic: ${error instanceof Error ? error.message : "invalid schematic"}`)
+    }
+    const circuitJson = converter.getOutput()
+    const sourceComponents = circuitJson.filter((item) => item.type === "source_component").length
+    if (!sourceComponents) throw badRequest("No schematic components could be imported; check that the files contain supported KiCad symbols")
+    let generated: string
+    try {
+      generated = convertCircuitJsonToTscircuit(circuitJson as never, { componentName: "ImportedSchematic" })
+    } catch (error) {
+      throw badRequest(`Unable to create editable tscircuit source: ${error instanceof Error ? error.message : "conversion failed"}`)
+    }
+    const entrypoint = "index.circuit.tsx"
+    const source = `${generated}\n\nexport default () => (\n  <board routingDisabled>\n    <ImportedSchematic />\n  </board>\n)\n`
+    const id = randomUUID()
+    const dir = this.projectDir(id)
+    await mkdir(path.join(dir, ".workbench"), { recursive: true })
+    await mkdir(path.join(dir, "imports"), { recursive: true })
+    const project: ProjectData = { id, name: name.trim(), entrypoint, revision: newRevision() }
+    await writeFile(path.join(dir, entrypoint), source)
+    await writeFile(path.join(dir, ".workbench", "imported-circuit.json"), JSON.stringify(circuitJson))
+    const projectPackage = JSON.stringify({ name: safePackageName(name), private: true, dependencies: { tscircuit: "0.0.2930" } }, null, 2) + "\n"
+    await writeFile(path.join(dir, "package.json"), projectPackage)
+    for (const file of files) await writeFile(path.join(dir, "imports", path.basename(file.name)), file.content)
+    this.ownFileHashes.set(path.join(dir, entrypoint), digest(source))
+    this.ownFileHashes.set(path.join(dir, "package.json"), digest(projectPackage))
+    for (const file of files) this.ownFileHashes.set(path.join(dir, "imports", path.basename(file.name)), digest(file.content))
+    await this.linkNodeModules(dir)
+    const state: ProjectState = {
+      project: { ...project, lastBuild: { buildId: randomUUID(), revision: project.revision, status: "ready", diagnostics: [], updatedAt: new Date().toISOString() }, previewRevision: project.revision },
+      preview: circuitJson,
+    }
+    this.states.set(id, state)
+    await this.storeSnapshot(id, project.revision, [entrypoint, "package.json", ...files.map((file) => `imports/${path.basename(file.name)}`)])
+    await this.persist(state)
+    this.watch(id)
+    this.emit(id, "project", { project })
+    this.scheduleBuild(id, 0)
+    return {
+      project,
+      sourceComponents,
+      warnings: [...converter.getWarnings(), "The imported Circuit JSON is the faithful preview; generated tscircuit source is best-effort. Editing the source switches future builds to normal tscircuit compilation."],
+    }
+  }
+
   async get(id: string) {
     return this.state(id).project
   }
@@ -158,6 +208,7 @@ class ProjectService {
       const temporary = absolute + "." + randomUUID() + ".tmp"
       await writeFile(temporary, content, "utf8")
       await rename(temporary, absolute)
+      await rm(path.join(this.projectDir(id), ".workbench", "imported-circuit.json"), { force: true })
       this.ownFileHashes.set(absolute, digest(content))
       state.project.revision = newRevision()
       await this.storeSnapshot(id, state.project.revision, [cleanRelative(relativePath)])
@@ -202,6 +253,7 @@ class ProjectService {
     return this.withWriteLock(id, async () => {
       const state = this.state(id)
       this.assertRevision(state.project, expectedRevision)
+      await rm(path.join(this.projectDir(id), ".workbench", "imported-circuit.json"), { force: true })
       const snapshot = (await this.readSnapshots(id)).find((item) => item.revision === revision)
       if (!snapshot) throw Object.assign(new Error("Project revision not found in retained history"), { status: 404 })
       const currentFiles = await this.getFileList(id)
@@ -443,6 +495,7 @@ class ProjectService {
     void this.withWriteLock(id, async () => {
       const state = this.states.get(id)
       if (!state) return
+      await rm(path.join(this.projectDir(id), ".workbench", "imported-circuit.json"), { force: true })
       state.project.revision = newRevision()
       await this.storeSnapshot(id, state.project.revision, [relative])
       await this.persist(state)
@@ -474,7 +527,9 @@ class ProjectService {
     try {
       await this.persist(state)
       this.emit(id, "build.status", { buildId, revision, status: "compiling", step: "compiling" })
-      const circuitJson = await this.buildCircuit(this.projectDir(id), state.project.entrypoint)
+      let circuitJson: unknown
+      try { circuitJson = JSON.parse(await readFile(path.join(this.projectDir(id), ".workbench", "imported-circuit.json"), "utf8")) }
+      catch { circuitJson = await this.buildCircuit(this.projectDir(id), state.project.entrypoint) }
       if (state.project.revision !== revision) { this.rerunBuild.add(id); return }
       state.preview = circuitJson
       state.project.previewRevision = revision
@@ -534,6 +589,26 @@ export function createApp(options: AppOptions = {}): Express {
       const templateId = request.body?.templateId
       if (templateId !== undefined && typeof templateId !== "string") throw badRequest("Project template must be a string")
       response.status(201).json(await service.create(name, templateId))
+    } catch (error) { next(error) }
+  })
+  app.post("/api/projects/import", async (request, response, next) => {
+    try {
+      const name = typeof request.body?.name === "string" ? request.body.name.trim() : ""
+      const files = request.body?.files
+      if (!name || name.length > 100) throw badRequest("Project name must contain 1 to 100 characters")
+      if (!Array.isArray(files) || files.length < 1 || files.length > 10) throw badRequest("Choose between 1 and 10 KiCad schematic files")
+      let totalBytes = 0
+      const normalized = files.map((file: unknown) => {
+        const candidate = file as { name?: unknown; content?: unknown }
+        if (typeof candidate.name !== "string" || typeof candidate.content !== "string") throw badRequest("Each schematic must include a filename and text content")
+        const filename = path.basename(candidate.name)
+        if (filename !== candidate.name || !/\.kicad_sch$/i.test(filename)) throw badRequest("Only modern KiCad .kicad_sch files are supported")
+        totalBytes += Buffer.byteLength(candidate.content)
+        return { name: filename, content: candidate.content }
+      })
+      if (new Set(normalized.map((file) => file.name.toLowerCase())).size !== normalized.length) throw badRequest("Schematic filenames must be unique")
+      if (totalBytes > 1_800_000) throw badRequest("Combined schematic size must be under 1.8 MB")
+      response.status(201).json(await service.importSchematics(name, normalized))
     } catch (error) { next(error) }
   })
   app.get("/api/projects/:id", async (request, response, next) => {

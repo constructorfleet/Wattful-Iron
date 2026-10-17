@@ -60,6 +60,16 @@ export const createProject = (name: string, templateId?: string, fetcher?: Fetch
   body: JSON.stringify({ name, templateId }),
 }, fetcher)
 
+export const importSchematics = (name: string, files: Array<{ name: string; content: string }>, fetcher?: Fetcher) => request<{
+  project: Project
+  sourceComponents: number
+  warnings: string[]
+}>('/api/projects/import', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ name, files }),
+}, fetcher)
+
 export const getProject = (id: string, fetcher?: Fetcher) => request<Project>(`/api/projects/${encodeURIComponent(id)}`, undefined, fetcher)
 
 const fileUrl = (id: string, path: string) => `/api/projects/${encodeURIComponent(id)}/files?path=${encodeURIComponent(path)}`
