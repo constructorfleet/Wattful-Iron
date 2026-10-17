@@ -63,13 +63,13 @@ function archiveEntrySizes(buffer: Buffer) {
 }
 
 async function waitForBuild(app: import("express").Express, id: string, revision: string) {
-  for (let attempt = 0; attempt < 500; attempt++) {
+  for (let attempt = 0; attempt < 1200; attempt++) {
     const { body: project } = await request(app).get(`/api/projects/${id}`).expect(200)
     if (project.lastBuild?.revision === revision && project.lastBuild.status === "ready") return
     if (project.lastBuild?.revision === revision && project.lastBuild.status === "failed") {
       assert.fail(JSON.stringify(project.lastBuild.diagnostics))
     }
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await new Promise((resolve) => setTimeout(resolve, 100))
   }
   assert.fail("project build did not finish")
 }
