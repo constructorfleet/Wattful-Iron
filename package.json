@@ -9,19 +9,30 @@
     "test": "tsx --test server/**/*.test.ts && npm --prefix web test"
   },
   "dependencies": {
+    "@modelcontextprotocol/express": "2.0.2",
+    "@modelcontextprotocol/node": "2.1.1",
+    "@modelcontextprotocol/server": "2.3.1",
+    "@tscircuit/circuit-json-util": "0.0.122",
+    "calculate-packing": "0.0.90",
     "chokidar": "4.0.3",
+    "circuit-json-to-connectivity-map": "0.0.33",
     "express": "5.1.0",
-    "tscircuit": "0.0.2930"
+    "react": "19.1.0",
+    "three": "0.179.1",
+    "tscircuit": "0.0.2930",
+    "typescript": "5.8.3",
+    "zod": "3.25.76",
+    "zod4": "npm:zod@4.6.7"
   },
   "overrides": {
     "sharp": "0.35.5"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
     "@types/express": "5.0.3",
     "@types/node": "24.0.10",
     "@types/supertest": "6.0.3",
     "supertest": "7.1.1",
-    "tsx": "4.20.3",
-    "typescript": "5.8.3"
+    "tsx": "4.20.3"
   }
 }

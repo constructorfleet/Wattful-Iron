@@ -112,7 +112,7 @@ jobs:
     name: Publish to GitHub Container Registry
     if: >-
       github.event_name == 'push' &&
-      github.repository == 'ConstructorFleet/circuits' &&
+      github.repository == 'constructorfleet/Wattful-Iron' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: validate-image
     runs-on: ubuntu-latest
@@ -136,7 +136,7 @@ jobs:
         id: metadata
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/constructorfleet/circuits
+          images: ghcr.io/constructorfleet/wattful-iron
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}

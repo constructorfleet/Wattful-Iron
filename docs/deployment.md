@@ -18,6 +18,11 @@ use a private interface only when a remote proxy needs to reach it, and apply
 firewall rules. The app listens on port 3000 in the container and uses
 `/data/projects` for projects.
 
+Set `MCP_AUTH_TOKEN` in `.env` to enable the MCP endpoint; leave it empty to
+keep `/mcp` disabled. The token is shared across MCP clients. It does not
+authenticate the browser or REST API, so keep the app private behind a trusted
+proxy and apply access control there when needed.
+
 To use a published image instead of building from the checkout, set
 `CIRCUITS_IMAGE` in `.env` to a version tag or immutable digest, then:
 
@@ -48,9 +53,9 @@ circuits.example.com {
 ```
 
 Allow HTTP/1.1 or HTTP/2 streaming responses and avoid response buffering or
-short idle timeouts for the SSE endpoint. The application currently has no
-built-in authentication; proxy authentication does not add project-level
-authorization. See [security](security.md).
+short idle timeouts for the SSE endpoint. The browser and REST API currently
+have no built-in authentication; the MCP endpoint can use one shared bearer
+token but does not add project-level authorization. See [security](security.md).
 
 ## Docker Swarm
 
@@ -62,7 +67,7 @@ provide shared storage and have verified the app's concurrency behavior.
 Example with a published image and a private network boundary:
 
 ```sh
-CIRCUITS_IMAGE=ghcr.io/constructorfleet/circuits:VERSION \
+CIRCUITS_IMAGE=ghcr.io/constructorfleet/wattful-iron:VERSION \
 BIND_ADDRESS=0.0.0.0 HTTP_PORT=3000 \
 docker stack deploy -c docker-compose.yml circuits
 ```
