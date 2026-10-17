@@ -17,9 +17,48 @@ const elements = [
 test("manufacturing preflight accepts the current successful board and reports limits", () => {
   const result = checkManufacturability(elements, { status: "ready", revision: "rev-1" }, "rev-1")
   assert.equal(result.ready, true)
+  assert.equal(result.profile.id, "board-default")
   assert.equal(result.checks.find(({ id }) => id === "bom-review")?.status, "warning")
-  assert.equal(result.checks.find(({ id }) => id === "electrical-validation")?.status, "warning")
-  assert.equal(result.checks.find(({ id }) => id === "fabricator-profile")?.status, "warning")
+  assert.equal(result.checks.find(({ id }) => id === "circuit-errors")?.status, "pass")
+  assert.equal(result.checks.find(({ id }) => id === "trace-width")?.status, "warning")
+})
+
+test("fabricator profile blocks traces and non-plated holes below its published minima", () => {
+  const result = checkManufacturability([
+    ...elements,
+    { type: "pcb_trace", pcb_trace_id: "trace-1", route: [{ route_type: "wire", x: 0, y: 0, width: 0.08, layer: "top" }] },
+    { type: "pcb_hole", pcb_hole_id: "hole-1", hole_shape: "circle", x: 0, y: 0, hole_diameter: 0.4 },
+  ], { status: "ready", revision: "rev-1" }, "rev-1", "rev-1", "jlcpcb-2layer-1oz")
+  assert.equal(result.ready, false)
+  assert.equal(result.checks.find(({ id }) => id === "trace-width")?.status, "fail")
+  assert.equal(result.checks.find(({ id }) => id === "hole-size")?.status, "fail")
+})
+
+test("preflight reports Circuit JSON validation errors and warnings", () => {
+  const result = checkManufacturability([
+    ...elements,
+    { type: "pcb_port_not_connected_error", message: "U1 pin 2 is not connected" },
+    { type: "source_pin_missing_trace_warning", message: "R1 pin 1 has no trace" },
+  ], { status: "ready", revision: "rev-1" }, "rev-1")
+  assert.equal(result.ready, false)
+  assert.equal(result.checks.find(({ id }) => id === "circuit-errors")?.status, "fail")
+  assert.equal(result.checks.find(({ id }) => id === "circuit-warnings")?.status, "warning")
+})
+
+test("fabricator profile checks copper clearance to a rectangular board edge", () => {
+  const result = checkManufacturability([
+    ...elements,
+    { type: "pcb_trace", pcb_trace_id: "trace-1", route: [{ route_type: "wire", x: 9.9, y: 0, width: 0.1, layer: "top" }] },
+  ], { status: "ready", revision: "rev-1" }, "rev-1", "rev-1", "jlcpcb-2layer-1oz")
+  assert.equal(result.checks.find(({ id }) => id === "board-edge-clearance")?.status, "fail")
+})
+
+test("fabricator profile blocks a declared layer-count or material mismatch", () => {
+  const result = checkManufacturability([
+    { ...elements[0], num_layers: 4, material: "fr4" },
+    ...elements.slice(1),
+  ], { status: "ready", revision: "rev-1" }, "rev-1", "rev-1", "jlcpcb-2layer-1oz")
+  assert.equal(result.checks.find(({ id }) => id === "board-stackup")?.status, "fail")
 })
 
 test("manufacturing preflight blocks stale or unsuccessful builds", () => {
@@ -56,6 +95,25 @@ test("manufacturing preflight endpoint returns current build checks", async () =
   const response = await request(app).get("/api/projects/project-id/manufacturing").expect(200)
   assert.equal(response.body.projectRevision, "rev-1")
   assert.equal(response.body.preflight.ready, true)
+  assert.equal(response.body.preflight.profile.id, "board-default")
+  const selected = await request(app).get("/api/projects/project-id/manufacturing?profile=jlcpcb-2layer-1oz").expect(200)
+  assert.equal(selected.body.preflight.profile.id, "jlcpcb-2layer-1oz")
+  await request(app).get("/api/projects/project-id/manufacturing?profile=unknown").expect(400)
+})
+
+test("manufacturing profiles include JLCPCB rigid two-layer one-ounce limits", async () => {
+  const app = express()
+  mountManufacturingRoutes(app, {
+    get: async () => ({ revision: "rev-1" }),
+    preview: async () => ({ revision: "rev-1", circuitJson: [] }),
+    exportGerbers: async () => { throw new Error("not expected") },
+  })
+  const response = await request(app).get("/api/manufacturing/profiles").expect(200)
+  const profile = response.body.profiles.find((item: { id: string }) => item.id === "jlcpcb-2layer-1oz")
+  assert.equal(profile.label, "JLCPCB rigid PCB, 2-layer, 1 oz")
+  assert.equal(profile.rules.minTraceWidthMm, 0.1)
+  assert.equal(profile.rules.minNonPlatedHoleMm, 0.5)
+  assert.equal(profile.rules.copperToBoardEdgeMm, 0.2)
 })
 
 test("installed tsci gerbers export packages Gerbers, drills, BOM, and pick-and-place", async () => {
@@ -159,6 +217,19 @@ test("manufacturing download does not export when preflight fails", async () => 
   const response = await request(app).get("/api/projects/project-id/manufacturing.zip").expect(422)
   assert.equal(exportCalled, false)
   assert.equal(response.body.preflight.ready, false)
+})
+
+test("manufacturing download applies the selected profile before exporting", async () => {
+  const app = express()
+  let exportCalled = false
+  mountManufacturingRoutes(app, {
+    get: async () => ({ revision: "rev-1", lastBuild: { status: "ready", revision: "rev-1" } }),
+    preview: async () => ({ revision: "rev-1", circuitJson: [...elements, { type: "pcb_hole", hole_shape: "circle", hole_diameter: 0.4 }] }),
+    exportGerbers: async () => { exportCalled = true; return "/tmp/never.zip" },
+  })
+  const response = await request(app).get("/api/projects/project-id/manufacturing.zip?profile=jlcpcb-2layer-1oz").expect(422)
+  assert.equal(exportCalled, false)
+  assert.equal(response.body.preflight.profile.id, "jlcpcb-2layer-1oz")
 })
 
 test("manufacturing download rejects a project revision change and cleans its temporary ZIP", async () => {

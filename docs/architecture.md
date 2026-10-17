@@ -26,10 +26,12 @@ or high-availability service. Run one app replica against one project volume.
   probe to Circuit JSON net correlation.
 - An optional bearer-token protected Streamable HTTP MCP endpoint with project,
   build, preview, diagnostics, and simulation tools.
-- A `/api/projects/:id/manufacturing` completeness preflight for current builds,
-  PCB presence, reference designators, and footprints.
+- A `/api/projects/:id/manufacturing` preflight for current builds, Circuit JSON
+  ERC/DRC diagnostics, and a limited set of selected fabricator rule checks.
 - A preflight-gated `/api/projects/:id/manufacturing.zip` download using
   tscircuit's verified Gerber/drill/BOM/pick-and-place ZIP export.
+- Board-default and JLCPCB rigid two-layer, one-ounce profiles for checking
+  trace width, non-plated hole diameter, and rectangular board edge clearance.
 - Docker Compose deployment with a persistent projects volume.
 
 Preview availability and fidelity depend on the supported tscircuit output for
@@ -44,9 +46,9 @@ manufacturing sign-off.
 
 The following capabilities in the project vision are not available in this
 slice: ACP servers, user-level authentication and authorization, sandboxed
-execution of user code, dedicated ERC/DRC, interactive connectivity tracing,
-fabricator profiles, Git-backed revision history, approval states, and
-purchasing or fabrication integrations. The MCP bearer token is optional
+execution of user code, full dedicated ERC/DRC, interactive connectivity
+tracing, complete fabricator rule coverage, Git-backed revision history,
+approval states, and purchasing or fabrication integrations. The MCP bearer token is optional
 and shared by all clients; it does not protect the browser or REST API.
 Simulation results are retained with the successful Circuit JSON build rather
 than executed on demand. Project files persist on disk, but there is no source

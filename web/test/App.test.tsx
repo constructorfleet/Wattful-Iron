@@ -11,6 +11,8 @@ const api = vi.hoisted(() => ({
   startBuild: vi.fn(),
   getPreview: vi.fn(),
   getSimulation: vi.fn(),
+  getManufacturingProfiles: vi.fn(),
+  getManufacturingPreflight: vi.fn(),
   subscribeToProject: vi.fn(() => () => {}),
 }))
 
@@ -37,6 +39,11 @@ beforeEach(() => {
   api.getProjectFile.mockResolvedValue({ path: 'index.tsx', content: 'export default () => <board />', revision: 'rev-1' })
   api.getPreview.mockResolvedValue({ kind: 'schematic', revision: 'rev-1', circuitJson: [] })
   api.getSimulation.mockResolvedValue({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], diagnostics: [] })
+  api.getManufacturingProfiles.mockResolvedValue({ profiles: [
+    { id: 'board-default', label: 'Board defaults', description: 'Use board rules.', rules: { minTraceWidthMm: 0, minNonPlatedHoleMm: 0, copperToBoardEdgeMm: 0 } },
+    { id: 'jlcpcb-2layer-1oz', label: 'JLCPCB rigid PCB, 2-layer, 1 oz', description: 'JLCPCB baseline.', rules: { minTraceWidthMm: 0.1, minNonPlatedHoleMm: 0.5, copperToBoardEdgeMm: 0.2 } },
+  ] })
+  api.getManufacturingPreflight.mockResolvedValue({ preflight: { ready: true, profile: { id: 'board-default', label: 'Board defaults' }, checks: [{ id: 'circuit-errors', status: 'pass', message: 'No Circuit JSON ERC/DRC errors were reported.' }] } })
   api.createProject.mockResolvedValue({ ...existingProject, id: 'new-1', name: 'Sensor Board' })
 })
 
@@ -75,5 +82,16 @@ describe('workbench', () => {
 
     await waitFor(() => expect(api.createProject).toHaveBeenCalledWith('Sensor Board'))
     expect(await screen.findByLabelText('TSX source editor')).toHaveValue('export default () => <board />')
+  })
+
+  it('shows selected-profile preflight checks before manufacturing export', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Rule checks/ }))
+
+    expect(await screen.findByRole('dialog', { name: 'Manufacturing preflight' })).toBeInTheDocument()
+    expect(await screen.findByText('No Circuit JSON ERC/DRC errors were reported.')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Fabricator rule profile'), { target: { value: 'jlcpcb-2layer-1oz' } })
+    await waitFor(() => expect(api.getManufacturingPreflight).toHaveBeenCalledWith('led-1', 'jlcpcb-2layer-1oz'))
   })
 })
