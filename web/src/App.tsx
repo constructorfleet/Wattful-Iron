@@ -214,7 +214,7 @@ export default function App() {
   return (
     <main className="workbench">
       <header className="topbar">
-        <a className="brand" href="#" aria-label="Circuits Workbench home"><span className="brand-mark">C</span><span>circuits</span></a>
+        <a className="brand" href="#" aria-label="Wattful-Iron workbench home"><img className="brand-logo" src="/Wattful-Iron.png" alt="" /><span>Wattful-Iron</span></a>
         <div className="project-heading">
           <span className="project-crumb">Projects</span>
           <span className="crumb-divider">/</span>
