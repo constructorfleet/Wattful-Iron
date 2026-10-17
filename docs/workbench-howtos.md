@@ -64,10 +64,12 @@ board outline, two placed components, plated hole, and non-plated hole.
    build of the current source revision.
 3. Review the downloaded ZIP with your fabricator and assembler before use.
 
-The preflight checks for a PCB board, current build, reference designators,
-and placed PCB footprints. It reports missing placed components as a warning.
-It does not run ERC/DRC or apply a vendor design-rule profile. The ZIP contains
-Gerber layers, drill files when needed, a BOM, and pick-and-place data. Read
+The preflight checks the current successful build, PCB board, reference
+designators, placed footprints, Circuit JSON errors, and the selected rule
+profile. The JLCPCB profile covers trace width, non-plated hole diameter,
+rectangular board-edge clearance, and declared layer/material compatibility;
+it does not cover every DRC or assembly rule. The ZIP contains Gerber layers,
+drill files when needed, a BOM, and pick-and-place data. Read
 [manufacturing preflight](manufacturing.md) for the exact checks and limits.
 
 ## Connect an MCP client
@@ -99,3 +101,29 @@ keep it private and use HTTPS for connections over a network.
 - **The editor reports that JSX is disabled:** reload the workbench so Monaco
   applies its JSX-enabled TypeScript settings. Use the server's **Ready** or
   **Failed** build result to check the tscircuit build.
+
+## Trace a powered example circuit
+
+Create a blank project for each example, copy the source from
+[`examples/led-indicator`](../examples/led-indicator) or
+[`examples/voltage-divider`](../examples/voltage-divider) into its entry file,
+then build and inspect both the Schematic and PCB tabs. The LED
+indicator connects a 2-pin JST-PH power connector through a 1 kΩ resistor and
+green LED.
+The voltage-divider example uses two 10 kΩ resistors for a half-supply `SENSE`
+output and a 100 nF capacitor to filter that node. Their named traces join
+specific component pins, so the schematic nets and PCB copper come from the
+same source connections.
+
+![Routed LED indicator PCB](images/led-indicator-pcb.png)
+
+![Routed voltage-divider PCB](images/voltage-divider-pcb.png)
+
+These are teaching layouts, not reviewed production designs. Both use the
+JST-PH 2-pin connector standard. The LED example uses a Lite-On
+LTST-C190KGKT; check part availability, pin orientation, input limits, and
+your assembler's exact footprints. The voltage-divider output is unbuffered
+and will vary with the load. Run the assembler's full electrical and
+manufacturing-rule checks and review the generated Gerbers before ordering.
+Wattful-Iron's preflight does not certify these electrical choices or guarantee
+a fabricator's acceptance.
