@@ -45,6 +45,34 @@ test("preflight reports Circuit JSON validation errors and warnings", () => {
   assert.equal(result.checks.find(({ id }) => id === "circuit-warnings")?.status, "warning")
 })
 
+test("manufacturing preflight blocks source connections without a routed PCB trace", () => {
+  const result = checkManufacturability([
+    ...elements,
+    { type: "source_trace", source_trace_id: "source_trace_1" },
+    { type: "pcb_trace", pcb_trace_id: "pcb_trace_1", source_trace_id: "source_trace_1", route: [] },
+    { type: "source_trace", source_trace_id: "source_trace_2" },
+  ], { status: "ready", revision: "rev-1" }, "rev-1")
+
+  assert.equal(result.ready, false)
+  assert.equal(result.checks.find(({ id }) => id === "routed-connections")?.status, "fail")
+  assert.match(result.checks.find(({ id }) => id === "routed-connections")?.message ?? "", /source_trace_1.*source_trace_2/)
+})
+
+test("routing preflight warns when Circuit JSON has no logical connections to verify", () => {
+  const result = checkManufacturability(elements, { status: "ready", revision: "rev-1" }, "rev-1")
+  assert.equal(result.checks.find(({ id }) => id === "routed-connections")?.status, "warning")
+})
+
+test("routing preflight passes when every logical source trace has PCB route geometry", () => {
+  const result = checkManufacturability([
+    ...elements,
+    { type: "source_trace", source_trace_id: "source_trace_1" },
+    { type: "pcb_trace", pcb_trace_id: "pcb_trace_1", source_trace_id: "source_trace_1", route: [{ route_type: "wire", x: 0, y: 0, width: 0.2 }] },
+  ], { status: "ready", revision: "rev-1" }, "rev-1")
+
+  assert.equal(result.checks.find(({ id }) => id === "routed-connections")?.status, "pass")
+})
+
 test("fabricator profile checks copper clearance to a rectangular board edge", () => {
   const result = checkManufacturability([
     ...elements,

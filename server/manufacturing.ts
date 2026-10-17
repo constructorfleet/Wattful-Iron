@@ -37,6 +37,7 @@ export function checkManufacturability(circuitJson: unknown, build: BuildState, 
   const profile = manufacturingRuleProfiles.find(({ id }) => id === profileId) ?? manufacturingRuleProfiles[0]!
   const ruleChecks = checkProfileRules(items, profile)
   const validationChecks = checkCircuitValidation(items)
+  const routingCheck = checkRoutedConnections(items)
   const checks: ManufacturingCheck[] = [
     build.status === "ready" && build.revision === previewRevision && previewRevision === projectRevision
       ? { id: "build", status: "pass", message: "Latest project revision built successfully." }
@@ -54,10 +55,31 @@ export function checkManufacturability(circuitJson: unknown, build: BuildState, 
       ? { id: "footprints", status: "pass", message: "Source components have placed PCB footprint geometry." }
       : { id: "footprints", status: "fail", message: "One or more source components lack placed PCB footprint geometry." },
     ...validationChecks,
+    routingCheck,
     ...ruleChecks,
     { id: "bom-review", status: "warning", message: "Review generated BOM supplier part numbers and values before ordering." },
   ]
   return { ready: checks.every((check) => check.status !== "fail"), profile: { id: profile.id, label: profile.label }, checks }
+}
+
+function checkRoutedConnections(items: Record<string, unknown>[]): ManufacturingCheck {
+  const sourceTraces = items.filter((item) => item.type === "source_trace")
+  if (sourceTraces.length === 0) {
+    return { id: "routed-connections", status: "warning", message: "No logical source traces were found; routed connectivity could not be verified." }
+  }
+
+  const pcbTraces = items.filter((item) => item.type === "pcb_trace")
+  const routedSourceTraceIds = new Set(pcbTraces.flatMap((trace) =>
+    typeof trace.source_trace_id === "string" && Array.isArray(trace.route) && trace.route.length > 0
+      ? [trace.source_trace_id]
+      : []))
+  const unrouted = sourceTraces.filter((trace) =>
+    typeof trace.source_trace_id !== "string" || !routedSourceTraceIds.has(trace.source_trace_id))
+  if (unrouted.length > 0) {
+    const ids = unrouted.map((trace) => typeof trace.source_trace_id === "string" ? trace.source_trace_id : "(missing source trace ID)")
+    return { id: "routed-connections", status: "fail", message: `${unrouted.length} logical source trace${unrouted.length === 1 ? "" : "s"} lack a routed PCB trace with route geometry: ${ids.join(", ")}.` }
+  }
+  return { id: "routed-connections", status: "pass", message: `All ${sourceTraces.length} logical source trace${sourceTraces.length === 1 ? " has" : "s have"} routed PCB trace geometry.` }
 }
 
 export function mountManufacturingRoutes(app: Express, service: ManufacturingService) {
