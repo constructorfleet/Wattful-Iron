@@ -9,7 +9,7 @@ describe('configureMonaco', () => {
     const monaco = {
       languages: {
         typescript: {
-          JsxEmit: { ReactJSX: 4 },
+          JsxEmit: { Preserve: 1 },
           typescriptDefaults: {
             getCompilerOptions: () => compilerOptions,
             setCompilerOptions,
@@ -20,6 +20,6 @@ describe('configureMonaco', () => {
 
     configureMonaco(monaco)
 
-    expect(setCompilerOptions).toHaveBeenCalledWith({ target: 99, jsx: 4 })
+    expect(setCompilerOptions).toHaveBeenCalledWith({ target: 99, jsx: 1 })
   })
 })
