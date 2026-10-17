@@ -12,6 +12,7 @@ import {
   getProjectFile,
   getProjectHistory,
   getSimulation,
+  importSchematics,
   listProjects,
   listProjectTemplates,
   saveProjectFile,
@@ -67,6 +68,7 @@ export default function App() {
   const [creating, setCreating] = useState(false)
   const [projectName, setProjectName] = useState('')
   const [projectTemplate, setProjectTemplate] = useState('blank-board')
+  const [schematicFiles, setSchematicFiles] = useState<File[]>([])
   const [projectTemplates, setProjectTemplates] = useState<ProjectTemplate[]>([])
   const [saving, setSaving] = useState(false)
   const [exportingManufacturing, setExportingManufacturing] = useState(false)
@@ -209,11 +211,16 @@ export default function App() {
     if (!name) return
     setError('')
     try {
-      const created = await createProject(name, projectTemplate)
+      const result = schematicFiles.length
+        ? await importSchematics(name, await Promise.all(schematicFiles.map(async (file) => ({ name: file.name, content: await file.text() }))))
+        : { project: await createProject(name, projectTemplate), warnings: [] as string[] }
+      const created = result.project
       setProjects((current) => [created, ...current.filter((item) => item.id !== created.id)])
       setCreating(false)
       setProjectName('')
+      setSchematicFiles([])
       await openProject(created)
+      if (result.warnings.length) setError(`Imported with review notes: ${result.warnings.join('; ')}`)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to create project')
     }
@@ -327,10 +334,13 @@ export default function App() {
             <label htmlFor="project-name">Project name</label>
             <input id="project-name" autoFocus value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="e.g. Sensor board" />
             <label htmlFor="project-template">Start from</label>
-            <select id="project-template" value={projectTemplate} onChange={(event) => setProjectTemplate(event.target.value)}>
+            <select id="project-template" value={projectTemplate} disabled={schematicFiles.length > 0} onChange={(event) => setProjectTemplate(event.target.value)}>
               {projectTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
             </select>
-            {projectTemplates.find((template) => template.id === projectTemplate) && <small className="template-description">{projectTemplates.find((template) => template.id === projectTemplate)?.description}</small>}
+            <label htmlFor="schematic-files">Import KiCad schematics</label>
+            <input id="schematic-files" type="file" accept=".kicad_sch" multiple onChange={(event) => setSchematicFiles(Array.from(event.target.files ?? []))} />
+            <small className="template-description">Modern .kicad_sch files only. Imported designs are converted to editable tscircuit source; review converter notes and verify the resulting build.</small>
+            {!schematicFiles.length && projectTemplates.find((template) => template.id === projectTemplate) && <small className="template-description">{projectTemplates.find((template) => template.id === projectTemplate)?.description}</small>}
             <div className="form-actions"><button type="button" className="quiet-button" onClick={() => setCreating(false)}>Cancel</button><button className="small-primary" type="submit">Create project</button></div>
           </form>}
           <button className="new-project-link" onClick={() => setCreating(true)}><span>＋</span> New project</button>

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { compareProjectRevisions, createProject, getManufacturingArchive, getManufacturingPreflight, getManufacturingProfiles, getProjectFile, getProjectHistory, listProjectTemplates, restoreProjectRevision, saveProjectFile, type Project } from '../src/api'
+import { compareProjectRevisions, createProject, getManufacturingArchive, getManufacturingPreflight, getManufacturingProfiles, getProjectFile, getProjectHistory, importSchematics, listProjectTemplates, restoreProjectRevision, saveProjectFile, type Project } from '../src/api'
 
 describe('project API', () => {
   it('creates a named project and returns the server project record', async () => {
@@ -18,6 +18,16 @@ describe('project API', () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(examples), { status: 200 }))
     await expect(listProjectTemplates(fetcher)).resolves.toEqual(examples)
     expect(fetcher).toHaveBeenCalledWith('/api/examples', {})
+  })
+
+  it('uploads one or more schematic files as text for project import', async () => {
+    const result = { project: { id: 'p-2', name: 'Imported', entrypoint: 'index.circuit.tsx', revision: 'r1' }, sourceComponents: 2, warnings: [] }
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(result), { status: 201 }))
+    await expect(importSchematics('Imported', [{ name: 'board.kicad_sch', content: '(kicad_sch)' }], fetcher)).resolves.toEqual(result)
+    expect(fetcher).toHaveBeenCalledWith('/api/projects/import', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ name: 'Imported', files: [{ name: 'board.kicad_sch', content: '(kicad_sch)' }] }),
+    }))
   })
 
   it('loads source together with the revision needed for optimistic writes', async () => {
