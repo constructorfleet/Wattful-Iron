@@ -63,6 +63,9 @@ to reproduce the workflow.
 
 ![The workbench simulation tab when a project has no simulation configured](docs/images/workbench-simulation.png)
 
+The [connected LED indicator and filtered voltage divider examples](docs/workbench-howtos.md#trace-a-powered-example-circuit)
+show named nets and generated PCB copper routes.
+
 ## Development
 
 ```sh
