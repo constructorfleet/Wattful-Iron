@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createProject, getManufacturingArchive, getProjectFile, saveProjectFile, type Project } from '../src/api'
+import { createProject, getManufacturingArchive, getManufacturingPreflight, getManufacturingProfiles, getProjectFile, saveProjectFile, type Project } from '../src/api'
 
 describe('project API', () => {
   it('creates a named project and returns the server project record', async () => {
@@ -31,13 +31,24 @@ describe('project API', () => {
   it('downloads manufacturing ZIP data from the project endpoint', async () => {
     const blob = new Blob(['zip-bytes'], { type: 'application/zip' })
     const fetcher = vi.fn().mockResolvedValue({ ok: true, blob: async () => blob } as Response)
-    const downloaded = await getManufacturingArchive('p-1', fetcher)
+    const downloaded = await getManufacturingArchive('p-1', 'jlcpcb-2layer-1oz', fetcher)
     expect(downloaded).toBe(blob)
-    expect(fetcher).toHaveBeenCalledWith('/api/projects/p-1/manufacturing.zip')
+    expect(fetcher).toHaveBeenCalledWith('/api/projects/p-1/manufacturing.zip?profile=jlcpcb-2layer-1oz')
+  })
+
+  it('loads manufacturing profiles and preflight for the selected profile', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ profiles: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ preflight: { ready: true, profile: { id: 'jlcpcb-2layer-1oz', label: 'JLCPCB' }, checks: [] } }), { status: 200 }))
+    await getManufacturingProfiles(fetcher)
+    const result = await getManufacturingPreflight('p-1', 'jlcpcb-2layer-1oz', fetcher)
+    expect(result.preflight.profile.id).toBe('jlcpcb-2layer-1oz')
+    expect(fetcher).toHaveBeenNthCalledWith(1, '/api/manufacturing/profiles', {})
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/projects/p-1/manufacturing?profile=jlcpcb-2layer-1oz', {})
   })
 
   it('surfaces manufacturing preflight failures to the UI', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'Manufacturing preflight failed', preflight: { checks: [{ status: 'fail', message: 'Missing footprint' }] } }), { status: 422 }))
-    await expect(getManufacturingArchive('p-1', fetcher)).rejects.toThrow('Missing footprint')
+    await expect(getManufacturingArchive('p-1', 'board-default', fetcher)).rejects.toThrow('Missing footprint')
   })
 })

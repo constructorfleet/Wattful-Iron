@@ -4,6 +4,8 @@ import { configureMonaco } from './configureMonaco'
 import {
   createProject,
   getManufacturingArchive,
+  getManufacturingPreflight,
+  getManufacturingProfiles,
   getPreview,
   getProject,
   getProjectFile,
@@ -13,6 +15,9 @@ import {
   startBuild,
   subscribeToProject,
   type BuildStatus,
+  type ManufacturingCheck,
+  type ManufacturingPreflight,
+  type ManufacturingProfile,
   type PreviewKind,
   type Project,
   type ProjectEvent,
@@ -48,6 +53,11 @@ export default function App() {
   const [projectName, setProjectName] = useState('')
   const [saving, setSaving] = useState(false)
   const [exportingManufacturing, setExportingManufacturing] = useState(false)
+  const [manufacturingProfile, setManufacturingProfile] = useState('board-default')
+  const [manufacturingProfiles, setManufacturingProfiles] = useState<ManufacturingProfile[]>([])
+  const [manufacturingPreflight, setManufacturingPreflight] = useState<ManufacturingPreflight | null>(null)
+  const [manufacturingDialogOpen, setManufacturingDialogOpen] = useState(false)
+  const [loadingManufacturing, setLoadingManufacturing] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sourceRef = useRef(source)
   const revisionRef = useRef(revision)
@@ -97,6 +107,22 @@ export default function App() {
     }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [])
+
+  useEffect(() => {
+    getManufacturingProfiles().then(({ profiles }) => setManufacturingProfiles(profiles)).catch(() => setManufacturingProfiles([]))
+  }, [])
+
+  useEffect(() => {
+    if (!project) { setManufacturingPreflight(null); return }
+    let active = true
+    setLoadingManufacturing(true)
+    getManufacturingPreflight(project.id, manufacturingProfile).then(({ preflight }) => {
+      if (active) setManufacturingPreflight(preflight)
+    }).catch(() => {
+      if (active) setManufacturingPreflight(null)
+    }).finally(() => { if (active) setLoadingManufacturing(false) })
+    return () => { active = false }
+  }, [project?.id, manufacturingProfile, build.status, build.revision])
 
   useEffect(() => {
     if (!project) return
@@ -180,7 +206,7 @@ export default function App() {
     setError('')
     setExportingManufacturing(true)
     try {
-      const blob = await getManufacturingArchive(project.id)
+      const blob = await getManufacturingArchive(project.id, manufacturingProfile)
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
@@ -225,7 +251,7 @@ export default function App() {
         </div>
         <div className="top-actions">
           <div className={`build-state ${build.status}`} aria-live="polite"><span className="status-dot" />{statusText}</div>
-          <button className="build-button manufacturing-button" disabled={!project || dirty || build.status !== 'ready' || build.revision !== revision || exportingManufacturing} onClick={downloadManufacturing}>{exportingManufacturing ? 'Exporting…' : 'Manufacturing ZIP'}</button>
+          <button className="build-button manufacturing-button" disabled={!project} onClick={() => setManufacturingDialogOpen(true)}>Rule checks · Manufacturing</button>
           <button className="build-button" disabled={!project || build.status === 'compiling'} onClick={runBuild}><span>▶</span> Build</button>
         </div>
       </header>
@@ -285,9 +311,25 @@ export default function App() {
           {build.status === 'failed' && !preview && build.diagnostics?.length ? null : build.status !== 'failed' && build.status !== 'ready' && <div className="preview-footer"><span className="pulse-dot" />Previews update when source changes</div>}
         </section>
       </div>
+      {manufacturingDialogOpen && <div className="manufacturing-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setManufacturingDialogOpen(false) }}>
+        <section className="manufacturing-dialog" role="dialog" aria-modal="true" aria-labelledby="manufacturing-title">
+          <header><div><h2 id="manufacturing-title">Manufacturing preflight</h2><p>Review electrical and fabricator checks before generating files.</p></div><button aria-label="Close manufacturing checks" onClick={() => setManufacturingDialogOpen(false)}>×</button></header>
+          <label className="profile-select">Fabricator rule profile<select aria-label="Fabricator rule profile" value={manufacturingProfile} onChange={(event) => setManufacturingProfile(event.target.value)}>{manufacturingProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}</select></label>
+          {manufacturingProfiles.find(({ id }) => id === manufacturingProfile)?.description && <p className="profile-description">{manufacturingProfiles.find(({ id }) => id === manufacturingProfile)?.description}</p>}
+          <div className="manufacturing-checks" aria-live="polite">
+            {loadingManufacturing ? <p className="checks-empty">Checking current build…</p> : manufacturingPreflight ? manufacturingPreflight.checks.map((check) => <ManufacturingCheckRow key={check.id} check={check} />) : <p className="checks-empty">Build the project to load manufacturing checks.</p>}
+          </div>
+          <footer><span>{manufacturingPreflight?.ready ? 'Preflight ready' : manufacturingPreflight ? 'Resolve blocking checks before export' : 'Preflight unavailable'}</span><button className="build-button" disabled={!project || dirty || build.status !== 'ready' || build.revision !== revision || exportingManufacturing || loadingManufacturing || !manufacturingPreflight?.ready} onClick={downloadManufacturing}>{exportingManufacturing ? 'Exporting…' : 'Download Manufacturing ZIP'}</button></footer>
+        </section>
+      </div>}
       {error && <div className="toast-error" role="alert"><span>{error}</span>{error.includes('changed on disk') || error.includes('changed outside') ? <button className="reload-button" onClick={reloadFile}>Reload file</button> : null}<button aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
     </main>
   )
+}
+
+function ManufacturingCheckRow({ check }: { check: ManufacturingCheck }) {
+  const label = check.status === 'pass' ? 'Pass' : check.status === 'fail' ? 'Blocked' : 'Review'
+  return <div className={`manufacturing-check ${check.status}`}><span className="check-status">{label}</span><span>{check.message}</span></div>
 }
 
 function PcbPreview({ circuitJson }: { circuitJson: PcbCircuitJson }) {

@@ -30,6 +30,9 @@ export type Simulation = {
   signals: Array<{ id: string; name: string; unit: 'V' | 'A'; netId?: string; samples: Array<{ x: number; y: number }> }>
   diagnostics: Array<{ message: string; severity: 'error' }>
 }
+export type ManufacturingProfile = { id: string; label: string; description: string; rules: { minTraceWidthMm: number; minNonPlatedHoleMm: number; copperToBoardEdgeMm: number } }
+export type ManufacturingCheck = { id: string; status: 'pass' | 'fail' | 'warning'; message: string }
+export type ManufacturingPreflight = { ready: boolean; profile: Pick<ManufacturingProfile, 'id' | 'label'>; checks: ManufacturingCheck[] }
 type Fetcher = typeof fetch
 
 async function request<T>(url: string, init: RequestInit = {}, fetcher: Fetcher = fetch): Promise<T> {
@@ -76,8 +79,16 @@ export const getPreview = (id: string, kind: PreviewKind, fetcher?: Fetcher) => 
 
 export const getSimulation = (id: string, fetcher?: Fetcher) => request<Simulation>(`/api/projects/${encodeURIComponent(id)}/simulation`, undefined, fetcher)
 
-export async function getManufacturingArchive(id: string, fetcher: Fetcher = fetch) {
-  const response = await fetcher(`/api/projects/${encodeURIComponent(id)}/manufacturing.zip`)
+export const getManufacturingProfiles = (fetcher?: Fetcher) => request<{ profiles: ManufacturingProfile[] }>('/api/manufacturing/profiles', undefined, fetcher)
+
+export const getManufacturingPreflight = (id: string, profile = 'board-default', fetcher?: Fetcher) => request<{ projectRevision: string; previewRevision: string; preflight: ManufacturingPreflight }>(
+  `/api/projects/${encodeURIComponent(id)}/manufacturing?profile=${encodeURIComponent(profile)}`,
+  undefined,
+  fetcher,
+)
+
+export async function getManufacturingArchive(id: string, profile = 'board-default', fetcher: Fetcher = fetch) {
+  const response = await fetcher(`/api/projects/${encodeURIComponent(id)}/manufacturing.zip?profile=${encodeURIComponent(profile)}`)
   if (!response.ok) {
     const payload = await response.json().catch(() => ({})) as { error?: string; preflight?: { checks?: Array<{ status: string; message: string }> } }
     const failures = payload.preflight?.checks?.filter((check) => check.status === 'fail').map((check) => check.message) ?? []
