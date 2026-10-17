@@ -6,7 +6,9 @@ const api = vi.hoisted(() => ({
   listProjects: vi.fn(),
   listProjectTemplates: vi.fn(),
   createProject: vi.fn(),
+  importPdfReference: vi.fn(),
   getProject: vi.fn(),
+  getProjectReferencePdfUrl: vi.fn((projectId: string, referenceId: string) => `/api/projects/${projectId}/references/${referenceId}`),
   getProjectFile: vi.fn(),
   getProjectHistory: vi.fn(),
   compareProjectRevisions: vi.fn(),
@@ -59,9 +61,40 @@ beforeEach(() => {
   api.getManufacturingPreflight.mockResolvedValue({ preflight: { ready: true, profile: { id: 'board-default', label: 'Board defaults' }, checks: [{ id: 'circuit-errors', status: 'pass', message: 'No Circuit JSON ERC/DRC errors were reported.' }] } })
   api.getSimulation.mockResolvedValue({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], diagnostics: [] })
   api.createProject.mockResolvedValue({ ...existingProject, id: 'new-1', name: 'Sensor Board' })
+  api.importPdfReference.mockResolvedValue({ ...existingProject, id: 'pdf-1', name: 'Shim reference', referencePdfs: [{ id: 'ref-1', name: 'shim.pdf' }] })
+  api.getProject.mockImplementation((id: string) => Promise.resolve(id === 'pdf-1'
+    ? { ...existingProject, id: 'pdf-1', name: 'Shim reference', referencePdfs: [{ id: 'ref-1', name: 'shim.pdf' }] }
+    : existingProject))
 })
 
 describe('workbench', () => {
+  it('creates a project from a PDF and opens its visual reference', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New project' }))
+    fireEvent.change(screen.getByLabelText('Project name'), { target: { value: 'Shim reference' } })
+    const file = new File(['%PDF-1.4'], 'shim.pdf', { type: 'application/pdf' })
+    fireEvent.change(screen.getByLabelText('Import PDF as a visual reference'), { target: { files: [file] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Import PDF reference' }))
+    await waitFor(() => expect(api.importPdfReference).toHaveBeenCalledWith('Shim reference', file))
+    fireEvent.click(await screen.findByRole('button', { name: 'PDF reference' }))
+    expect(await screen.findByRole('dialog', { name: 'shim.pdf' })).toBeInTheDocument()
+    expect(screen.getByTitle('PDF reference: shim.pdf')).toHaveAttribute('src', '/api/projects/pdf-1/references/ref-1')
+  })
+
+  it('downloads a public PDF URL in the browser and imports it as a reference', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(new Blob(['%PDF-1.4']), { status: 200 }))
+    try {
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'New project' }))
+      fireEvent.change(screen.getByLabelText('Project name'), { target: { value: 'Shim reference' } })
+      fireEvent.change(screen.getByLabelText('Or import from a public PDF URL'), { target: { value: 'https://example.com/shim.pdf' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Import PDF reference' }))
+      await waitFor(() => expect(api.importPdfReference).toHaveBeenCalledWith('Shim reference', expect.objectContaining({ name: 'shim.pdf', type: 'application/pdf' })))
+      expect(globalThis.fetch).toHaveBeenCalledWith(new URL('https://example.com/shim.pdf'), { mode: 'cors', credentials: 'omit' })
+    } finally { globalThis.fetch = originalFetch }
+  })
+
   it('opens a project in the TSX editor and preview workspace', async () => {
     render(<App />)
 

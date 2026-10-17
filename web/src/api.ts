@@ -4,6 +4,7 @@ export type Project = {
   entrypoint: string
   revision: string
   updatedAt?: string
+  referencePdfs?: Array<{ id: string; name: string }>
 }
 export type ProjectTemplate = { id: string; name: string; description: string }
 
@@ -69,6 +70,18 @@ export const importSchematics = (name: string, files: Array<{ name: string; cont
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ name, files }),
 }, fetcher)
+
+export const importPdfReference = (name: string, file: File, fetcher?: Fetcher) => {
+  const query = new URLSearchParams({ name, filename: file.name }).toString()
+  return request<Project>(`/api/projects/import-pdf?${query}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/pdf' },
+    body: file,
+  }, fetcher)
+}
+
+export const getProjectReferencePdfUrl = (projectId: string, referenceId: string) =>
+  `/api/projects/${encodeURIComponent(projectId)}/references/${encodeURIComponent(referenceId)}`
 
 export const getProject = (id: string, fetcher?: Fetcher) => request<Project>(`/api/projects/${encodeURIComponent(id)}`, undefined, fetcher)
 

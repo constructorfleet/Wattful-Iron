@@ -128,6 +128,8 @@ button { color: inherit; cursor: pointer; }
 .toast-error .reload-button { padding: 6px 8px; color: #13231c; border-radius: 4px; background: var(--accent); font-size: 10px; white-space: nowrap; }
 .history-overlay { position: fixed; z-index: 7; inset: 0; display: grid; place-items: center; padding: 18px; background: #070a0dcc; }
 .history-dialog { display: flex; width: min(1040px, 100%); height: min(760px, 92vh); flex-direction: column; overflow: hidden; color: var(--text); border: 1px solid #39434c; border-radius: 9px; background: #191e24; box-shadow: 0 24px 80px #0009; }
+.pdf-reference-dialog { width: min(1280px, 100%); height: min(900px, 94vh); }
+.pdf-reference-dialog iframe { width: 100%; min-height: 0; flex: 1; border: 0; background: #30343a; }
 .history-dialog > header, .history-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 15px 19px; }
 .history-dialog > header { border-bottom: 1px solid #2c343c; }
 .history-dialog > header h2 { margin: 0 0 5px; color: #e1e9e5; font-size: 15px; }

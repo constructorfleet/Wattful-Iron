@@ -13,7 +13,7 @@ import { getSimulationResults } from "./simulation.js"
 export type Diagnostic = { severity: "error" | "warning" | "info"; message: string; path?: string; line?: number; column?: number }
 type BuildStatus = "idle" | "compiling" | "ready" | "failed"
 type BuildRecord = { buildId: string; revision: string; status: BuildStatus; diagnostics: Diagnostic[]; updatedAt: string }
-type ProjectData = { id: string; name: string; entrypoint: string; revision: string; previewRevision?: string; lastBuild?: BuildRecord }
+type ProjectData = { id: string; name: string; entrypoint: string; revision: string; previewRevision?: string; lastBuild?: BuildRecord; referencePdfs?: Array<{ id: string; name: string }> }
 type ProjectState = { project: ProjectData; preview?: unknown }
 type ProjectSnapshot = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes: number; files: Record<string, string> }
 type ServerEvent = "project" | "file" | "build.status" | "build.ready" | "build.failed"
@@ -147,6 +147,26 @@ class ProjectService {
       sourceComponents,
       warnings: [...converter.getWarnings(), "The imported Circuit JSON is the faithful preview; generated tscircuit source is best-effort. Editing the source switches future builds to normal tscircuit compilation."],
     }
+  }
+
+  async importPdfReference(name: string, filename: string, content: Buffer) {
+    const project = await this.create(name, "blank-board")
+    const state = this.state(project.id)
+    const id = randomUUID()
+    const referencesDir = path.join(this.projectDir(project.id), ".workbench", "references")
+    await mkdir(referencesDir, { recursive: true })
+    await writeFile(path.join(referencesDir, `${id}.pdf`), content)
+    state.project.referencePdfs = [...(state.project.referencePdfs ?? []), { id, name: filename }]
+    await this.persist(state)
+    this.emit(project.id, "project", { project: state.project })
+    return state.project
+  }
+
+  async readReferencePdf(projectId: string, referenceId: string) {
+    const reference = this.state(projectId).project.referencePdfs?.find((item) => item.id === referenceId)
+    if (!reference) throw Object.assign(new Error("PDF reference not found"), { status: 404 })
+    const content = await readFile(path.join(this.projectDir(projectId), ".workbench", "references", `${reference.id}.pdf`))
+    return { name: reference.name, content }
   }
 
   async get(id: string) {
@@ -609,6 +629,26 @@ export function createApp(options: AppOptions = {}): Express {
       if (new Set(normalized.map((file) => file.name.toLowerCase())).size !== normalized.length) throw badRequest("Schematic filenames must be unique")
       if (totalBytes > 1_800_000) throw badRequest("Combined schematic size must be under 1.8 MB")
       response.status(201).json(await service.importSchematics(name, normalized))
+    } catch (error) { next(error) }
+  })
+  app.post("/api/projects/import-pdf", express.raw({ type: "application/pdf", limit: "20mb" }), async (request, response, next) => {
+    try {
+      const name = typeof request.query.name === "string" ? request.query.name.trim() : ""
+      const filename = typeof request.query.filename === "string" ? request.query.filename : ""
+      if (!name || name.length > 100) throw badRequest("Project name must contain 1 to 100 characters")
+      if (!filename || path.basename(filename) !== filename || !/\.pdf$/i.test(filename)) throw badRequest("A PDF filename is required")
+      if (!Buffer.isBuffer(request.body) || request.body.length < 8 || request.body.toString("ascii", 0, 5) !== "%PDF-") throw badRequest("The uploaded file is not a valid PDF document")
+      response.status(201).json(await service.importPdfReference(name, filename, request.body))
+    } catch (error) { next(error) }
+  })
+  app.get("/api/projects/:id/references/:referenceId", async (request, response, next) => {
+    try {
+      const reference = await service.readReferencePdf(request.params.id!, request.params.referenceId!)
+      response.type("application/pdf").set({
+        "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(reference.name)}`,
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, no-store",
+      }).send(reference.content)
     } catch (error) { next(error) }
   })
   app.get("/api/projects/:id", async (request, response, next) => {

@@ -11,7 +11,9 @@ import {
   getProject,
   getProjectFile,
   getProjectHistory,
+  getProjectReferencePdfUrl,
   getSimulation,
+  importPdfReference,
   importSchematics,
   listProjects,
   listProjectTemplates,
@@ -44,6 +46,24 @@ const CircuitJsonPreview = lazy(() => import('@tscircuit/runframe').then((module
 const PCBViewer = lazy(() => import('@tscircuit/pcb-viewer').then((module) => ({ default: module.PCBViewer })))
 type PcbCircuitJson = NonNullable<Parameters<typeof PCBViewer>[0]['circuitJson']>
 
+async function fetchPdfUrl(value: string): Promise<File> {
+  let url: URL
+  try { url = new URL(value) } catch { throw new Error('Enter a valid public PDF URL') }
+  if (url.protocol !== 'https:') throw new Error('PDF URLs must use HTTPS')
+  if (url.username || url.password) throw new Error('PDF URLs must not contain credentials')
+  let filename: string
+  try { filename = decodeURIComponent(url.pathname.split('/').pop() ?? '') } catch { filename = '' }
+  if (!filename || !/\.pdf$/i.test(filename)) throw new Error('The URL must end in a .pdf filename')
+  let response: Response
+  try { response = await fetch(url, { mode: 'cors', credentials: 'omit' }) } catch { throw new Error('Could not read the PDF URL. It must allow public cross-origin access, or choose the file from disk.') }
+  if (!response.ok) throw new Error(`PDF download failed with HTTP ${response.status}`)
+  const declaredSize = Number(response.headers.get('content-length'))
+  if (Number.isFinite(declaredSize) && declaredSize > 20 * 1024 * 1024) throw new Error('PDF references must be 20 MB or smaller')
+  const content = await response.blob()
+  if (content.size > 20 * 1024 * 1024) throw new Error('PDF references must be 20 MB or smaller')
+  return new File([content], filename, { type: 'application/pdf' })
+}
+
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([])
   const [project, setProject] = useState<Project | null>(null)
@@ -58,6 +78,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [historyDialogOpen, setHistoryDialogOpen] = useState(false)
+  const [referencePdfOpen, setReferencePdfOpen] = useState(false)
   const [historyRevisions, setHistoryRevisions] = useState<ProjectRevision[]>([])
   const [historyFrom, setHistoryFrom] = useState('')
   const [historyTo, setHistoryTo] = useState('')
@@ -69,6 +90,8 @@ export default function App() {
   const [projectName, setProjectName] = useState('')
   const [projectTemplate, setProjectTemplate] = useState('blank-board')
   const [schematicFiles, setSchematicFiles] = useState<File[]>([])
+  const [referencePdf, setReferencePdf] = useState<File | null>(null)
+  const [referencePdfUrl, setReferencePdfUrl] = useState('')
   const [projectTemplates, setProjectTemplates] = useState<ProjectTemplate[]>([])
   const [saving, setSaving] = useState(false)
   const [exportingManufacturing, setExportingManufacturing] = useState(false)
@@ -98,6 +121,7 @@ export default function App() {
 
   const openProject = useCallback(async (listedProject: Project) => {
     setError('')
+    setReferencePdfOpen(false)
     setPreview(null)
     setSimulation(null)
     setBuild(initialBuild)
@@ -211,14 +235,19 @@ export default function App() {
     if (!name) return
     setError('')
     try {
-      const result = schematicFiles.length
-        ? await importSchematics(name, await Promise.all(schematicFiles.map(async (file) => ({ name: file.name, content: await file.text() }))))
-        : { project: await createProject(name, projectTemplate), warnings: [] as string[] }
+      const remotePdf = referencePdfUrl.trim()
+      const result = referencePdf || remotePdf
+        ? { project: await importPdfReference(name, referencePdf ?? await fetchPdfUrl(remotePdf)), warnings: [] as string[] }
+        : schematicFiles.length
+          ? await importSchematics(name, await Promise.all(schematicFiles.map(async (file) => ({ name: file.name, content: await file.text() }))))
+          : { project: await createProject(name, projectTemplate), warnings: [] as string[] }
       const created = result.project
       setProjects((current) => [created, ...current.filter((item) => item.id !== created.id)])
       setCreating(false)
       setProjectName('')
       setSchematicFiles([])
+      setReferencePdf(null)
+      setReferencePdfUrl('')
       await openProject(created)
       if (result.warnings.length) setError(`Imported with review notes: ${result.warnings.join('; ')}`)
     } catch (cause) {
@@ -322,6 +351,7 @@ export default function App() {
         <div className="top-actions">
           <div className={`build-state ${build.status}`} aria-live="polite"><span className="status-dot" />{statusText}</div>
           <button className="build-button history-button" disabled={!project} onClick={() => setHistoryDialogOpen(true)}>History</button>
+          <button className="build-button" disabled={!project?.referencePdfs?.length} onClick={() => setReferencePdfOpen(true)}>PDF reference</button>
           <button className="build-button manufacturing-button" disabled={!project} onClick={() => setManufacturingDialogOpen(true)}>Rule checks · Manufacturing</button>
           <button className="build-button" disabled={!project || build.status === 'compiling'} onClick={runBuild}><span>▶</span> Build</button>
         </div>
@@ -334,14 +364,19 @@ export default function App() {
             <label htmlFor="project-name">Project name</label>
             <input id="project-name" autoFocus value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="e.g. Sensor board" />
             <label htmlFor="project-template">Start from</label>
-            <select id="project-template" value={projectTemplate} disabled={schematicFiles.length > 0} onChange={(event) => setProjectTemplate(event.target.value)}>
+            <select id="project-template" value={projectTemplate} disabled={schematicFiles.length > 0 || !!referencePdf || !!referencePdfUrl.trim()} onChange={(event) => setProjectTemplate(event.target.value)}>
               {projectTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
             </select>
             <label htmlFor="schematic-files">Import KiCad schematics</label>
-            <input id="schematic-files" type="file" accept=".kicad_sch" multiple onChange={(event) => setSchematicFiles(Array.from(event.target.files ?? []))} />
+            <input id="schematic-files" type="file" accept=".kicad_sch" multiple onChange={(event) => { setSchematicFiles(Array.from(event.target.files ?? [])); setReferencePdf(null); setReferencePdfUrl('') }} />
             <small className="template-description">Modern .kicad_sch files only. Imported designs are converted to editable tscircuit source; review converter notes and verify the resulting build.</small>
-            {!schematicFiles.length && projectTemplates.find((template) => template.id === projectTemplate) && <small className="template-description">{projectTemplates.find((template) => template.id === projectTemplate)?.description}</small>}
-            <div className="form-actions"><button type="button" className="quiet-button" onClick={() => setCreating(false)}>Cancel</button><button className="small-primary" type="submit">Create project</button></div>
+            <label htmlFor="schematic-pdf">Import PDF as a visual reference</label>
+            <input id="schematic-pdf" type="file" accept="application/pdf,.pdf" onChange={(event) => { setReferencePdf(event.target.files?.[0] ?? null); setReferencePdfUrl(''); setSchematicFiles([]) }} />
+            <label htmlFor="schematic-pdf-url">Or import from a public PDF URL</label>
+            <input id="schematic-pdf-url" type="url" value={referencePdfUrl} placeholder="https://…/schematic.pdf" onChange={(event) => { setReferencePdfUrl(event.target.value); setReferencePdf(null); setSchematicFiles([]) }} />
+            <small className="template-description">PDF pages are retained for viewing. Components, pins, and electrical connectivity are not reconstructed. Maximum file size: 20 MB.</small>
+            {!schematicFiles.length && !referencePdf && !referencePdfUrl.trim() && projectTemplates.find((template) => template.id === projectTemplate) && <small className="template-description">{projectTemplates.find((template) => template.id === projectTemplate)?.description}</small>}
+            <div className="form-actions"><button type="button" className="quiet-button" onClick={() => setCreating(false)}>Cancel</button><button className="small-primary" type="submit">{referencePdf || referencePdfUrl.trim() ? 'Import PDF reference' : schematicFiles.length ? 'Import schematics' : 'Create project'}</button></div>
           </form>}
           <button className="new-project-link" onClick={() => setCreating(true)}><span>＋</span> New project</button>
           <div className="project-list" aria-label="Project list">
@@ -403,6 +438,12 @@ export default function App() {
             </div>
           </div>}
           <footer><span>Restore replaces the project files and queues a normal build.</span><button className="build-button" disabled={!revisionToRestore || revisionToRestore === revision || dirty || restoringHistory || historyLoading} onClick={() => void restoreRevision()}>{restoringHistory ? 'Restoring…' : 'Restore selected revision'}</button></footer>
+        </section>
+      </div>}
+      {referencePdfOpen && project?.referencePdfs?.[0] && <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReferencePdfOpen(false) }}>
+        <section className="history-dialog pdf-reference-dialog" role="dialog" aria-modal="true" aria-labelledby="pdf-reference-title">
+          <header><div><h2 id="pdf-reference-title">{project.referencePdfs[0].name}</h2><p>Visual reference only. Electrical connectivity was not imported from this PDF.</p></div><button aria-label="Close PDF reference" onClick={() => setReferencePdfOpen(false)}>×</button></header>
+          <iframe title={`PDF reference: ${project.referencePdfs[0].name}`} src={getProjectReferencePdfUrl(project.id, project.referencePdfs[0].id)} />
         </section>
       </div>}
       {manufacturingDialogOpen && <div className="manufacturing-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setManufacturingDialogOpen(false) }}>
