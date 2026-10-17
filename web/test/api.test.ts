@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { compareProjectRevisions, createProject, getManufacturingArchive, getManufacturingPreflight, getManufacturingProfiles, getProjectFile, getProjectHistory, importSchematics, listProjectTemplates, restoreProjectRevision, saveProjectFile, type Project } from '../src/api'
+import { compareProjectRevisions, createProject, getManufacturingArchive, getManufacturingPreflight, getManufacturingProfiles, getProjectFile, getProjectHistory, getProjectReferencePdfUrl, importPdfReference, importSchematics, listProjectTemplates, restoreProjectRevision, saveProjectFile, type Project } from '../src/api'
 
 describe('project API', () => {
   it('creates a named project and returns the server project record', async () => {
@@ -28,6 +28,15 @@ describe('project API', () => {
       method: 'POST',
       body: JSON.stringify({ name: 'Imported', files: [{ name: 'board.kicad_sch', content: '(kicad_sch)' }] }),
     }))
+  })
+
+  it('uploads a PDF as a visual reference and builds its project URL', async () => {
+    const project: Project = { id: 'p-pdf', name: 'Shim', entrypoint: 'index.circuit.tsx', revision: 'r1', referencePdfs: [{ id: 'ref-1', name: 'shim schematic.pdf' }] }
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(project), { status: 201 }))
+    const file = new File(['%PDF-1.4'], 'shim schematic.pdf', { type: 'application/pdf' })
+    await expect(importPdfReference('Shim', file, fetcher)).resolves.toEqual(project)
+    expect(fetcher).toHaveBeenCalledWith('/api/projects/import-pdf?name=Shim&filename=shim+schematic.pdf', expect.objectContaining({ method: 'POST', body: file }))
+    expect(getProjectReferencePdfUrl('p/pdf', 'ref 1')).toBe('/api/projects/p%2Fpdf/references/ref%201')
   })
 
   it('loads source together with the revision needed for optimistic writes', async () => {

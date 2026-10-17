@@ -11,6 +11,8 @@ All endpoints are same-origin and use JSON except the event stream:
 - `GET /api/projects` → `Project[]`
 - `POST /api/projects` with `{ "name": string }` → `Project`
 - `POST /api/projects/import` with `{ "name": string, "files": [{ "name": string, "content": string }] }` → `{ project, sourceComponents, warnings }`. Accepts 1–10 modern KiCad `.kicad_sch` files (1.8 MB combined); original files are retained under `imports/` and the generated tscircuit source is editable.
+- `POST /api/projects/import-pdf?name=...&filename=...` with an `application/pdf` body → `Project` with `referencePdfs`. Accepts one PDF up to 20 MB; the PDF is retained in the project's workbench data.
+- `GET /api/projects/:id/references/:referenceId` → the retained PDF served inline for viewing.
 - `GET /api/projects/:id` → `Project`
 - `GET /api/projects/:id/files?path=...` → `{ path, content, revision }`
 - `PUT /api/projects/:id/files?path=...` with `{ content, revision }` and `If-Match: revision` → updated file record. `409` or `412` means the editor is stale and must reload before saving.
@@ -23,3 +25,7 @@ A source write triggers the server's debounced build. The UI also exposes an exp
 ## Importing a KiCad schematic
 
 Choose **New project**, select one or more `.kicad_sch` files, and create the project. The importer converts the schematic to Circuit JSON and keeps each submitted file in the project's `imports/` folder. The converted Circuit JSON drives the initial preview/build; generated tscircuit source is best-effort. Editing that source switches subsequent builds to normal tscircuit compilation, so inspect the build diagnostics. The API returns conversion warnings for review. Legacy `.sch` files, KiCad project/PCB files, and symbol libraries are not accepted as standalone imports. Multi-sheet designs can be supplied as a set, but the underlying converter describes multi-sheet support as not fully tested. Import does not reconstruct a KiCad PCB layout or guarantee manufacturing-ready footprints/routing.
+
+## Importing a schematic PDF as a reference
+
+Choose **New project**, enter a project name, and select a PDF under **Import PDF as a visual reference**, or paste a public HTTPS PDF URL that permits cross-origin access. Open the project and select **PDF reference** in the top bar to view its pages alongside the editor and preview. PDF content is retained unchanged, with a 20 MB upload limit. This is a visual reference only: Wattful-Iron does not extract components, pin assignments, net labels, or electrical connectivity from PDFs.

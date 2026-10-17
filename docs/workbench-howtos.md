@@ -18,6 +18,18 @@ example manufacturing board source is at
 
 ![The 3D preview of a board](images/workbench-3d.png)
 
+## Keep a schematic PDF beside your project
+
+Choose **New project**, enter a project name, and select the schematic PDF under
+**Import PDF as a visual reference**, or paste a public HTTPS URL that allows
+cross-origin access. Open the project and choose **PDF reference** in the top
+bar. The PDF remains available beside the editor and preview, including
+multi-page documents up to 20 MB.
+
+This import preserves the PDF as a visual reference. It does not create
+components, pin assignments, net labels, or electrical connections. Add the
+corresponding circuit in the TSX editor and use the PDF to compare the drawing.
+
 ## Compare footprints and board mechanics
 
 Create a **Footprint comparison** project to compare 0402, 0603, and 0805 resistor
