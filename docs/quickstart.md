@@ -50,9 +50,8 @@ To use the example shown below, copy the source from
 [`examples/manufacturing-board/index.circuit.tsx`](../examples/manufacturing-board/index.circuit.tsx)
 into the editor, wait for the save indicator, and select **Build**. It defines
 a 20 mm by 12 mm board, two resistors, a plated hole, and a non-plated hole.
-The source editor may show TypeScript underlines for tscircuit JSX tags even
-when the server build succeeds; use the top-bar build status and preview
-diagnostics to check the build result.
+The source editor enables JSX parsing for TypeScript source. Use the top-bar
+build status and preview diagnostics to check the server build result.
 
 ![Example source and its generated schematic](images/workbench-schematic.png)
 

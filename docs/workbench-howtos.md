@@ -78,9 +78,9 @@ keep it private and use HTTPS for connections over a network.
 - **Manufacturing ZIP is disabled:** confirm there is a current successful
   build. Preflight also requires a PCB board, references, and footprint
   geometry.
-- **The editor shows red TypeScript underlines:** use the server's **Ready** or
-  **Failed** build result as the status of the tscircuit build; Monaco's
-  in-browser type diagnostics are not the server build output.
+- **The editor reports that JSX is disabled:** reload the workbench so Monaco
+  applies its JSX-enabled TypeScript settings. Use the server's **Ready** or
+  **Failed** build result to check the tscircuit build.
 
 ## Browser behavior observed during this guide
 

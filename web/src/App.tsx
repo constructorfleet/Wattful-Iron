@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import Editor from '@monaco-editor/react'
+import { configureMonaco } from './configureMonaco'
 import {
   createProject,
   getManufacturingArchive,
@@ -254,6 +255,7 @@ export default function App() {
           {project ? <Editor
             height="100%"
             language="typescript"
+            beforeMount={configureMonaco}
             path={filePath}
             theme="vs-dark"
             value={source}
