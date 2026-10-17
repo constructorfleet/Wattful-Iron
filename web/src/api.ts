@@ -7,6 +7,8 @@ export type Project = {
 }
 
 export type ProjectFile = { path: string; content: string; revision: string }
+export type ProjectRevision = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes: number }
+export type RevisionComparison = { from: string; to: string; files: Array<{ path: string; before: string | null; after: string | null }> }
 export type BuildStatus = {
   buildId?: string
   revision?: string
@@ -66,6 +68,20 @@ export const saveProjectFile = (id: string, path: string, content: string, revis
   headers: { 'Content-Type': 'application/json', 'If-Match': revision },
   body: JSON.stringify({ content, revision }),
 }, fetcher)
+
+export const getProjectHistory = (id: string, fetcher?: Fetcher) => request<{ revisions: ProjectRevision[] }>(`/api/projects/${encodeURIComponent(id)}/history`, undefined, fetcher)
+
+export const compareProjectRevisions = (id: string, from: string, to: string, fetcher?: Fetcher) => request<RevisionComparison>(
+  `/api/projects/${encodeURIComponent(id)}/history/compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+  undefined,
+  fetcher,
+)
+
+export const restoreProjectRevision = (id: string, targetRevision: string, currentRevision: string, fetcher?: Fetcher) => request<{ revision: string; restoredFrom: string; changedFiles: string[] }>(
+  `/api/projects/${encodeURIComponent(id)}/history/${encodeURIComponent(targetRevision)}/restore`,
+  { method: 'POST', headers: { 'If-Match': currentRevision } },
+  fetcher,
+)
 
 export const startBuild = (id: string, fetcher?: Fetcher) => request<{ buildId: string; status: BuildStatus['status'] }>(`/api/projects/${encodeURIComponent(id)}/build`, {
   method: 'POST',

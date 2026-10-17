@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useSta
 import Editor from '@monaco-editor/react'
 import { configureMonaco } from './configureMonaco'
 import {
+  compareProjectRevisions,
   createProject,
   getManufacturingArchive,
   getManufacturingPreflight,
@@ -9,9 +10,11 @@ import {
   getPreview,
   getProject,
   getProjectFile,
+  getProjectHistory,
   getSimulation,
   listProjects,
   saveProjectFile,
+  restoreProjectRevision,
   startBuild,
   subscribeToProject,
   type BuildStatus,
@@ -21,6 +24,8 @@ import {
   type PreviewKind,
   type Project,
   type ProjectEvent,
+  type ProjectRevision,
+  type RevisionComparison,
   type Simulation,
 } from './api'
 
@@ -49,6 +54,14 @@ export default function App() {
   const [build, setBuild] = useState<BuildStatus>(initialBuild)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [historyDialogOpen, setHistoryDialogOpen] = useState(false)
+  const [historyRevisions, setHistoryRevisions] = useState<ProjectRevision[]>([])
+  const [historyFrom, setHistoryFrom] = useState('')
+  const [historyTo, setHistoryTo] = useState('')
+  const [revisionToRestore, setRevisionToRestore] = useState('')
+  const [revisionComparison, setRevisionComparison] = useState<RevisionComparison | null>(null)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [restoringHistory, setRestoringHistory] = useState(false)
   const [creating, setCreating] = useState(false)
   const [projectName, setProjectName] = useState('')
   const [saving, setSaving] = useState(false)
@@ -61,6 +74,7 @@ export default function App() {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sourceRef = useRef(source)
   const revisionRef = useRef(revision)
+  const restoringHistoryRef = useRef(false)
 
   useEffect(() => { sourceRef.current = source }, [source])
   useEffect(() => { revisionRef.current = revision }, [revision])
@@ -116,11 +130,7 @@ export default function App() {
     if (!project) { setManufacturingPreflight(null); return }
     let active = true
     setLoadingManufacturing(true)
-    getManufacturingPreflight(project.id, manufacturingProfile).then(({ preflight }) => {
-      if (active) setManufacturingPreflight(preflight)
-    }).catch(() => {
-      if (active) setManufacturingPreflight(null)
-    }).finally(() => { if (active) setLoadingManufacturing(false) })
+    getManufacturingPreflight(project.id, manufacturingProfile).then(({ preflight }) => { if (active) setManufacturingPreflight(preflight) }).catch(() => { if (active) setManufacturingPreflight(null) }).finally(() => { if (active) setLoadingManufacturing(false) })
     return () => { active = false }
   }, [project?.id, manufacturingProfile, build.status, build.revision])
 
@@ -135,7 +145,7 @@ export default function App() {
       } else if (event.type === 'build.failed') {
         setBuild({ status: 'failed', buildId: event.buildId, revision: event.revision, diagnostics: event.diagnostics })
       } else if (event.type === 'file' && event.path === filePath && event.revision !== revisionRef.current) {
-        setError('This file changed outside the editor. Reload it before editing further.')
+        if (!restoringHistoryRef.current) setError('This file changed outside the editor. Reload it before editing further.')
       }
     })
   }, [filePath, project, refreshPreview, view])
@@ -163,6 +173,27 @@ export default function App() {
   useEffect(() => {
     if (project && build.status === 'ready') void refreshPreview(project.id, view)
   }, [build.status, project, refreshPreview, view])
+
+  useEffect(() => {
+    if (!project || dirty || !revision) return
+    let active = true
+    setHistoryLoading(true)
+    getProjectHistory(project.id).then(({ revisions: items }) => {
+      if (!active) return
+      setHistoryRevisions(items)
+      setHistoryFrom(items[1]?.revision ?? items[0]?.revision ?? '')
+      setHistoryTo(items[0]?.revision ?? '')
+      setRevisionToRestore(items[0]?.revision ?? '')
+    }).catch(() => { if (active) setHistoryRevisions([]) }).finally(() => { if (active) setHistoryLoading(false) })
+    return () => { active = false }
+  }, [project?.id, revision, dirty])
+
+  useEffect(() => {
+    if (!project || !historyFrom || !historyTo || historyFrom === historyTo) { setRevisionComparison(null); return }
+    let active = true
+    compareProjectRevisions(project.id, historyFrom, historyTo).then((comparison) => { if (active) setRevisionComparison(comparison) }).catch(() => { if (active) setRevisionComparison(null) })
+    return () => { active = false }
+  }, [project?.id, historyFrom, historyTo])
 
   const handleCreate = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -198,6 +229,30 @@ export default function App() {
     } catch (cause) {
       setSaving(false)
       setError(cause instanceof Error ? cause.message : 'Unable to start build')
+    }
+  }
+
+  const restoreRevision = async () => {
+    if (!project || !revisionToRestore || !revision) return
+    restoringHistoryRef.current = true
+    setRestoringHistory(true)
+    setError('')
+    try {
+      const restored = await restoreProjectRevision(project.id, revisionToRestore, revision)
+      const file = await getProjectFile(project.id, filePath).catch(() => getProjectFile(project.id, project.entrypoint))
+      revisionRef.current = restored.revision
+      setRevision(restored.revision)
+      setFilePath(file.path)
+      setSource(file.content)
+      setDirty(false)
+      setProject({ ...project, revision: restored.revision })
+      setBuild({ status: 'compiling', revision: restored.revision })
+      setHistoryDialogOpen(false)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to restore revision')
+    } finally {
+      restoringHistoryRef.current = false
+      setRestoringHistory(false)
     }
   }
 
@@ -251,6 +306,7 @@ export default function App() {
         </div>
         <div className="top-actions">
           <div className={`build-state ${build.status}`} aria-live="polite"><span className="status-dot" />{statusText}</div>
+          <button className="build-button history-button" disabled={!project} onClick={() => setHistoryDialogOpen(true)}>History</button>
           <button className="build-button manufacturing-button" disabled={!project} onClick={() => setManufacturingDialogOpen(true)}>Rule checks · Manufacturing</button>
           <button className="build-button" disabled={!project || build.status === 'compiling'} onClick={runBuild}><span>▶</span> Build</button>
         </div>
@@ -311,14 +367,27 @@ export default function App() {
           {build.status === 'failed' && !preview && build.diagnostics?.length ? null : build.status !== 'failed' && build.status !== 'ready' && <div className="preview-footer"><span className="pulse-dot" />Previews update when source changes</div>}
         </section>
       </div>
+      {historyDialogOpen && <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryDialogOpen(false) }}>
+        <section className="history-dialog" role="dialog" aria-modal="true" aria-labelledby="history-title">
+          <header><div><h2 id="history-title">Project source history</h2><p>{historyRevisions.length} of 50 retained revisions · snapshots include project source files</p></div><button aria-label="Close project history" onClick={() => setHistoryDialogOpen(false)}>×</button></header>
+          {historyLoading ? <p className="history-empty">Loading revisions…</p> : historyRevisions.length === 0 ? <p className="history-empty">No saved revisions yet.</p> : <div className="history-layout">
+            <div className="history-revision-list" aria-label="Saved revisions">{historyRevisions.map((item) => <button key={item.revision} className={`history-revision ${revisionToRestore === item.revision ? 'selected' : ''}`} onClick={() => setRevisionToRestore(item.revision)}>
+              <strong>{new Date(item.createdAt).toLocaleString()}</strong><small>{item.changedFiles.join(', ') || 'No changed files'} · {formatBytes(item.sizeBytes)}</small><code>{item.revision.slice(0, 8)}</code>
+            </button>)}</div>
+            <div className="history-compare">
+              <div className="history-selects"><label>Compare from<select aria-label="Compare from" value={historyFrom} onChange={(event) => setHistoryFrom(event.target.value)}>{historyRevisions.map((item) => <option key={item.revision} value={item.revision}>{new Date(item.createdAt).toLocaleString()}</option>)}</select></label><label>Compare with<select aria-label="Compare with" value={historyTo} onChange={(event) => setHistoryTo(event.target.value)}>{historyRevisions.map((item) => <option key={item.revision} value={item.revision}>{new Date(item.createdAt).toLocaleString()}</option>)}</select></label></div>
+              {revisionComparison?.files.length ? revisionComparison.files.map((file) => <section className="history-file-diff" key={file.path}><h3>{file.path}</h3><div><pre aria-label={`${file.path} before`}>{file.before ?? '— file did not exist —'}</pre><pre aria-label={`${file.path} after`}>{file.after ?? '— file did not exist —'}</pre></div></section>) : <p className="history-empty">{historyFrom === historyTo ? 'Choose two different revisions to compare.' : 'These revisions contain no source changes.'}</p>}
+            </div>
+          </div>}
+          <footer><span>Restore replaces the project files and queues a normal build.</span><button className="build-button" disabled={!revisionToRestore || revisionToRestore === revision || dirty || restoringHistory || historyLoading} onClick={() => void restoreRevision()}>{restoringHistory ? 'Restoring…' : 'Restore selected revision'}</button></footer>
+        </section>
+      </div>}
       {manufacturingDialogOpen && <div className="manufacturing-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setManufacturingDialogOpen(false) }}>
         <section className="manufacturing-dialog" role="dialog" aria-modal="true" aria-labelledby="manufacturing-title">
           <header><div><h2 id="manufacturing-title">Manufacturing preflight</h2><p>Review electrical and fabricator checks before generating files.</p></div><button aria-label="Close manufacturing checks" onClick={() => setManufacturingDialogOpen(false)}>×</button></header>
           <label className="profile-select">Fabricator rule profile<select aria-label="Fabricator rule profile" value={manufacturingProfile} onChange={(event) => setManufacturingProfile(event.target.value)}>{manufacturingProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}</select></label>
           {manufacturingProfiles.find(({ id }) => id === manufacturingProfile)?.description && <p className="profile-description">{manufacturingProfiles.find(({ id }) => id === manufacturingProfile)?.description}</p>}
-          <div className="manufacturing-checks" aria-live="polite">
-            {loadingManufacturing ? <p className="checks-empty">Checking current build…</p> : manufacturingPreflight ? manufacturingPreflight.checks.map((check) => <ManufacturingCheckRow key={check.id} check={check} />) : <p className="checks-empty">Build the project to load manufacturing checks.</p>}
-          </div>
+          <div className="manufacturing-checks" aria-live="polite">{loadingManufacturing ? <p className="checks-empty">Checking current build…</p> : manufacturingPreflight ? manufacturingPreflight.checks.map((check) => <ManufacturingCheckRow key={check.id} check={check} />) : <p className="checks-empty">Build the project to load manufacturing checks.</p>}</div>
           <footer><span>{manufacturingPreflight?.ready ? 'Preflight ready' : manufacturingPreflight ? 'Resolve blocking checks before export' : 'Preflight unavailable'}</span><button className="build-button" disabled={!project || dirty || build.status !== 'ready' || build.revision !== revision || exportingManufacturing || loadingManufacturing || !manufacturingPreflight?.ready} onClick={downloadManufacturing}>{exportingManufacturing ? 'Exporting…' : 'Download Manufacturing ZIP'}</button></footer>
         </section>
       </div>}
@@ -330,6 +399,11 @@ export default function App() {
 function ManufacturingCheckRow({ check }: { check: ManufacturingCheck }) {
   const label = check.status === 'pass' ? 'Pass' : check.status === 'fail' ? 'Blocked' : 'Review'
   return <div className={`manufacturing-check ${check.status}`}><span className="check-status">{label}</span><span>{check.message}</span></div>
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  return `${(bytes / 1024).toFixed(1)} KB`
 }
 
 function PcbPreview({ circuitJson }: { circuitJson: PcbCircuitJson }) {

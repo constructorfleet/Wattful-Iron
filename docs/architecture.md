@@ -17,6 +17,7 @@ or high-availability service. Run one app replica against one project volume.
 
 - Project creation, listing, opening, and file read/write.
 - Browser source editing.
+- Local source history with compare and concurrency-checked restore.
 - tscircuit build execution and build diagnostics.
 - Generated Circuit JSON retained for preview.
 - Live SSE updates.
@@ -51,9 +52,9 @@ tracing, complete fabricator rule coverage, Git-backed revision history,
 approval states, and purchasing or fabrication integrations. The MCP bearer token is optional
 and shared by all clients; it does not protect the browser or REST API.
 Simulation results are retained with the successful Circuit JSON build rather
-than executed on demand. Project files persist on disk, but there is no source
-history or revision browser yet. Do not infer support from the architecture
-goals in `PROMPT.md`.
+than executed on demand. Project source history uses local bounded snapshots,
+not Git commits. Do not infer support from the architecture goals in
+`PROMPT.md`.
 
 See [security limitations](security.md) before exposing the prototype to a
 network or accepting projects from other users.

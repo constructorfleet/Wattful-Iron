@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createProject, getManufacturingArchive, getManufacturingPreflight, getManufacturingProfiles, getProjectFile, saveProjectFile, type Project } from '../src/api'
+import { compareProjectRevisions, createProject, getManufacturingArchive, getManufacturingPreflight, getManufacturingProfiles, getProjectFile, getProjectHistory, restoreProjectRevision, saveProjectFile, type Project } from '../src/api'
 
 describe('project API', () => {
   it('creates a named project and returns the server project record', async () => {
@@ -26,6 +26,19 @@ describe('project API', () => {
       method: 'PUT',
       headers: expect.objectContaining({ 'If-Match': 'r2' }),
     }))
+  })
+
+  it('lists revisions, compares source snapshots, and restores with the current revision token', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ revisions: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ from: 'r1', to: 'r2', files: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ revision: 'r3', restoredFrom: 'r1', changedFiles: ['index.tsx'] }), { status: 200 }))
+    await getProjectHistory('p-1', fetcher)
+    await compareProjectRevisions('p-1', 'r1', 'r2', fetcher)
+    await restoreProjectRevision('p-1', 'r1', 'r2', fetcher)
+    expect(fetcher).toHaveBeenNthCalledWith(1, '/api/projects/p-1/history', {})
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/projects/p-1/history/compare?from=r1&to=r2', {})
+    expect(fetcher).toHaveBeenNthCalledWith(3, '/api/projects/p-1/history/r1/restore', { method: 'POST', headers: { 'If-Match': 'r2' } })
   })
 
   it('downloads manufacturing ZIP data from the project endpoint', async () => {
