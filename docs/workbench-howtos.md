@@ -32,12 +32,10 @@ demand. See [implemented simulation scope](architecture.md#implemented-in-this-s
 ## Inspect a PCB preview
 
 Select **PCB** after the build reaches **Ready**. The viewer includes layer,
-routing, bounds, and measurement controls. In the screenshot below, the
-example build's Circuit JSON contains two PCB components, but the browser
-viewer rendered only its grid. Inspect the actual preview before using it to
-make placement or fabrication decisions.
+routing, bounds, and measurement controls. The manufacturing example shows its
+board outline, two placed components, plated hole, and non-plated hole.
 
-![PCB preview showing the grid in the local browser run](images/workbench-pcb.png)
+![PCB preview showing the manufacturing example board and components](images/workbench-pcb.png)
 
 ## Download manufacturing files
 
