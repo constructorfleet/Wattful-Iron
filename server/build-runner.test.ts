@@ -51,7 +51,8 @@ test("runner creates a fixed, isolated, bounded container and removes it after s
   assert.equal(docker.copied?.path, "/tmp")
   assert.ok(docker.copied?.archive.includes(Buffer.from("build/index.circuit.tsx")))
   const archive = docker.copied?.archive
-  assert.equal(parseInt(archive!.toString("ascii", 512 + 100, 512 + 108).replace(/\0.*$/, ""), 8), 0o400)
+  assert.equal(parseInt(archive!.toString("ascii", 100, 108).replace(/\0.*$/, ""), 8), 0o777)
+  assert.equal(parseInt(archive!.toString("ascii", 512 + 100, 512 + 108).replace(/\0.*$/, ""), 8), 0o444)
   assert.equal(parseInt(archive!.toString("ascii", 512 + 108, 512 + 116).replace(/\0.*$/, ""), 8), 65532)
 })
 

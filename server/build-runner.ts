@@ -251,7 +251,10 @@ function createTar(files: TarFile[]) {
   const blocks: Buffer[] = []
   const directory = Buffer.alloc(512)
   writeTarString(directory, 0, 100, "build/")
-  writeTarOctal(directory, 100, 8, 0o700)
+  // Docker's archive API may apply the daemon's ownership instead of the tar
+  // UID. The scratch directory must remain traversable and writable by the
+  // unprivileged job user in either case.
+  writeTarOctal(directory, 100, 8, 0o777)
   writeTarOctal(directory, 108, 8, 65532)
   writeTarOctal(directory, 116, 8, 65532)
   writeTarOctal(directory, 124, 12, 0)
@@ -268,7 +271,7 @@ function createTar(files: TarFile[]) {
     const content = Buffer.from(file.content)
     const header = Buffer.alloc(512)
     writeTarString(header, 0, 100, file.path)
-    writeTarOctal(header, 100, 8, 0o400)
+    writeTarOctal(header, 100, 8, 0o444)
     writeTarOctal(header, 108, 8, 65532)
     writeTarOctal(header, 116, 8, 65532)
     writeTarOctal(header, 124, 12, content.length)
