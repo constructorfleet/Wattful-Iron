@@ -19,7 +19,8 @@ test("manufacturing preflight accepts the current successful board and reports l
   assert.equal(result.ready, true)
   assert.equal(result.profile.id, "board-default")
   assert.equal(result.checks.find(({ id }) => id === "bom-review")?.status, "warning")
-  assert.equal(result.checks.find(({ id }) => id === "circuit-errors")?.status, "pass")
+  assert.equal(result.checks.find(({ id }) => id === "circuit-errors")?.status, "not-evaluated")
+  assert.equal(result.checks.find(({ id }) => id === "circuit-warnings")?.status, "not-evaluated")
   assert.equal(result.checks.find(({ id }) => id === "trace-width")?.status, "warning")
 })
 
@@ -43,6 +44,15 @@ test("preflight reports Circuit JSON validation errors and warnings", () => {
   assert.equal(result.ready, false)
   assert.equal(result.checks.find(({ id }) => id === "circuit-errors")?.status, "fail")
   assert.equal(result.checks.find(({ id }) => id === "circuit-warnings")?.status, "warning")
+})
+
+test("Circuit JSON validation records do not imply that missing check categories passed", () => {
+  const result = checkManufacturability([
+    ...elements,
+    { type: "pcb_port_not_connected_error", message: "U1 pin 2 is not connected" },
+  ], { status: "ready", revision: "rev-1" }, "rev-1")
+  assert.equal(result.checks.find(({ id }) => id === "circuit-errors")?.status, "fail")
+  assert.equal(result.checks.find(({ id }) => id === "circuit-warnings")?.status, "not-evaluated")
 })
 
 test("manufacturing preflight blocks source connections without a routed PCB trace", () => {
