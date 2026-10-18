@@ -95,6 +95,40 @@ test("MCP exposes read-only inspection of components, nets, pins, routes, and bo
   }
 })
 
+test("MCP reads and validates versioned project requirements", async () => {
+  const fixture = await makeFixture(async () => [{ type: "pcb_board", width: 50, height: 35, num_layers: 4 }])
+  const server = createServer(fixture.app)
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address()
+  assert.ok(address && typeof address !== "string")
+  const client = new Client({ name: "circuits-workbench-test", version: "1.0.0" })
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`), {
+    requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+  })
+  try {
+    await client.connect(transport)
+    const project = readResult<Project>(await client.callTool({ name: "create_project", arguments: { name: "Requirements board" } }))
+    await waitForToolStatus(client, project.id, "ready")
+    const initial = readResult<{ revision: string }>(await client.callTool({ name: "get_project", arguments: { projectId: project.id } }))
+    await client.callTool({ name: "update_project_file", arguments: {
+      projectId: project.id, path: "requirements.json", revision: initial.revision,
+      content: JSON.stringify({ version: 1, requirements: { board: { width_mm: 50, height_mm: 35, layers: 4 }, power: { voltage: 5 } } }),
+    } })
+    const build = readResult<{ status: string }>(await client.callTool({ name: "build_project", arguments: { projectId: project.id } }))
+    assert.equal(build.status, "ready")
+    const requirements = readResult<{ configured: boolean; requirements: { requirements: { board: { width_mm: number } } } }>(await client.callTool({ name: "get_project_requirements", arguments: { projectId: project.id } }))
+    assert.equal(requirements.configured, true)
+    assert.equal(requirements.requirements.requirements.board.width_mm, 50)
+    const validation = readResult<{ stale: boolean; checks: Array<{ id: string; status: string }> }>(await client.callTool({ name: "validate_project_requirements", arguments: { projectId: project.id } }))
+    assert.equal(validation.stale, false)
+    assert.deepEqual(validation.checks.map(({ status }) => status), ["pass", "pass", "pass", "not-evaluated"])
+  } finally {
+    await client.close()
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    await fixture.cleanup()
+  }
+})
+
 test("MCP tools use revision checks and return build and preview data", async () => {
   const fixture = await makeFixture()
   const server = createServer(fixture.app)

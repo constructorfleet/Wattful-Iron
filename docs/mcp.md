@@ -34,6 +34,8 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `trace_net` | Inspect `source_trace` elements by net name or trace ID, connected ports and components, and matching `pcb_trace` routes. |
 | `get_pin_connections` | List a component's `source_port` elements and the source traces that include each port. Match components by name or `source_component_id`. |
 | `get_board_properties` | Return the emitted `pcb_board` elements, including dimensions, material, stackup, and design-rule properties. |
+| `get_project_requirements` | Read a project's revisioned `requirements.json` document, when configured. |
+| `validate_project_requirements` | Compare supported board requirements with the latest successful build and report unsupported checks as not evaluated. |
 | `run_simulation` | Build the current source and return transient SPICE results emitted by tscircuit, when configured. |
 | `get_simulation_results` | Read waveform data and probe/net information from the latest successful build. |
 | `check_manufacturability` | Run the same current-revision completeness checks used by the manufacturing download route. |
@@ -52,6 +54,12 @@ board, reference, footprint, and revision checks. The browser can download a
 preflight-approved manufacturing ZIP from
 `/api/projects/{projectId}/manufacturing.zip`; it contains Gerber/drill files,
 BOM, and pick-and-place data. The checks do not replace ERC/DRC or vendor rules.
+
+Projects can define engineering constraints in `requirements.json`. The
+requirements MCP tools expose the document and compare board dimensions and
+layer count with Circuit JSON. Power, interface-count, and assembler checks
+remain explicitly not evaluated. See [Project requirements](requirements.md)
+for the schema, REST endpoints, and current validation limits.
 
 ## Codex
 
