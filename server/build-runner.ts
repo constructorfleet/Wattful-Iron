@@ -113,6 +113,7 @@ export function createBuildRunnerApp(options: BuildRunnerOptions): Express {
       response.status(error.status).json({ error: error.message, runtime: options.runtime, isolation: isolationLevel(options.runtime) })
       return
     }
+    console.error("Build runner request failed", error)
     if (typeof error === "object" && error !== null && "status" in error && error.status === 400) {
       response.status(400).json({ error: "Invalid build request body" })
       return

@@ -127,11 +127,13 @@ jobs:
             fi
             if [ "$build_state" = failed ]; then
               printf '%s\n' "$project_state"
+              docker logs circuits-build-runner
               docker logs circuits-smoke
               exit 1
             fi
             sleep 2
           done
+          docker logs circuits-build-runner
           docker logs circuits-smoke
           exit 1
       - name: Scan image with Trivy
