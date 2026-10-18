@@ -63,6 +63,11 @@ button { color: inherit; cursor: pointer; }
 .project-item-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
 .project-item-copy small { color: #747e89; font: 10px var(--mono); }
 .sidebar-empty { padding: 12px; color: #727c86; font-size: 11px; line-height: 1.5; }
+.file-browser { display: flex; flex-direction: column; gap: 2px; min-height: 0; margin: 10px 8px; overflow-y: auto; }
+.file-browser-title { padding: 8px 10px 6px; color: #89929c; font: 10px var(--mono); letter-spacing: .1em; }
+.file-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 29px; padding: 5px 10px; overflow: hidden; color: #9ca7b1; border: 1px solid transparent; border-radius: 4px; background: transparent; text-align: left; text-overflow: ellipsis; white-space: nowrap; font: 10px var(--mono); }
+.file-item:hover { background: #1e242a; }
+.file-item.selected { color: #e2eee8; border-color: #30483e; background: #1c2924; }
 .sidebar-footer { margin-top: auto; height: 42px; display: flex; align-items: center; gap: 8px; padding: 0 18px; color: #79838e; border-top: 1px solid #242a31; font-size: 10px; }
 .connection-dot { width: 6px; height: 6px; border-radius: 50%; background: #5fc79a; }
 .editor-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #1e2229; border-right: 1px solid var(--border); }
@@ -131,6 +136,7 @@ button { color: inherit; cursor: pointer; }
 .toast-error .reload-button { padding: 6px 8px; color: #13231c; border-radius: 4px; background: var(--accent); font-size: 10px; white-space: nowrap; }
 .history-overlay { position: fixed; z-index: 7; inset: 0; display: grid; place-items: center; padding: 18px; background: #070a0dcc; }
 .history-dialog { display: flex; width: min(1040px, 100%); height: min(760px, 92vh); flex-direction: column; overflow: hidden; color: var(--text); border: 1px solid #39434c; border-radius: 9px; background: #191e24; box-shadow: 0 24px 80px #0009; }
+.unsaved-dialog { width: min(460px, 100%); height: auto; }
 .pdf-reference-dialog { width: min(1280px, 100%); height: min(900px, 94vh); }
 .pdf-reference-dialog iframe { width: 100%; min-height: 0; flex: 1; border: 0; background: #30343a; }
 .history-dialog > header, .history-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 15px 19px; }

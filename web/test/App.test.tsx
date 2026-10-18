@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
   getProject: vi.fn(),
   getProjectReferencePdfUrl: vi.fn((projectId: string, referenceId: string) => `/api/projects/${projectId}/references/${referenceId}`),
   getProjectFile: vi.fn(),
+  getProjectFiles: vi.fn(),
   getProjectHistory: vi.fn(),
   compareProjectRevisions: vi.fn(),
   restoreProjectRevision: vi.fn(),
@@ -26,8 +27,8 @@ let projectEvent: ((event: unknown) => void) | undefined
 
 vi.mock('../src/api', () => api)
 vi.mock('@monaco-editor/react', () => ({
-  default: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => (
-    <textarea aria-label="TSX source editor" value={value} onChange={(event) => onChange(event.target.value)} />
+  default: ({ value, onChange, language }: { value: string; onChange: (value: string) => void; language?: string }) => (
+    <textarea aria-label="TSX source editor" data-language={language} value={value} onChange={(event) => onChange(event.target.value)} />
   ),
 }))
 vi.mock('@tscircuit/runframe', () => ({
@@ -51,6 +52,7 @@ beforeEach(() => {
   ])
   api.getProject.mockResolvedValue(existingProject)
   api.getProjectFile.mockResolvedValue({ path: 'index.tsx', content: 'export default () => <board />', revision: 'rev-1' })
+  api.getProjectFiles.mockResolvedValue(['index.tsx', 'package.json', 'src/helpers.js'])
   api.getProjectHistory.mockResolvedValue({ revisions: [
     { revision: 'rev-1', createdAt: '2026-01-02T00:00:00.000Z', changedFiles: ['index.tsx'], sizeBytes: 120 },
     { revision: 'rev-2', createdAt: '2026-01-01T00:00:00.000Z', changedFiles: ['index.tsx'], sizeBytes: 110 },
@@ -110,6 +112,38 @@ describe('workbench', () => {
     expect(screen.getByRole('tab', { name: 'Schematic' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'PCB' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '3D' })).toBeInTheDocument()
+  })
+
+  it('browses project files, opens them with matching editor language, and protects unsaved edits', async () => {
+    api.getProjectFile.mockImplementation((_id: string, path: string) => Promise.resolve({
+      path, content: path === 'src/helpers.js' ? 'export const pin = 1' : 'export default () => <board />', revision: 'rev-1',
+    }))
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board/ }))
+    expect(await screen.findByRole('button', { name: 'src/helpers.js' })).toBeInTheDocument()
+    fireEvent.change(await screen.findByLabelText('TSX source editor'), { target: { value: 'unsaved circuit' } })
+    fireEvent.click(screen.getByRole('button', { name: 'src/helpers.js' }))
+    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Discard and open' }))
+    expect(await screen.findByLabelText('TSX source editor')).toHaveValue('export const pin = 1')
+    expect(screen.getByLabelText('TSX source editor')).toHaveAttribute('data-language', 'javascript')
+    expect(api.getProjectFile).toHaveBeenLastCalledWith('led-1', 'src/helpers.js')
+  })
+
+  it('cancels or saves before changing the active file', async () => {
+    api.saveProjectFile.mockResolvedValue({ path: 'index.tsx', content: 'edited', revision: 'rev-2' })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board/ }))
+    fireEvent.change(await screen.findByLabelText('TSX source editor'), { target: { value: 'edited source' } })
+    fireEvent.click(screen.getByRole('button', { name: 'package.json' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+    expect(await screen.findByLabelText('TSX source editor')).toHaveValue('edited source')
+    expect(api.getProjectFile).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'package.json' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Save and open' }))
+    await waitFor(() => expect(api.saveProjectFile).toHaveBeenCalledWith('led-1', 'index.tsx', 'edited source', 'rev-1'))
+    await waitFor(() => expect(api.getProjectFile).toHaveBeenLastCalledWith('led-1', 'package.json'))
   })
 
   it('passes built circuit data into the PCB viewer', async () => {
@@ -192,7 +226,7 @@ describe('workbench', () => {
     expect(await screen.findByRole('dialog', { name: 'Project source history' })).toBeInTheDocument()
     expect(await screen.findByText('old source')).toBeInTheDocument()
     expect(screen.getByText('new source')).toBeInTheDocument()
-    fireEvent.click(screen.getAllByRole('button', { name: /index\.tsx/ })[1]!)
+    fireEvent.click(screen.getByText('rev-2').closest('button')!)
     fireEvent.click(screen.getByRole('button', { name: 'Restore selected revision' }))
 
     await waitFor(() => expect(api.restoreProjectRevision).toHaveBeenCalledWith('led-1', 'rev-2', 'rev-1'))

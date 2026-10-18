@@ -10,6 +10,7 @@ import {
   getPreview,
   getProject,
   getProjectFile,
+  getProjectFiles,
   getProjectHistory,
   getProjectReferencePdfUrl,
   getSimulation,
@@ -41,6 +42,11 @@ const views: Array<{ kind: PreviewKind | 'simulation'; label: string; tab: 'sche
   { kind: 'simulation', label: 'Simulation', tab: 'simulation' },
 ]
 
+function editorLanguage(path: string) {
+  const extension = path.toLowerCase().split('.').pop()
+  return ({ tsx: 'typescript', ts: 'typescript', jsx: 'javascript', js: 'javascript', json: 'json', css: 'css', html: 'html', md: 'markdown', yml: 'yaml', yaml: 'yaml' } as Record<string, string>)[extension ?? ''] ?? 'plaintext'
+}
+
 const initialBuild: BuildStatus = { status: 'idle' }
 const CircuitJsonPreview = lazy(() => import('@tscircuit/runframe').then((module) => ({ default: module.CircuitJsonPreview })))
 const PCBViewer = lazy(() => import('@tscircuit/pcb-viewer').then((module) => ({ default: module.PCBViewer })))
@@ -68,9 +74,11 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([])
   const [project, setProject] = useState<Project | null>(null)
   const [filePath, setFilePath] = useState('')
+  const [projectFiles, setProjectFiles] = useState<string[]>([])
   const [source, setSource] = useState('')
   const [revision, setRevision] = useState('')
   const [dirty, setDirty] = useState(false)
+  const [unsavedDialogOpen, setUnsavedDialogOpen] = useState(false)
   const [view, setView] = useState<PreviewKind | 'simulation'>('schematic')
   const [preview, setPreview] = useState<unknown>(null)
   const [simulation, setSimulation] = useState<Simulation | null>(null)
@@ -104,6 +112,7 @@ export default function App() {
   const sourceRef = useRef(source)
   const revisionRef = useRef(revision)
   const restoringHistoryRef = useRef(false)
+  const pendingNavigationRef = useRef<(() => Promise<void>) | null>(null)
 
   useEffect(() => { sourceRef.current = source }, [source])
   useEffect(() => { revisionRef.current = revision }, [revision])
@@ -119,7 +128,7 @@ export default function App() {
     }
   }, [view])
 
-  const openProject = useCallback(async (listedProject: Project) => {
+  const loadProject = useCallback(async (listedProject: Project) => {
     setError('')
     setReferencePdfOpen(false)
     setPreview(null)
@@ -128,10 +137,11 @@ export default function App() {
     try {
       const opened = await getProject(listedProject.id)
       const path = opened.entrypoint || listedProject.entrypoint || 'index.tsx'
-      const file = await getProjectFile(opened.id, path)
+      const [file, files] = await Promise.all([getProjectFile(opened.id, path), getProjectFiles(opened.id)])
       setProject(opened)
       setProjects((current) => current.some((item) => item.id === opened.id) ? current : [opened, ...current])
       setFilePath(file.path)
+      setProjectFiles(files)
       setSource(file.content)
       setRevision(file.revision)
       setDirty(false)
@@ -141,6 +151,66 @@ export default function App() {
       setError(cause instanceof Error ? cause.message : 'Unable to open project')
     }
   }, [refreshPreview, view])
+
+  const requestNavigation = useCallback((action: () => Promise<void>) => {
+    if (dirty) {
+      pendingNavigationRef.current = action
+      setUnsavedDialogOpen(true)
+      return
+    }
+    void action()
+  }, [dirty])
+
+  const openProject = useCallback((listedProject: Project) => {
+    requestNavigation(() => loadProject(listedProject))
+  }, [loadProject, requestNavigation])
+
+  const openFile = useCallback((path: string) => {
+    if (!project || path === filePath) return
+    requestNavigation(async () => {
+      setError('')
+      try {
+        const file = await getProjectFile(project.id, path)
+        setFilePath(file.path)
+        setSource(file.content)
+        setRevision(file.revision)
+        revisionRef.current = file.revision
+        setDirty(false)
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : 'Unable to open file')
+      }
+    })
+  }, [filePath, project, requestNavigation])
+
+  const finishNavigation = async (choice: 'save' | 'discard' | 'cancel') => {
+    if (choice === 'cancel') {
+      pendingNavigationRef.current = null
+      setUnsavedDialogOpen(false)
+      return
+    }
+    const action = pendingNavigationRef.current
+    if (choice === 'save' && project) {
+      if (timer.current) clearTimeout(timer.current)
+      setSaving(true)
+      try {
+        const saved = await saveProjectFile(project.id, filePath, sourceRef.current, revisionRef.current)
+        revisionRef.current = saved.revision
+        setRevision(saved.revision)
+        setDirty(false)
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : 'Unable to save file')
+        setSaving(false)
+        return
+      }
+      setSaving(false)
+    } else {
+      if (timer.current) clearTimeout(timer.current)
+      setDirty(false)
+    }
+    pendingNavigationRef.current = null
+    setUnsavedDialogOpen(false)
+    await action?.()
+  }
 
   useEffect(() => {
     let active = true
@@ -386,6 +456,10 @@ export default function App() {
               </button>
             ))}
           </div>
+          {project && <div className="file-browser" aria-label="Project files">
+            <div className="file-browser-title">FILES</div>
+            {projectFiles.map((path) => <button key={path} className={`file-item ${filePath === path ? 'selected' : ''}`} aria-current={filePath === path ? 'page' : undefined} onClick={() => openFile(path)}>{path}{dirty && filePath === path && <span className="unsaved-dot" title="Unsaved changes" />}</button>)}
+          </div>}
           <div className="sidebar-footer"><span className="connection-dot" /> Local workspace</div>
         </aside>
 
@@ -396,7 +470,7 @@ export default function App() {
           </div>
           {project ? <Editor
             height="100%"
-            language="typescript"
+            language={editorLanguage(filePath)}
             beforeMount={configureMonaco}
             path={filePath}
             theme="vs-dark"
@@ -425,6 +499,10 @@ export default function App() {
           {build.status === 'failed' && !preview && build.diagnostics?.length ? null : build.status !== 'failed' && build.status !== 'ready' && <div className="preview-footer"><span className="pulse-dot" />Previews update when source changes</div>}
         </section>
       </div>
+      {unsavedDialogOpen && <div className="history-overlay" role="presentation"><section className="history-dialog unsaved-dialog" role="dialog" aria-modal="true" aria-labelledby="unsaved-title">
+        <header><div><h2 id="unsaved-title">Unsaved changes</h2><p>Save your edits before opening another project file?</p></div></header>
+        <footer><button className="quiet-button" onClick={() => void finishNavigation('cancel')}>Cancel</button><button className="quiet-button" onClick={() => void finishNavigation('discard')}>Discard and open</button><button className="build-button" onClick={() => void finishNavigation('save')}>Save and open</button></footer>
+      </section></div>}
       {historyDialogOpen && <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryDialogOpen(false) }}>
         <section className="history-dialog" role="dialog" aria-modal="true" aria-labelledby="history-title">
           <header><div><h2 id="history-title">Project source history</h2><p>{historyRevisions.length} of 50 retained revisions · snapshots include project source files</p></div><button aria-label="Close project history" onClick={() => setHistoryDialogOpen(false)}>×</button></header>

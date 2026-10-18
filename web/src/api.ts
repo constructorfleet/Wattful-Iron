@@ -87,6 +87,7 @@ export const getProject = (id: string, fetcher?: Fetcher) => request<Project>(`/
 
 const fileUrl = (id: string, path: string) => `/api/projects/${encodeURIComponent(id)}/files?path=${encodeURIComponent(path)}`
 export const getProjectFile = (id: string, path: string, fetcher?: Fetcher) => request<ProjectFile>(fileUrl(id, path), undefined, fetcher)
+export const getProjectFiles = (id: string, fetcher?: Fetcher) => request<string[]>(`/api/projects/${encodeURIComponent(id)}/file-list`, undefined, fetcher)
 
 export const saveProjectFile = (id: string, path: string, content: string, revision: string, fetcher?: Fetcher) => request<ProjectFile>(fileUrl(id, path), {
   method: 'PUT',
