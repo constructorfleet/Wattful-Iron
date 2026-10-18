@@ -128,7 +128,7 @@ export async function executeBuild(options: BuildRunnerOptions, job: BuildReques
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const containerId = await options.docker.createContainer(containerSpec(options, job.entrypoint))
   try {
-    await options.docker.putArchive(containerId, "/tmp", createTar(job.files.map(({ path, content }) => ({ path: `build/${path}`, content }))))
+    await options.docker.putArchive(containerId, "/app", createTar(job.files.map(({ path, content }) => ({ path: `build/${path}`, content }))))
     await options.docker.startContainer(containerId)
     const wait = await withTimeout(options.docker.waitContainer(containerId), timeoutMs)
     const logs = await options.docker.getLogs(containerId, MAX_LOG_BYTES)
@@ -249,47 +249,40 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 type TarFile = { path: string; content: string }
 function createTar(files: TarFile[]) {
   const blocks: Buffer[] = []
-  const directory = Buffer.alloc(512)
-  writeTarString(directory, 0, 100, "build/")
-  // Docker's archive API may apply the daemon's ownership instead of the tar
-  // UID. The scratch directory must remain traversable and writable by the
-  // unprivileged job user in either case.
-  writeTarOctal(directory, 100, 8, 0o777)
-  writeTarOctal(directory, 108, 8, 65532)
-  writeTarOctal(directory, 116, 8, 65532)
-  writeTarOctal(directory, 124, 12, 0)
-  writeTarOctal(directory, 136, 12, 0)
-  directory.fill(0x20, 148, 156)
-  directory[156] = 0x35
-  writeTarString(directory, 257, 6, "ustar")
-  writeTarString(directory, 263, 2, "00")
-  writeTarString(directory, 265, 32, "node")
-  writeTarString(directory, 297, 32, "node")
-  writeTarOctal(directory, 148, 8, directory.reduce((sum, byte) => sum + byte, 0))
-  blocks.push(directory)
+  const directories = new Set(["build/"])
+  for (const file of files) {
+    const parts = file.path.split("/")
+    for (let index = 1; index < parts.length; index++) directories.add(`${parts.slice(0, index).join("/")}/`)
+  }
+  for (const directory of [...directories].sort((left, right) => left.split("/").length - right.split("/").length)) {
+    blocks.push(createTarHeader(directory, 0o555, 0, true))
+  }
   for (const file of files) {
     const content = Buffer.from(file.content)
-    const header = Buffer.alloc(512)
-    writeTarString(header, 0, 100, file.path)
-    writeTarOctal(header, 100, 8, 0o444)
-    writeTarOctal(header, 108, 8, 65532)
-    writeTarOctal(header, 116, 8, 65532)
-    writeTarOctal(header, 124, 12, content.length)
-    writeTarOctal(header, 136, 12, 0)
-    header.fill(0x20, 148, 156)
-    header[156] = 0x30
-    writeTarString(header, 257, 6, "ustar")
-    writeTarString(header, 263, 2, "00")
-    writeTarString(header, 265, 32, "node")
-    writeTarString(header, 297, 32, "node")
-    const checksum = header.reduce((sum, byte) => sum + byte, 0)
-    writeTarOctal(header, 148, 8, checksum)
-    blocks.push(header, content)
+    blocks.push(createTarHeader(file.path, 0o444, content.length, false), content)
     const remainder = content.length % 512
     if (remainder) blocks.push(Buffer.alloc(512 - remainder))
   }
   blocks.push(Buffer.alloc(1024))
   return Buffer.concat(blocks)
+}
+
+function createTarHeader(filename: string, mode: number, size: number, directory: boolean) {
+  const header = Buffer.alloc(512)
+  writeTarString(header, 0, 100, filename)
+  writeTarOctal(header, 100, 8, mode)
+  writeTarOctal(header, 108, 8, 65532)
+  writeTarOctal(header, 116, 8, 65532)
+  writeTarOctal(header, 124, 12, size)
+  writeTarOctal(header, 136, 12, 0)
+  header.fill(0x20, 148, 156)
+  header[156] = directory ? 0x35 : 0x30
+  writeTarString(header, 257, 6, "ustar")
+  writeTarString(header, 263, 2, "00")
+  writeTarString(header, 265, 32, "node")
+  writeTarString(header, 297, 32, "node")
+  writeTarOctal(header, 148, 8, header.reduce((sum, byte) => sum + byte, 0))
+  return header
 }
 
 function writeTarString(buffer: Buffer, offset: number, length: number, value: string) {

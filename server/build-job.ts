@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { mkdir, readFile, readdir, symlink } from "node:fs/promises"
+import { mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 const RESULT_PREFIX = "@@WATTFUL_BUILD_RESULT@@"
@@ -13,6 +13,7 @@ async function main() {
   }
   const workspace = "/tmp/build"
   await mkdir(workspace, { recursive: true })
+  await copySourceTree("/app/build", workspace)
   try { await symlink("/app/node_modules", path.join(workspace, "node_modules"), "dir") } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
   }
@@ -28,6 +29,21 @@ async function main() {
   const json = JSON.stringify(circuitJson)
   if (Buffer.byteLength(json) > MAX_RESULT_BYTES) throw new Error("Circuit JSON output exceeds the build limit")
   process.stdout.write(`${RESULT_PREFIX}${json}\n`)
+}
+
+async function copySourceTree(source: string, destination: string): Promise<void> {
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    const sourcePath = path.join(source, entry.name)
+    const destinationPath = path.join(destination, entry.name)
+    if (entry.isDirectory()) {
+      await mkdir(destinationPath, { recursive: true })
+      await copySourceTree(sourcePath, destinationPath)
+    } else if (entry.isFile()) {
+      await writeFile(destinationPath, await readFile(sourcePath), { mode: 0o644 })
+    } else {
+      throw new Error("Build source archive contains an unsupported entry")
+    }
+  }
 }
 
 function runBuild(command: string, args: string[], cwd: string) {

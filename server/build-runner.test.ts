@@ -48,10 +48,10 @@ test("runner creates a fixed, isolated, bounded container and removes it after s
   assert.ok(docker.created?.HostConfig.PidsLimit && docker.created.HostConfig.PidsLimit > 0)
   assert.deepEqual(docker.created?.HostConfig.Mounts, [])
   assert.deepEqual(docker.removed, ["job-1"])
-  assert.equal(docker.copied?.path, "/tmp")
+  assert.equal(docker.copied?.path, "/app")
   assert.ok(docker.copied?.archive.includes(Buffer.from("build/index.circuit.tsx")))
   const archive = docker.copied?.archive
-  assert.equal(parseInt(archive!.toString("ascii", 100, 108).replace(/\0.*$/, ""), 8), 0o777)
+  assert.equal(parseInt(archive!.toString("ascii", 100, 108).replace(/\0.*$/, ""), 8), 0o555)
   assert.equal(parseInt(archive!.toString("ascii", 512 + 100, 512 + 108).replace(/\0.*$/, ""), 8), 0o444)
   assert.equal(parseInt(archive!.toString("ascii", 512 + 108, 512 + 116).replace(/\0.*$/, ""), 8), 65532)
 })
