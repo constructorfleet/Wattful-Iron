@@ -13,6 +13,29 @@ export function listComponents(input: unknown) {
   }))
 }
 
+export function getComponent(input: unknown, reference: string) {
+  const all = elements(input)
+  const matches = all.filter((item) => item.type === "source_component" && (
+    item.source_component_id === reference || item.name === reference || item.reference_designator === reference
+  ))
+  if (matches.length === 0) throw new Error(`No Circuit JSON source_component matches '${reference}'`)
+  if (matches.length > 1) throw new Error(`More than one Circuit JSON source_component matches '${reference}'`)
+  const component = matches[0]!
+  const componentId = component.source_component_id
+  const placement = all.find((item) => item.type === "pcb_component" && item.source_component_id === componentId)
+  const ports = all.filter((item) => item.type === "source_port" && item.source_component_id === componentId)
+  const traces = all.filter((item) => item.type === "source_trace")
+  return {
+    ...component,
+    ...(placement ? { pcb: placement } : {}),
+    pins: ports.map((port) => ({
+      ...port,
+      connections: traces.filter((trace) => stringArray(trace.connected_source_port_ids).includes(String(port.source_port_id)))
+        .map((trace) => ({ source_trace_id: trace.source_trace_id, name: trace.name })),
+    })),
+  }
+}
+
 export function listNets(input: unknown) {
   const all = elements(input)
   const ports = new Map(all.filter((item) => item.type === "source_port").map((item) => [item.source_port_id, item]))
