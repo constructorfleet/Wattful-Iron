@@ -330,6 +330,10 @@ test("shared workbench auth protects browser and REST routes while leaving healt
   }
 })
 
+test("workbench auth rejects secrets shorter than 32 bytes", () => {
+  assert.throws(() => createApp({ projectsDir: "/tmp/not-created", watchFiles: false, workbenchAuthToken: "too-short" }), /at least 32 bytes/)
+})
+
 async function waitForBuild(app: import("express").Express, id: string, status: "ready" | "failed", maxAttempts = 100, intervalMs = 10) {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const result = await request(app).get("/api/projects/" + id)
