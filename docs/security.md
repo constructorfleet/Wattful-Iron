@@ -22,7 +22,9 @@ The container runs non-root, drops Linux capabilities, enables
 `no-new-privileges`, has a read-only root filesystem, bounds `/tmp`, and sets
 default CPU, memory, and process limits. These reduce accidental impact; they
 do not make arbitrary project execution safe. Review and adjust resource limits
-for your workload, while retaining host-level limits.
+for your workload, while retaining host-level limits. Build timeouts terminate
+the build's process group on POSIX systems, but the child still runs under the
+app's UID with access to the mounted project volume and container network.
 
 ## Network exposure
 

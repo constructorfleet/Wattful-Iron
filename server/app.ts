@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process"
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto"
 import { access, lstat, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises"
 import path from "node:path"
@@ -9,6 +8,7 @@ import { convertCircuitJsonToTscircuit } from "circuit-json-to-tscircuit"
 import { mountMcp } from "./mcp.js"
 import { createGerberArchive, mountManufacturingRoutes } from "./manufacturing.js"
 import { getSimulationResults } from "./simulation.js"
+import { runCommand } from "./build-process.js"
 
 export type Diagnostic = { severity: "error" | "warning" | "info"; message: string; path?: string; line?: number; column?: number }
 type BuildStatus = "idle" | "compiling" | "ready" | "failed"
@@ -777,7 +777,7 @@ function hasWorkbenchCredential(header: string | undefined, expected: string) {
 
 async function runTscircuitBuild(projectDir: string, entrypoint: string): Promise<unknown> {
   const executable = path.resolve(process.cwd(), "node_modules/tscircuit/cli.mjs")
-  const child = spawn(process.env.BUN_BINARY ?? "bun", [executable, "build", entrypoint], {
+  const result = await runCommand(process.env.BUN_BINARY ?? "bun", [executable, "build", entrypoint], {
     cwd: projectDir,
     env: {
       PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
@@ -786,24 +786,16 @@ async function runTscircuitBuild(projectDir: string, entrypoint: string): Promis
       CI: "1",
       BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     },
-    stdio: ["ignore", "pipe", "pipe"],
+    timeoutMs: 120_000,
   })
-  let stdout = ""
-  let stderr = ""
-  child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk })
-  child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk })
-  const timeout = setTimeout(() => child.kill("SIGKILL"), 120_000)
-  const exitCode = await new Promise<number>((resolve, reject) => {
-    child.once("error", reject)
-    child.once("close", (code) => resolve(code ?? 1))
-  }).finally(() => clearTimeout(timeout))
-  if (exitCode !== 0) throw new Error((stderr + "\n" + stdout).trim() || `tsci build exited ${exitCode}`)
+  if (result.timedOut) throw new Error((result.stderr + "\n" + result.stdout).trim() || "tsci build exceeded its 120 second time limit")
+  if (result.exitCode !== 0) throw new Error((result.stderr + "\n" + result.stdout).trim() || `tsci build exited ${result.exitCode}`)
   const dist = path.join(projectDir, "dist")
   const files = await findFiles(dist, "circuit.json")
   for (const filename of files) {
     try { return JSON.parse(await readFile(filename, "utf8")) } catch { /* Try other build output files. */ }
   }
-  throw new Error(`tsci build succeeded but did not produce Circuit JSON. ${stderr}\n${stdout}`)
+  throw new Error(`tsci build succeeded but did not produce Circuit JSON. ${result.stderr}\n${result.stdout}`)
 }
 
 async function findFiles(directory: string, target: string): Promise<string[]> {
