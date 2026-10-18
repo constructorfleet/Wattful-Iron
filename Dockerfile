@@ -25,9 +25,9 @@ RUN npm ci --omit=dev && npm cache clean --force
 FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS build-job
 WORKDIR /app
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
-COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
-COPY --from=build --chown=node:node /app/dist/server/build-job.js ./dist/server/build-job.js
-USER node
+COPY --from=production-dependencies /app/node_modules ./node_modules
+COPY --from=build /app/dist/server/build-job.js ./dist/server/build-job.js
+USER 65532:65532
 WORKDIR /tmp
 ENTRYPOINT ["node", "/app/dist/server/build-job.js"]
 

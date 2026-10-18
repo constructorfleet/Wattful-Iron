@@ -40,10 +40,12 @@ Set `BUILD_RUNNER_TOKEN_FILE` in `.env` to the token file path and
 uses `/run/user/<uid>/docker.sock`. The runner socket has authority to create
 and delete containers, so use a dedicated, patched build host and do not expose
 the runner HTTP port. The job container receives no mounts, network, runner
-token, or host app files. Its root filesystem is read-only and it runs as
-non-root with no capabilities and no-new-privileges. CPU, memory, PIDs,
-temporary storage, time, source, result, and Docker logs are bounded; at most
-two builds run concurrently by default.
+token, or host app files. It runs as UID/GID `65532` with no capabilities and
+no-new-privileges. Docker's archive API requires a writable container layer to
+upload the source snapshot, so image and toolchain files are root-owned and the
+job user writes only to bounded temporary storage. CPU, memory, PIDs, temporary
+storage, time, source, result, and Docker logs are bounded; at most two builds
+run concurrently by default.
 
 ```sh
 cp .env.example .env

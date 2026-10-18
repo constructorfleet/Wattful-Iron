@@ -32,7 +32,7 @@ export type DockerContainerSpec = {
   HostConfig: {
     Runtime: string
     NetworkMode: "none"
-    ReadonlyRootfs: true
+    ReadonlyRootfs: boolean
     CapDrop: ["ALL"]
     SecurityOpt: ["no-new-privileges:true"]
     Memory: number
@@ -152,7 +152,7 @@ function containerSpec(options: BuildRunnerOptions, entrypoint: string): DockerC
     Image: options.image,
     Entrypoint: ["node", "/app/dist/server/build-job.js"],
     Cmd: [entrypoint],
-    User: "node",
+    User: "65532:65532",
     WorkingDir: "/tmp",
     Env: ["PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/tmp", "TMPDIR=/tmp", "CI=1", "NODE_ENV=production", "BUN_RUNTIME_TRANSPILER_CACHE_PATH=0"],
     Tty: false,
@@ -160,7 +160,10 @@ function containerSpec(options: BuildRunnerOptions, entrypoint: string): DockerC
     HostConfig: {
       Runtime: options.runtime,
       NetworkMode: "none",
-      ReadonlyRootfs: true,
+      // Docker's archive API refuses writes into containers with a read-only
+      // rootfs, even when the destination is a bounded tmpfs mount. The job
+      // therefore runs as an unprivileged UID against root-owned image files.
+      ReadonlyRootfs: false,
       CapDrop: ["ALL"],
       SecurityOpt: ["no-new-privileges:true"],
       Memory: options.memoryBytes ?? DEFAULT_MEMORY_BYTES,
@@ -249,8 +252,8 @@ function createTar(files: TarFile[]) {
   const directory = Buffer.alloc(512)
   writeTarString(directory, 0, 100, "build/")
   writeTarOctal(directory, 100, 8, 0o700)
-  writeTarOctal(directory, 108, 8, 1000)
-  writeTarOctal(directory, 116, 8, 1000)
+  writeTarOctal(directory, 108, 8, 65532)
+  writeTarOctal(directory, 116, 8, 65532)
   writeTarOctal(directory, 124, 12, 0)
   writeTarOctal(directory, 136, 12, 0)
   directory.fill(0x20, 148, 156)
@@ -265,9 +268,9 @@ function createTar(files: TarFile[]) {
     const content = Buffer.from(file.content)
     const header = Buffer.alloc(512)
     writeTarString(header, 0, 100, file.path)
-    writeTarOctal(header, 100, 8, 0o600)
-    writeTarOctal(header, 108, 8, 1000)
-    writeTarOctal(header, 116, 8, 1000)
+    writeTarOctal(header, 100, 8, 0o400)
+    writeTarOctal(header, 108, 8, 65532)
+    writeTarOctal(header, 116, 8, 65532)
     writeTarOctal(header, 124, 12, content.length)
     writeTarOctal(header, 136, 12, 0)
     header.fill(0x20, 148, 156)

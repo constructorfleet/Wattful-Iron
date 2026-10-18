@@ -7,11 +7,14 @@ the API process. In `isolated` mode (the production default), the app sends a
 bounded source snapshot to a separate build-runner service. The runner accepts
 only an entrypoint and files, then creates a disposable container from the
 separately built `build-job` image. That job has no network, no project-volume
-or sibling-project mount, no Docker socket, and no deployment token. Its root
-filesystem is read-only; only a bounded `/tmp` is writable. It runs as the
-`node` user with all capabilities dropped, `no-new-privileges`, and fixed CPU,
-memory, PID, time, source-size, output-size, and log-size limits. The runner
-deletes the container after success, failure, or timeout.
+or sibling-project mount, no Docker socket, and no deployment token. It runs as
+UID/GID `65532`, with all capabilities dropped, `no-new-privileges`, and fixed
+CPU, memory, PID, time, source-size, output-size, and log-size limits. Docker
+rejects archive uploads to containers configured with a read-only rootfs, so
+the container layer is writable; the job UID cannot write the root-owned image
+or toolchain files. Its bounded `/tmp` is the build workspace and writable
+scratch area. The runner deletes the container after success, failure, or
+timeout.
 
 The runner is a privileged control-plane component: it alone receives the host
 Docker Engine socket and creates containers using a fixed policy. Keep it on a

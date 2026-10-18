@@ -37,9 +37,9 @@ test("runner creates a fixed, isolated, bounded container and removes it after s
   assert.equal(docker.created?.HostConfig.Runtime, "runsc")
   assert.deepEqual(docker.created?.Entrypoint, ["node", "/app/dist/server/build-job.js"])
   assert.deepEqual(docker.created?.Cmd, ["index.circuit.tsx"])
-  assert.equal(docker.created?.User, "node")
+  assert.equal(docker.created?.User, "65532:65532")
   assert.equal(docker.created?.HostConfig.NetworkMode, "none")
-  assert.equal(docker.created?.HostConfig.ReadonlyRootfs, true)
+  assert.equal(docker.created?.HostConfig.ReadonlyRootfs, false)
   assert.deepEqual(docker.created?.HostConfig.CapDrop, ["ALL"])
   assert.deepEqual(docker.created?.HostConfig.SecurityOpt, ["no-new-privileges:true"])
   assert.ok(docker.created?.HostConfig.Memory && docker.created.HostConfig.Memory > 0)
@@ -49,6 +49,9 @@ test("runner creates a fixed, isolated, bounded container and removes it after s
   assert.deepEqual(docker.removed, ["job-1"])
   assert.equal(docker.copied?.path, "/tmp")
   assert.ok(docker.copied?.archive.includes(Buffer.from("build/index.circuit.tsx")))
+  const archive = docker.copied?.archive
+  assert.equal(parseInt(archive!.toString("ascii", 512 + 100, 512 + 108).replace(/\0.*$/, ""), 8), 0o400)
+  assert.equal(parseInt(archive!.toString("ascii", 512 + 108, 512 + 116).replace(/\0.*$/, ""), 8), 65532)
 })
 
 test("runner rejects extra container controls and unsafe paths before contacting Docker", async () => {
