@@ -24,7 +24,8 @@ or high-availability service. Run one app replica against one project volume.
 - Schematic, PCB, and 3D preview panels.
 - A simulation panel and `/api/projects/:id/simulation` results endpoint that
   read transient waveform elements emitted by tscircuit builds, with voltage
-  probe to Circuit JSON net correlation.
+  probe to Circuit JSON net correlation. The panel can explicitly rebuild the
+  current source on demand and display the resulting waveforms or diagnostics.
 - An optional bearer-token protected Streamable HTTP MCP endpoint with project,
   build, preview, diagnostics, and simulation tools.
 - A `/api/projects/:id/manufacturing` preflight for current builds, Circuit JSON
@@ -51,9 +52,10 @@ execution of user code, full dedicated ERC/DRC, interactive connectivity
 tracing, complete fabricator rule coverage, Git-backed revision history,
 approval states, and purchasing or fabrication integrations. The MCP bearer token is optional
 and shared by all clients; it does not protect the browser or REST API.
-Simulation results are retained with the successful Circuit JSON build rather
-than executed on demand. Project source history uses local bounded snapshots,
-not Git commits. Do not infer support from the architecture goals in
+Simulation execution uses tscircuit's configured SPICE support during its
+normal build; the workbench does not run a second solver or claim support for
+every component model or analysis mode. Project source history uses local
+bounded snapshots, not Git commits. Do not infer support from the architecture goals in
 `PROMPT.md`.
 
 See [security limitations](security.md) before exposing the prototype to a

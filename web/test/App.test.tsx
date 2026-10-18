@@ -19,8 +19,10 @@ const api = vi.hoisted(() => ({
   getSimulation: vi.fn(),
   getManufacturingProfiles: vi.fn(),
   getManufacturingPreflight: vi.fn(),
-  subscribeToProject: vi.fn(() => () => {}),
+  subscribeToProject: vi.fn((_id: string, _onEvent: (event: unknown) => void) => () => {}),
 }))
+
+let projectEvent: ((event: unknown) => void) | undefined
 
 vi.mock('../src/api', () => api)
 vi.mock('@monaco-editor/react', () => ({
@@ -40,6 +42,8 @@ const existingProject = { id: 'led-1', name: 'LED Board', entrypoint: 'index.tsx
 beforeEach(() => {
   cleanup()
   vi.clearAllMocks()
+  projectEvent = undefined
+  api.subscribeToProject.mockImplementation((_id, onEvent) => { projectEvent = onEvent; return () => {} })
   api.listProjects.mockResolvedValue([existingProject])
   api.listProjectTemplates.mockResolvedValue([
     { id: 'blank-board', name: 'Blank starter', description: 'An empty board ready for your circuit.' },
@@ -116,6 +120,44 @@ describe('workbench', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'PCB' }))
 
     expect(await screen.findByTestId('pcb-viewer')).toHaveAttribute('data-circuit-types', 'pcb_board,pcb_component')
+  })
+
+  it('runs simulation by rebuilding current source and shows emitted waveform results', async () => {
+    api.saveProjectFile.mockResolvedValue({ path: 'index.tsx', content: 'export default () => <board name="updated" />', revision: 'rev-2' })
+    api.getPreview.mockResolvedValue({ kind: 'schematic', revision: 'rev-2', circuitJson: [] })
+    api.getSimulation
+      .mockResolvedValueOnce({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], diagnostics: [] })
+      .mockResolvedValue({
+        revision: 'rev-2', status: 'complete', experiments: [{ id: 'exp-1', name: 'Transient', type: 'transient' }],
+        signals: [{ id: 'trace-1', name: 'OUT', unit: 'V', netId: 'net-1', samples: [{ x: 0, y: 0 }, { x: 1, y: 5 }] }], diagnostics: [],
+      })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board/ }))
+    fireEvent.change(await screen.findByLabelText('TSX source editor'), { target: { value: 'export default () => <board name="updated" />' } })
+    fireEvent.click(screen.getByRole('tab', { name: 'Simulation' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Run simulation' }))
+    await waitFor(() => expect(api.saveProjectFile).toHaveBeenCalledWith('led-1', 'index.tsx', 'export default () => <board name="updated" />', 'rev-1'))
+    await waitFor(() => expect(api.startBuild).toHaveBeenCalledWith('led-1'))
+    expect(await screen.findByText('Building with tscircuit…')).toBeInTheDocument()
+
+    projectEvent?.({ type: 'build.ready', buildId: 'build-2', revision: 'rev-2' })
+    expect(await screen.findByText('Transient')).toBeInTheDocument()
+    expect(await screen.findByText('Net net-1 · V')).toBeInTheDocument()
+  })
+
+  it('shows tscircuit build diagnostics when a simulation rebuild fails', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board/ }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Simulation' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Run simulation' }))
+    await waitFor(() => expect(api.startBuild).toHaveBeenCalledWith('led-1'))
+
+    projectEvent?.({ type: 'build.failed', buildId: 'build-2', revision: 'rev-1', diagnostics: [{ path: 'index.tsx', line: 4, message: 'Invalid analog source' }] })
+    const alerts = await screen.findAllByRole('alert')
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0]).toHaveTextContent('Build failed')
+    expect(alerts[0]).toHaveTextContent('index.tsx:4: Invalid analog source')
   })
 
   it('creates a project from the explorer and opens its entry file', async () => {

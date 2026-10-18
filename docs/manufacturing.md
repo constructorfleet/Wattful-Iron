@@ -21,6 +21,11 @@ reported for manual review because this check only measures rectangular boards.
 `board-default` applies no vendor minima and reports that those checks were not
 evaluated.
 
+Preflight also matches each `source_trace` to a `pcb_trace` with a non-empty
+route. A logical source trace without routed PCB geometry blocks export and is
+identified by its source trace ID. If the Circuit JSON contains no logical
+source traces, routing cannot be verified and preflight reports a warning.
+
 `GET /api/projects/:id/manufacturing.zip` downloads the installed tscircuit
 CLI's `--format gerbers` ZIP after preflight passes. The package contains the
 Gerber copper, mask, paste, silkscreen, and outline files, plus `bom.csv` and
@@ -28,9 +33,11 @@ Gerber copper, mask, paste, silkscreen, and outline files, plus `bom.csv` and
 features. The export uses the Circuit JSON snapshot from the successful build,
 and the server rejects a project revision change during export.
 
-These checks cover a limited subset of the published profile rules; they do
-not check every copper clearance, plated-hole capability, stackup, solder-mask
-rule, board shape, or assembly requirement. A passing preflight and a
-downloadable package do not certify electrical safety, manufacturability, or
-compatibility with a particular vendor. Review all files with the selected
-fabricator and assembler before ordering.
+These checks cover a limited subset of the published profile rules; the
+routing check confirms that route geometry exists for each logical source
+trace but does not prove electrical connectivity or validate every route
+segment. Preflight does not check every copper clearance, plated-hole
+capability, stackup, solder-mask rule, board shape, or assembly requirement. A
+passing preflight and a downloadable package do not certify electrical safety,
+manufacturability, or compatibility with a particular vendor. Review all files
+with the selected fabricator and assembler before ordering.

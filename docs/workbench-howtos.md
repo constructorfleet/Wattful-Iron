@@ -51,11 +51,11 @@ into your project, so edits do not change the repository example.
 ## Read a simulation result
 
 Add tscircuit analog simulation elements and voltage or current probes to the
-source, then build the project. Select **Simulation** to inspect transient
-waveforms emitted in Circuit JSON. If the panel says **No simulation
-configured**, the current build did not contain the required simulation and
-probe data. Wattful-Iron does not supply a separate solver or rerun analysis on
-demand. See [implemented simulation scope](architecture.md#implemented-in-this-slice).
+source, select **Simulation**, then choose **Run simulation**. Wattful-Iron
+saves the current editor source and starts a normal tscircuit build; the panel
+then shows transient waveforms or build/simulator diagnostics from the emitted
+Circuit JSON. If it says **No simulation configured**, the build did not emit
+simulation and probe data. See [implemented simulation scope](architecture.md#implemented-in-this-slice).
 
 ![Simulation view for a project without simulation elements](images/workbench-simulation.png)
 

@@ -49,6 +49,52 @@ test("MCP clients can list and create projects through registered tools", async 
   }
 })
 
+test("MCP exposes read-only inspection of components, nets, pins, routes, and board properties", async () => {
+  const circuitJson = [
+    { type: "pcb_board", pcb_board_id: "pcb_board_0", width: 24, height: 12, thickness: 1.4, num_layers: 2, material: "fr4" },
+    { type: "source_component", source_component_id: "source_component_0", name: "J1", ftype: "simple_connector", pin_count: 2 },
+    { type: "source_component", source_component_id: "source_component_1", name: "R1", ftype: "simple_resistor", resistance: 1000, display_resistance: "1kΩ" },
+    { type: "source_port", source_port_id: "source_port_0", source_component_id: "source_component_0", name: "VCC", pin_number: 1, port_hints: ["VCC", "pin1", "1"], subcircuit_connectivity_map_key: "net0" },
+    { type: "source_port", source_port_id: "source_port_1", source_component_id: "source_component_1", name: "pin1", pin_number: 1, port_hints: ["pin1", "1"], subcircuit_connectivity_map_key: "net0" },
+    { type: "source_port", source_port_id: "source_port_2", source_component_id: "source_component_1", name: "pin2", pin_number: 2, port_hints: ["pin2", "2"], subcircuit_connectivity_map_key: "net1" },
+    { type: "source_trace", source_trace_id: "source_trace_0", name: "VCC", connected_source_port_ids: ["source_port_0", "source_port_1"], connected_source_net_ids: [] },
+    { type: "source_trace", source_trace_id: "source_trace_1", name: "GND", connected_source_port_ids: ["source_port_2"], connected_source_net_ids: [] },
+    { type: "pcb_component", pcb_component_id: "pcb_component_0", source_component_id: "source_component_1", center: { x: 2, y: 3 }, width: 1, height: 1, rotation: 90, layer: "top" },
+    { type: "pcb_trace", pcb_trace_id: "pcb_trace_0", source_trace_id: "source_trace_0", route: [{ route_type: "wire", x: 1, y: 2, width: 0.15, layer: "top" }] },
+  ]
+  const fixture = await makeFixture(async () => circuitJson)
+  const server = createServer(fixture.app)
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address()
+  assert.ok(address && typeof address !== "string")
+  const client = new Client({ name: "circuits-workbench-test", version: "1.0.0" })
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`), {
+    requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+  })
+  try {
+    await client.connect(transport)
+    const project = readResult<Project>(await client.callTool({ name: "create_project", arguments: { name: "Inspect board" } }))
+    await waitForToolStatus(client, project.id, "ready")
+    const components = readResult<Array<{ name: string; pcb?: { center: { x: number; y: number } } }>>(await client.callTool({ name: "list_components", arguments: { projectId: project.id } }))
+    assert.equal(components.length, 2)
+    assert.deepEqual(components.find(({ name }) => name === "R1")?.pcb?.center, { x: 2, y: 3 })
+    const nets = readResult<Array<{ id: string; name: string; ports: string[] }>>(await client.callTool({ name: "list_nets", arguments: { projectId: project.id } }))
+    assert.deepEqual(nets.map(({ name }) => name), ["VCC", "GND"])
+    assert.deepEqual(nets[0]?.ports, ["source_port_0", "source_port_1"])
+    const trace = readResult<Array<{ sourceTrace: { source_trace_id: string }; pcbTraces: unknown[] }>>(await client.callTool({ name: "trace_net", arguments: { projectId: project.id, net: "VCC" } }))
+    assert.equal(trace[0]?.sourceTrace.source_trace_id, "source_trace_0")
+    assert.equal(trace[0]?.pcbTraces.length, 1)
+    const pins = readResult<Array<{ name: string; connectedNets: string[] }>>(await client.callTool({ name: "get_pin_connections", arguments: { projectId: project.id, component: "R1" } }))
+    assert.deepEqual(pins.map(({ name, connectedNets }) => [name, connectedNets]), [["pin1", ["VCC"]], ["pin2", ["GND"]]])
+    const board = readResult<Array<{ width: number; height: number; num_layers: number }>>(await client.callTool({ name: "get_board_properties", arguments: { projectId: project.id } }))
+    assert.deepEqual([board[0]?.width, board[0]?.height, board[0]?.num_layers], [24, 12, 2])
+  } finally {
+    await client.close()
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    await fixture.cleanup()
+  }
+})
+
 test("MCP tools use revision checks and return build and preview data", async () => {
   const fixture = await makeFixture()
   const server = createServer(fixture.app)

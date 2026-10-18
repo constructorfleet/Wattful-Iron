@@ -4,11 +4,12 @@
 
 This application executes project TypeScript as part of a tscircuit build.
 Project source and dependencies must be treated as arbitrary code. The current
-version does not provide a per-project sandbox, authenticated users, access
-control, or isolation between users. The optional MCP endpoint requires a
-single shared bearer token when enabled; the browser and REST API remain
-unauthenticated. A Docker container narrows the environment but is not, by
-itself, a safe sandbox for hostile code.
+version does not provide a per-project sandbox, individual user accounts,
+project-level access control, or isolation between users. The optional
+`WORKBENCH_AUTH_TOKEN` adds a shared HTTP Basic/Bearer access gate for the
+browser and REST API. The optional MCP endpoint has its own single shared
+bearer token. A Docker container narrows the environment but is not, by itself,
+a safe sandbox for hostile code.
 
 Run this prototype only for trusted users on a host you control. Keep its HTTP
 port private, put TLS and any required access control at a trusted reverse
@@ -21,7 +22,9 @@ The container runs non-root, drops Linux capabilities, enables
 `no-new-privileges`, has a read-only root filesystem, bounds `/tmp`, and sets
 default CPU, memory, and process limits. These reduce accidental impact; they
 do not make arbitrary project execution safe. Review and adjust resource limits
-for your workload, while retaining host-level limits.
+for your workload, while retaining host-level limits. Build timeouts terminate
+the build's process group on POSIX systems, but the child still runs under the
+app's UID with access to the mounted project volume and container network.
 
 ## Network exposure
 
@@ -59,8 +62,9 @@ HIGH or CRITICAL OS or library vulnerabilities. The configured gate exited 0.
 The workflow still fails on future fixed HIGH or CRITICAL findings; no findings
 are suppressed.
 
-Before using this service with untrusted users, add authentication and
-authorization, isolate project builds in disposable constrained workers,
+Before using this service with untrusted users, add user-level authentication
+and authorization, isolate project builds in disposable constrained workers,
 restrict filesystem and network access, validate archive and path handling,
-and review the threat model. Those protections are future work, not guarantees
-of the current deployment.
+and review the threat model. The shared access token is a perimeter gate only;
+it does not make project source safe to execute or prevent one trusted token
+holder from accessing every project.

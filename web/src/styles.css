@@ -94,6 +94,9 @@ button { color: inherit; cursor: pointer; }
 .simulation-empty p { max-width: 400px; color: #84909a; font-size: 11px; line-height: 1.6; }
 .simulation-results { height: 100%; overflow: auto; padding: 16px; background: #15191e; }
 .simulation-heading { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; }
+.simulation-message { max-width: 540px; color: #aeb9c2; font-size: 11px; line-height: 1.6; }
+.simulation-message strong { color: #d7e0e6; }
+.simulation-message p { margin: 8px 0; color: #d79b8e; }
 .simulation-heading span,.waveform-label span,.waveform-axis { color: #78838d; font: 9px var(--mono); }
 .waveform { margin-bottom: 14px; padding: 10px; border: 1px solid #29313a; border-radius: 5px; background: #191e24; }
 .waveform-label,.waveform-axis { display: flex; justify-content: space-between; margin-bottom: 8px; }
