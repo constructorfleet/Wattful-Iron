@@ -176,7 +176,7 @@ function containerSpec(options: BuildRunnerOptions, entrypoint: string): DockerC
       Privileged: false,
       AutoRemove: false,
       RestartPolicy: { Name: "no" },
-      LogConfig: { Type: "local", Config: { "max-size": "16m", "max-file": "1" } },
+      LogConfig: { Type: "local", Config: { "max-size": "16m", "max-file": "2" } },
     },
   }
 }

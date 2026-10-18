@@ -42,6 +42,7 @@ test("runner creates a fixed, isolated, bounded container and removes it after s
   assert.equal(docker.created?.HostConfig.ReadonlyRootfs, false)
   assert.deepEqual(docker.created?.HostConfig.CapDrop, ["ALL"])
   assert.deepEqual(docker.created?.HostConfig.SecurityOpt, ["no-new-privileges:true"])
+  assert.equal(docker.created?.HostConfig.LogConfig.Config["max-file"], "2")
   assert.ok(docker.created?.HostConfig.Memory && docker.created.HostConfig.Memory > 0)
   assert.ok(docker.created?.HostConfig.NanoCpus && docker.created.HostConfig.NanoCpus > 0)
   assert.ok(docker.created?.HostConfig.PidsLimit && docker.created.HostConfig.PidsLimit > 0)
