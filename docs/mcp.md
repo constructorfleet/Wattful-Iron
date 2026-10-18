@@ -30,6 +30,8 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `get_diagnostics` | Read diagnostics from the latest build. |
 | `get_preview` | Read the last successful Circuit JSON for `schematic`, `pcb`, or `3d`. |
 | `list_components` | List `source_component` elements, including a matching `pcb_component` placement when one is present. |
+| `get_component` | Read one component by reference/name or `source_component_id`, including any PCB placement, source ports, and their connected traces. |
+| `get_circuit_json` | Read raw Circuit JSON from the latest successful build with the revision that produced it. |
 | `list_nets` | List `source_trace` logical connections with their connected `source_port` elements. |
 | `trace_net` | Inspect `source_trace` elements by net name or trace ID, connected ports and components, and matching `pcb_trace` routes. |
 | `get_pin_connections` | List a component's `source_port` elements and the source traces that include each port. Match components by name or `source_component_id`. |
@@ -42,7 +44,7 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 
 `update_project_file` requires the `revision` returned by `read_project_file`; stale writes return a tool error. There are no delete or component-ordering tools.
 
-Circuit inspection reads the most recent successful build. These tools expose the fields present in Circuit JSON: logical nets come from `source_trace` and `connected_source_port_ids`, pin details from `source_port`, PCB placement from `pcb_component`, and board data from `pcb_board`. `trace_net` accepts a source trace name or ID and can return multiple matching traces when a name is reused. These tools do not infer missing component, pin, or board properties.
+Circuit inspection reads the most recent successful build. These tools expose the fields present in Circuit JSON: logical nets come from `source_trace` and `connected_source_port_ids`, pin details from `source_port`, PCB placement from `pcb_component`, and board data from `pcb_board`. `get_component` accepts a component reference/name or source component ID; it returns only related placement, pins, and trace connections present in that build. `get_circuit_json` returns the complete JSON and its build revision. `trace_net` accepts a source trace name or ID and can return multiple matching traces when a name is reused. These tools do not infer missing component, pin, or board properties.
 
 Simulation uses the existing tscircuit build integration. Add supported analog
 simulation elements and probes to the source; `run_simulation` rebuilds the

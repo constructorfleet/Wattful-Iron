@@ -6,7 +6,7 @@ import { timingSafeEqual } from "node:crypto"
 import { z } from "zod4"
 import { getSimulationResults } from "./simulation.js"
 import { checkManufacturability } from "./manufacturing.js"
-import { getBoardProperties, getPinConnections, listComponents, listNets, traceNet } from "./circuit-inspection.js"
+import { getBoardProperties, getComponent, getPinConnections, listComponents, listNets, traceNet } from "./circuit-inspection.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
 
 type Project = {
@@ -138,6 +138,18 @@ function createServer(service: ProjectService): McpServer {
     description: "List source components and their matching PCB placement when present in the latest successful Circuit JSON build.",
     inputSchema: z.object({ projectId }),
   }, async ({ projectId }) => safeTool(async () => listComponents((await service.preview(projectId)).circuitJson)))
+
+  server.registerTool("get_component", {
+    title: "Get circuit component",
+    description: "Get one source component by reference/name or source_component_id, including any PCB placement, source ports, and their connected traces present in the latest successful Circuit JSON.",
+    inputSchema: z.object({ projectId, component: z.string().trim().min(1).max(200) }),
+  }, async ({ projectId, component }) => safeTool(async () => getComponent((await service.preview(projectId)).circuitJson, component)))
+
+  server.registerTool("get_circuit_json", {
+    title: "Get Circuit JSON",
+    description: "Read the raw Circuit JSON from the latest successful build and the project revision that produced it.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => service.preview(projectId)))
 
   server.registerTool("list_nets", {
     title: "List circuit nets",
