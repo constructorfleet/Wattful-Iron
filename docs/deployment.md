@@ -19,9 +19,15 @@ firewall rules. The app listens on port 3000 in the container and uses
 `/data/projects` for projects.
 
 Set `MCP_AUTH_TOKEN` in `.env` to enable the MCP endpoint; leave it empty to
-keep `/mcp` disabled. The token is shared across MCP clients. It does not
-authenticate the browser or REST API, so keep the app private behind a trusted
-proxy and apply access control there when needed.
+keep `/mcp` disabled. The token is shared across MCP clients.
+
+For a browser and REST access gate, set `WORKBENCH_AUTH_TOKEN` to a random
+secret of at least 32 bytes. Browsers will prompt for HTTP Basic credentials
+(username `workbench`, password the token); API clients may use a Bearer token.
+The health endpoint remains public for container checks. This is one shared
+credential, not per-user accounts or project-level authorization. Keep the
+service on loopback or a trusted private network, and use TLS for remote
+connections.
 
 To use a published image instead of building from the checkout, set
 `CIRCUITS_IMAGE` in `.env` to a version tag or immutable digest, then:
@@ -41,8 +47,9 @@ publishing includes AMD64 and ARM64 manifests.
 
 ## Reverse proxy and TLS
 
-Terminate TLS and apply access control at a trusted reverse proxy. For a proxy
-on the same host, keep the app bound to loopback. Example Caddy site:
+Terminate TLS at a trusted reverse proxy. For a proxy on the same host, keep
+the app bound to loopback. Set `WORKBENCH_AUTH_TOKEN` for a shared app-level
+access gate, or enforce access control at the proxy. Example Caddy site:
 
 ```caddyfile
 circuits.example.com {
@@ -53,9 +60,9 @@ circuits.example.com {
 ```
 
 Allow HTTP/1.1 or HTTP/2 streaming responses and avoid response buffering or
-short idle timeouts for the SSE endpoint. The browser and REST API currently
-have no built-in authentication; the MCP endpoint can use one shared bearer
-token but does not add project-level authorization. See [security](security.md).
+short idle timeouts for the SSE endpoint. The shared app token and MCP token
+do not provide individual accounts or project-level authorization. See
+[security](security.md).
 
 ## Docker Swarm
 

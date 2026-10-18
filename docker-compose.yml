@@ -14,6 +14,7 @@ services:
       PORT: "3000"
       PROJECTS_DIR: /data/projects
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
+      WORKBENCH_AUTH_TOKEN: ${WORKBENCH_AUTH_TOKEN:-}
     volumes:
       - projects:/data/projects
     tmpfs:

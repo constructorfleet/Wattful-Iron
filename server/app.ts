@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { createHash, randomUUID } from "node:crypto"
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto"
 import { access, lstat, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 import express, { type Express, type Request, type Response } from "express"
@@ -18,7 +18,7 @@ type ProjectState = { project: ProjectData; preview?: unknown }
 type ProjectSnapshot = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes: number; files: Record<string, string> }
 type ServerEvent = "project" | "file" | "build.status" | "build.ready" | "build.failed"
 type BuildFn = (projectDir: string, entrypoint: string) => Promise<unknown>
-type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string }
+type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string; workbenchAuthToken?: string }
 
 const templates = [
   { id: "blank-board", name: "Blank starter", description: "An empty board ready for your circuit." },
@@ -586,8 +586,25 @@ class ProjectService {
 }
 
 export function createApp(options: AppOptions = {}): Express {
+  const workbenchToken = options.workbenchAuthToken ?? process.env.WORKBENCH_AUTH_TOKEN
+  if (workbenchToken && Buffer.byteLength(workbenchToken) < 32) {
+    throw new Error("WORKBENCH_AUTH_TOKEN must contain at least 32 bytes")
+  }
   const service = new ProjectService(options)
   const app = express()
+  if (workbenchToken) {
+    app.use((request, response, next) => {
+      // MCP has its own bearer-token verifier. Keep health checks available to
+      // container orchestrators; protect the browser, REST API, and assets.
+      if (request.path === "/mcp" || (request.path === "/healthz" && request.method === "GET")) return next()
+      if (!hasWorkbenchCredential(request.get("authorization"), workbenchToken)) {
+        response.set("WWW-Authenticate", 'Basic realm="Wattful-Iron", charset="UTF-8"')
+        response.status(401).json({ error: "Workbench authentication required" })
+        return
+      }
+      next()
+    })
+  }
   app.use(express.json({ limit: "2mb" }))
   app.locals.projectService = service
   app.use(async (_request, _response, next) => {
@@ -739,6 +756,23 @@ export function createApp(options: AppOptions = {}): Express {
     response.status(status).json({ error: error instanceof Error ? error.message : "Internal server error", ...(status === 409 ? { revision: (error as { revision?: string }).revision } : {}) })
   })
   return app
+}
+
+function hasWorkbenchCredential(header: string | undefined, expected: string) {
+  if (!header) return false
+  let candidate: string | undefined
+  if (header.startsWith("Bearer ")) candidate = header.slice("Bearer ".length)
+  else if (header.startsWith("Basic ")) {
+    try {
+      const decoded = Buffer.from(header.slice("Basic ".length), "base64").toString("utf8")
+      const separator = decoded.indexOf(":")
+      if (separator >= 0 && decoded.slice(0, separator) === "workbench") candidate = decoded.slice(separator + 1)
+    } catch { return false }
+  }
+  if (candidate === undefined) return false
+  const actual = Buffer.from(candidate)
+  const wanted = Buffer.from(expected)
+  return actual.length === wanted.length && timingSafeEqual(actual, wanted)
 }
 
 async function runTscircuitBuild(projectDir: string, entrypoint: string): Promise<unknown> {

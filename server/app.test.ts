@@ -313,6 +313,23 @@ test("health endpoint reports readiness", async () => {
   }
 })
 
+test("shared workbench auth protects browser and REST routes while leaving health checks public", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "circuits-auth-"))
+  const token = "a".repeat(64)
+  const app = createApp({ projectsDir: root, watchFiles: false, workbenchAuthToken: token })
+  try {
+    await request(app).get("/healthz").expect(200)
+    const denied = await request(app).get("/api/projects").expect(401)
+    assert.match(denied.headers["www-authenticate"] ?? "", /Basic realm="Wattful-Iron"/)
+    await request(app).get("/api/projects").set("Authorization", "Bearer wrong").expect(401)
+    await request(app).get("/api/projects").auth("workbench", token).expect(200)
+    await request(app).get("/api/projects").set("Authorization", `Bearer ${token}`).expect(200)
+  } finally {
+    await (app.locals.projectService as { close: () => Promise<void> }).close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 async function waitForBuild(app: import("express").Express, id: string, status: "ready" | "failed", maxAttempts = 100, intervalMs = 10) {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const result = await request(app).get("/api/projects/" + id)
