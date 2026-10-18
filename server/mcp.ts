@@ -7,6 +7,7 @@ import { z } from "zod4"
 import { getSimulationResults } from "./simulation.js"
 import { checkManufacturability } from "./manufacturing.js"
 import { getBoardProperties, getPinConnections, listComponents, listNets, traceNet } from "./circuit-inspection.js"
+import { parseRequirements, validateRequirements } from "./requirements.js"
 
 type Project = {
   id: string
@@ -161,6 +162,29 @@ function createServer(service: ProjectService): McpServer {
     description: "Return pcb_board elements from the latest successful Circuit JSON build, including dimensions, material, stackup, and emitted design-rule fields.",
     inputSchema: z.object({ projectId }),
   }, async ({ projectId }) => safeTool(async () => getBoardProperties((await service.preview(projectId)).circuitJson)))
+
+  server.registerTool("get_project_requirements", {
+    title: "Get project requirements",
+    description: "Read the versioned requirements.json engineering requirements document, if configured.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => {
+    const project = await service.get(projectId)
+    if (!(await service.getFileList(projectId)).includes("requirements.json")) return { configured: false, revision: project.revision, requirements: null }
+    const file = await service.readFile(projectId, "requirements.json")
+    return { configured: true, revision: file.revision, requirements: parseRequirements(file.content) }
+  }))
+
+  server.registerTool("validate_project_requirements", {
+    title: "Validate project requirements",
+    description: "Compare measurable board requirements with the latest successful Circuit JSON build. Unsupported requirement types are returned as not evaluated.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => {
+    const project = await service.get(projectId)
+    if (!(await service.getFileList(projectId)).includes("requirements.json")) return { configured: false, revision: project.revision, checks: [] }
+    const [file, preview] = await Promise.all([service.readFile(projectId, "requirements.json"), service.preview(projectId)])
+    if (file.revision !== project.revision || preview.revision !== project.revision) return { configured: true, stale: true, revision: project.revision, previewRevision: preview.revision, checks: [], message: "The latest successful build or requirements file is for an older project revision; rebuild before validating requirements." }
+    return { configured: true, stale: false, revision: project.revision, previewRevision: preview.revision, ...validateRequirements(parseRequirements(file.content), preview.circuitJson) }
+  }))
 
   server.registerTool("run_simulation", {
     title: "Build and inspect simulation",

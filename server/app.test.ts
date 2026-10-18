@@ -109,6 +109,30 @@ test("source writes require the current revision and reject traversal", async ()
   }
 })
 
+test("project requirements are schema-validated, revisioned, and marked stale until the build catches up", async () => {
+  const f = await fixture(async () => [{ type: "pcb_board", width: 50, height: 35, num_layers: 4 }])
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Requirements" }).expect(201)
+    const empty = await request(f.app).get(`/api/projects/${project.id}/requirements`).expect(200)
+    assert.equal(empty.body.configured, false)
+    const document = { version: 1, requirements: { board: { width_mm: 50, height_mm: 35, layers: 4 } } }
+    const saved = await request(f.app).put(`/api/projects/${project.id}/requirements`)
+      .set("If-Match", project.revision).send({ revision: project.revision, requirements: document }).expect(200)
+    assert.equal(saved.body.configured, true)
+    assert.notEqual(saved.body.revision, project.revision)
+    assert.deepEqual(saved.body.requirements.requirements.board, document.requirements.board)
+    const read = await request(f.app).get(`/api/projects/${project.id}/requirements`).expect(200)
+    assert.equal(read.body.configured, true)
+    assert.deepEqual(read.body.requirements, document)
+    const validation = await request(f.app).get(`/api/projects/${project.id}/requirements/validate`).expect(200)
+    assert.equal(validation.body.stale, true)
+    await request(f.app).put(`/api/projects/${project.id}/requirements`)
+      .set("If-Match", project.revision).send({ revision: project.revision, requirements: document }).expect(409)
+    await request(f.app).put(`/api/projects/${project.id}/requirements`)
+      .set("If-Match", read.body.revision).send({ revision: read.body.revision, requirements: { version: 1, requirements: { board: { width_mm: -1 } } } }).expect(400)
+  } finally { await f.cleanup() }
+})
+
 test("simultaneous writes using one revision allow only one save", async () => {
   const f = await fixture(async () => circuit)
   try {

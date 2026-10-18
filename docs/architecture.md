@@ -2,16 +2,17 @@
 
 ## Shape of the first slice
 
-The first deployable version is a single Node.js service with a browser client.
-It stores project files on disk, invokes the tscircuit toolchain for builds,
-retains generated Circuit JSON for preview use, and streams build state and
-diagnostics to connected browsers using server-sent events. TypeScript/TSX
-project files remain the editable source. Docker Compose mounts persistent
-storage at `/data/projects`.
+The first deployable version is a Node.js service with a browser client and an
+isolated build-runner service. The app stores project files on disk, sends
+bounded source snapshots to the runner for tscircuit builds, retains generated
+Circuit JSON for preview use, and streams build state and diagnostics to
+connected browsers using server-sent events. TypeScript/TSX project files
+remain the editable circuit source. Docker Compose mounts persistent storage
+at `/data/projects`.
 
-The deployment deliberately avoids separate databases and worker services in
-this initial slice. It is a single-node prototype, not a horizontally scalable
-or high-availability service. Run one app replica against one project volume.
+The deployment avoids a separate database. It is a single-node prototype, not
+a horizontally scalable or high-availability service. Run one app replica
+against one project volume.
 
 ## Implemented in this slice
 
@@ -34,6 +35,12 @@ or high-availability service. Run one app replica against one project volume.
   tscircuit's verified Gerber/drill/BOM/pick-and-place ZIP export.
 - Board-default and JLCPCB rigid two-layer, one-ounce profiles for checking
   trace width, non-plated hole diameter, and rectangular board edge clearance.
+- Versioned `requirements.json` documents with REST and MCP read/validation
+  tools. Board dimensions and layer count are checked against Circuit JSON;
+  power, interface counts, and assembler compatibility are marked not
+  evaluated.
+- Isolated project builds in disposable worker containers, with bounded source
+  snapshots and build output.
 - Docker Compose deployment with a persistent projects volume.
 
 Preview availability and fidelity depend on the supported tscircuit output for
@@ -47,11 +54,14 @@ manufacturing sign-off.
 ## Not implemented
 
 The following capabilities in the project vision are not available in this
-slice: ACP servers, user-level authentication and authorization, sandboxed
-execution of user code, full dedicated ERC/DRC, interactive connectivity
-tracing, complete fabricator rule coverage, Git-backed revision history,
-approval states, and purchasing or fabrication integrations. The MCP bearer token is optional
-and shared by all clients; it does not protect the browser or REST API.
+slice: ACP servers, per-user authentication and authorization, dedicated full
+ERC/DRC, interactive cross-view connectivity tracing, complete fabricator rule
+coverage, Git-backed revision history, approval states, and purchasing or
+fabrication integrations. Optional workbench authentication uses a shared
+token for the browser and REST API; MCP has its own shared bearer token. There
+is no per-user identity or access control. Requirements validation only
+evaluates the emitted board dimensions and layer count; other requirement types
+are retained but marked not evaluated.
 Simulation execution uses tscircuit's configured SPICE support during its
 normal build; the workbench does not run a second solver or claim support for
 every component model or analysis mode. Project source history uses local

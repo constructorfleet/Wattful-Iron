@@ -8,6 +8,7 @@ import { convertCircuitJsonToTscircuit } from "circuit-json-to-tscircuit"
 import { mountMcp } from "./mcp.js"
 import { createGerberArchive, mountManufacturingRoutes } from "./manufacturing.js"
 import { getSimulationResults } from "./simulation.js"
+import { parseRequirements, validateRequirements } from "./requirements.js"
 import { runCommand } from "./build-process.js"
 import { executeRemoteBuild, type IsolatedBuildResult } from "./build-client.js"
 
@@ -778,6 +779,42 @@ export function createApp(options: AppOptions = {}): Express {
     try {
       const preview = await service.preview(request.params.id!)
       response.json({ revision: preview.revision, ...getSimulationResults(preview.circuitJson) })
+    } catch (error) { next(error) }
+  })
+  app.get("/api/projects/:id/requirements", async (request, response, next) => {
+    try {
+      const files = await service.getFileList(request.params.id!)
+      const project = await service.get(request.params.id!)
+      if (!files.includes("requirements.json")) return response.json({ configured: false, revision: project.revision, requirements: null })
+      const file = await service.readFile(request.params.id!, "requirements.json")
+      response.json({ configured: true, ...file, requirements: parseRequirements(file.content) })
+    } catch (error) { next(error) }
+  })
+  app.put("/api/projects/:id/requirements", async (request, response, next) => {
+    try {
+      const match = request.get("If-Match")?.replace(/^"|"$/g, "")
+      if (!match || request.body?.revision !== match) throw badRequest("If-Match and body revision must match")
+      const content = JSON.stringify(request.body?.requirements, null, 2) + "\n"
+      const requirements = parseRequirements(content)
+      const saved = await service.writeFile(request.params.id!, "requirements.json", JSON.stringify(requirements, null, 2) + "\n", match)
+      response.json({ configured: true, path: saved.path, revision: saved.revision, requirements })
+    } catch (error) { next(error) }
+  })
+  app.get("/api/projects/:id/requirements/validate", async (request, response, next) => {
+    try {
+      const project = await service.get(request.params.id!)
+      const files = await service.getFileList(request.params.id!)
+      if (!files.includes("requirements.json")) return response.json({ configured: false, revision: project.revision, checks: [] })
+      const [file, preview] = await Promise.all([
+        service.readFile(request.params.id!, "requirements.json"),
+        service.preview(request.params.id!),
+      ])
+      if (file.revision !== project.revision || preview.revision !== project.revision) return response.json({
+        configured: true, stale: true, revision: project.revision, previewRevision: preview.revision,
+        checks: [], message: "The project or latest successful build changed during validation; rebuild before validating requirements.",
+      })
+      const validation = validateRequirements(parseRequirements(file.content), preview.circuitJson)
+      response.json({ configured: true, stale: false, revision: project.revision, previewRevision: preview.revision, ...validation })
     } catch (error) { next(error) }
   })
 
