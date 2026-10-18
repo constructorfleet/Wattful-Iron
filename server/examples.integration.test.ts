@@ -8,7 +8,7 @@ import { createApp } from "./app.js"
 
 test("example circuits build with their expected PCB geometry and electrical routing", async () => {
   const projectsDir = await mkdtemp(path.join(tmpdir(), "circuits-examples-http-"))
-  const app = createApp({ projectsDir, watchFiles: false })
+  const app = createApp({ projectsDir, watchFiles: false, buildExecutionMode: "trusted-local" })
   try {
     for (const example of ["blank-board", "manufacturing-board", "footprint-comparison", "mounting-pattern", "led-indicator", "voltage-divider"]) {
       const { body: project } = await request(app).post("/api/projects")

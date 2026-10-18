@@ -50,15 +50,52 @@ jobs:
           tags: circuits:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Build isolated build-job image without publishing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          target: build-job
+          push: false
+          load: true
+          tags: wattful-iron-build-job:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: Smoke test container
         run: |
           docker volume create circuits-smoke-projects
+          docker network create circuits-smoke-net
+          runner_token=runner-token-for-smoke-tests-at-least-32-bytes
           cleanup() {
             docker rm -f circuits-smoke >/dev/null 2>&1 || true
+            docker rm -f circuits-build-runner >/dev/null 2>&1 || true
             docker volume rm circuits-smoke-projects >/dev/null 2>&1 || true
+            docker network rm circuits-smoke-net >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
-          docker run -d --name circuits-smoke -p 3000:3000 \
+          docker run -d --name circuits-build-runner --network circuits-smoke-net \
+            --network-alias build-runner --no-healthcheck --user 0:0 \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e BUILD_RUNNER_TOKEN="$runner_token" \
+            -e BUILD_JOB_IMAGE=wattful-iron-build-job:ci \
+            -e BUILD_SANDBOX_RUNTIME=runc \
+            circuits:ci node dist/server/build-runner-main.js
+          runner_ready=false
+          for attempt in $(seq 1 30); do
+            if docker exec circuits-build-runner node -e \
+              "fetch('http://127.0.0.1:3020/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"; then
+              runner_ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$runner_ready" != true ]; then
+            docker logs circuits-build-runner
+            exit 1
+          fi
+          docker run -d --name circuits-smoke --network circuits-smoke-net -p 3000:3000 \
+            -e BUILD_RUNNER_URL=http://build-runner:3020 \
+            -e BUILD_RUNNER_TOKEN="$runner_token" \
             -v circuits-smoke-projects:/data/projects circuits:ci
           for attempt in $(seq 1 30); do
             health_state=$(docker inspect --format '{{.State.Health.Status}}' circuits-smoke 2>/dev/null || true)
@@ -90,11 +127,13 @@ jobs:
             fi
             if [ "$build_state" = failed ]; then
               printf '%s\n' "$project_state"
+              docker logs circuits-build-runner
               docker logs circuits-smoke
               exit 1
             fi
             sleep 2
           done
+          docker logs circuits-build-runner
           docker logs circuits-smoke
           exit 1
       - name: Scan image with Trivy

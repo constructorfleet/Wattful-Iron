@@ -13,10 +13,17 @@ services:
       NODE_ENV: production
       PORT: "3000"
       PROJECTS_DIR: /data/projects
+      BUILD_EXECUTION_MODE: isolated
+      BUILD_RUNNER_URL: http://build-runner:3020
+      BUILD_RUNNER_TOKEN_FILE: /run/secrets/build_runner_token
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
       WORKBENCH_AUTH_TOKEN: ${WORKBENCH_AUTH_TOKEN:-}
     volumes:
       - projects:/data/projects
+    secrets:
+      - build_runner_token
+    networks:
+      - backend
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
     cap_drop:
@@ -44,7 +51,66 @@ services:
           cpus: "2.0"
           memory: 2G
           pids: 256
+    depends_on:
+      build-runner:
+        condition: service_healthy
+
+  build-runner:
+    image: ${CIRCUITS_IMAGE:-ghcr.io/constructorfleet/wattful-iron:latest}
+    command: ["node", "dist/server/build-runner-main.js"]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    environment:
+      BUILD_RUNNER_PORT: "3020"
+      BUILD_RUNNER_TOKEN_FILE: /run/secrets/build_runner_token
+      BUILD_JOB_IMAGE: ${BUILD_JOB_IMAGE:-wattful-iron-build-job:local}
+      BUILD_SANDBOX_RUNTIME: ${BUILD_SANDBOX_RUNTIME:-runsc}
+    volumes:
+      - type: bind
+        source: ${RUNNER_DOCKER_SOCKET:?Set RUNNER_DOCKER_SOCKET to a dedicated build Docker Engine socket}
+        target: /var/run/docker.sock
+        read_only: true
+    secrets:
+      - build_runner_token
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3020/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    deploy:
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+          pids: 128
+      placement:
+        constraints:
+          - node.labels.build_runner == true
 
 volumes:
   projects:
     name: circuits-projects
+
+networks:
+  backend:
+    internal: true
+
+secrets:
+  build_runner_token:
+    file: ${BUILD_RUNNER_TOKEN_FILE:?Create a build runner token file and set BUILD_RUNNER_TOKEN_FILE}

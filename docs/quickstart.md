@@ -11,13 +11,20 @@ Install Docker Engine with the Compose plugin, clone this repository, then run:
 
 ```sh
 cp .env.example .env
+mkdir -p .secrets
+openssl rand -hex 32 > .secrets/build-runner-token
+chmod 600 .secrets/build-runner-token
+docker build --target build-job -t wattful-iron-build-job:local .
 docker compose up --build -d
 docker compose logs -f circuits
 ```
 
-Open <http://127.0.0.1:3000>. Press `Ctrl+C` to leave the log view; the
-container keeps running. Stop it with `docker compose down`. Projects remain
-in the `circuits-projects` volume.
+Install/register gVisor `runsc` on the Docker Engine host and set
+`RUNNER_DOCKER_SOCKET` in `.env` to its socket before starting. See the
+[deployment guide](deployment.md) for the host requirements. Open
+<http://127.0.0.1:3000>. Press `Ctrl+C` to leave the log view; the container
+keeps running. Stop it with `docker compose down`. Projects remain in the
+`circuits-projects` volume.
 
 ### Run from a local Node.js checkout
 
@@ -27,12 +34,15 @@ Use Node.js and npm, then run these commands from the repository root:
 npm ci
 npm ci --prefix web
 npm run build
-npm start
+BUILD_EXECUTION_MODE=trusted-local npm start
 ```
 
 Open <http://127.0.0.1:3000>. The service stores development projects in
 `./projects`; set `PORT` or `PROJECTS_DIR` before `npm start` to change those
-defaults.
+defaults. This explicit development mode runs project code directly on the
+host, so use it only for trusted projects. Production deployments use the
+isolated runner configured by Docker Compose; see the
+[deployment guide](deployment.md).
 
 ![Fresh Wattful-Iron workspace with its quickstart project](images/workbench-home.png)
 

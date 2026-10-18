@@ -2,29 +2,51 @@
 
 ## Prototype boundary
 
-This application executes project TypeScript as part of a tscircuit build.
-Project source and dependencies must be treated as arbitrary code. The current
-version does not provide a per-project sandbox, individual user accounts,
-project-level access control, or isolation between users. The optional
-`WORKBENCH_AUTH_TOKEN` adds a shared HTTP Basic/Bearer access gate for the
-browser and REST API. The optional MCP endpoint has its own single shared
-bearer token. A Docker container narrows the environment but is not, by itself,
-a safe sandbox for hostile code.
+Project TypeScript is arbitrary code. The API service no longer executes it in
+the API process. In `isolated` mode (the production default), the app sends a
+bounded source snapshot to a separate build-runner service. The runner accepts
+only an entrypoint and files, then creates a disposable container from the
+separately built `build-job` image. That job has no network, no project-volume
+or sibling-project mount, no Docker socket, and no deployment token. It runs as
+UID/GID `65532`, with all capabilities dropped, `no-new-privileges`, and fixed
+CPU, memory, PID, time, source-size, output-size, and log-size limits. Docker
+rejects archive uploads to containers configured with a read-only rootfs, so
+the container layer is writable; the job UID cannot write the root-owned image
+or toolchain files. Its bounded `/tmp` is the build workspace and writable
+scratch area. The runner deletes the container after success, failure, or
+timeout.
 
-Run this prototype only for trusted users on a host you control. Keep its HTTP
-port private, put TLS and any required access control at a trusted reverse
-proxy, and do not mount host directories containing secrets or sensitive data.
-Do not provide the service with cloud credentials or other valuable secrets.
-Restrict outbound network access at the host/firewall when projects should not
-download arbitrary dependencies or contact external systems.
+The runner is a privileged control-plane component: it alone receives the host
+Docker Engine socket and creates containers using a fixed policy. Keep it on a
+dedicated build host or node, restrict its internal network and token to the
+API service, and do not expose its HTTP port. A compromised runner or Docker
+daemon can control that builder host. The API service itself receives no Docker
+socket. The runner and API share only a bearer token; the job container receives
+neither.
 
-The container runs non-root, drops Linux capabilities, enables
-`no-new-privileges`, has a read-only root filesystem, bounds `/tmp`, and sets
-default CPU, memory, and process limits. These reduce accidental impact; they
-do not make arbitrary project execution safe. Review and adjust resource limits
-for your workload, while retaining host-level limits. Build timeouts terminate
-the build's process group on POSIX systems, but the child still runs under the
-app's UID with access to the mounted project volume and container network.
+The configured `runsc` gVisor runtime adds a user-space system-call boundary to
+the ordinary container controls. It must be installed and registered on the
+Docker Engine that the runner controls. If the runtime is missing, job creation
+fails closed; there is no fallback to `runc`. Operators may explicitly set
+`BUILD_SANDBOX_RUNTIME=runc`, but every successful build then reports
+`container-only` isolation and an API build warning. Standard OCI containers
+alone are not a strong boundary for hostile code. Even gVisor is defense in
+depth, not a guarantee against kernel/runtime vulnerabilities or denial of
+service; isolate builder hosts and keep them patched.
+
+`BUILD_EXECUTION_MODE=trusted-local` is an explicit development-only mode that
+runs the CLI as a child process on the local host. The application refuses this
+mode when `NODE_ENV=production`. Do not use it for projects from untrusted
+users. Injected build functions are intended for tests and are not selectable
+through HTTP or MCP.
+
+The project has no individual user accounts or project-level authorization.
+`WORKBENCH_AUTH_TOKEN` is a single shared browser/REST gate and MCP uses its own
+shared token; either credential holder can access all projects. Keep the app
+port private, use TLS and access control at a trusted reverse proxy, and do not
+store secrets in project files. The isolated job cannot reach the network, so
+project dependencies must come from the pinned build-job image; automatic npm
+install is not performed.
 
 ## Network exposure
 
@@ -62,9 +84,7 @@ HIGH or CRITICAL OS or library vulnerabilities. The configured gate exited 0.
 The workflow still fails on future fixed HIGH or CRITICAL findings; no findings
 are suppressed.
 
-Before using this service with untrusted users, add user-level authentication
-and authorization, isolate project builds in disposable constrained workers,
-restrict filesystem and network access, validate archive and path handling,
-and review the threat model. The shared access token is a perimeter gate only;
-it does not make project source safe to execute or prevent one trusted token
-holder from accessing every project.
+The shared access token remains a perimeter gate, not tenant isolation. The
+runner bounds concurrent jobs and validates every source path, but no
+per-user/project authorization or audit history exists. Review the threat
+model before exposing the service to multiple mutually untrusted users.

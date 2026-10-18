@@ -15,21 +15,29 @@ Requirements: Docker Engine with the Compose plugin. Clone the repository, then:
 
 ```sh
 cp .env.example .env
+mkdir -p .secrets
+openssl rand -hex 32 > .secrets/build-runner-token
+chmod 600 .secrets/build-runner-token
+docker build --target build-job -t wattful-iron-build-job:local .
 docker compose up --build -d
 docker compose logs -f circuits
 ```
 
-Open <http://127.0.0.1:3000>. Compose stores projects in the named volume
+Install and register gVisor `runsc` on the Docker Engine host first, and set
+`RUNNER_DOCKER_SOCKET` in `.env` to that Engine's socket. See the
+[deployment guide](docs/deployment.md) for the full setup. Open
+<http://127.0.0.1:3000>. Compose stores projects in the named volume
 `circuits-projects` and exposes the app only on loopback by default. Set
 `HTTP_PORT` in `.env` to change the host port. Keep `BIND_ADDRESS=127.0.0.1`
 when a reverse proxy on the same host terminates TLS. See
 [deployment](docs/deployment.md) for GHCR, Swarm, proxy, backup, and upgrade
 instructions.
 
-The image runs as the unprivileged `node` user. The root filesystem is
-read-only, with `/tmp` as a bounded temporary filesystem and project storage as
-the writable persistent volume. The Compose file sets container resource
-limits; tune them for the circuits and number of concurrent users you expect.
+The API image runs as the unprivileged `node` user and has no Docker socket.
+Builds run in disposable worker containers. Compose expects a Docker Engine
+with gVisor `runsc` installed; see the [deployment guide](docs/deployment.md)
+for host setup and the separately built worker image. The worker is limited to
+two concurrent jobs by default.
 
 ## Current scope
 
@@ -42,9 +50,10 @@ Results are not re-run on demand, and the panel only displays transient graph
 data emitted by tscircuit. Treat all views as development previews rather than
 engineering approval.
 
-ACP agent interfaces, user-level authentication, isolated execution of
-untrusted project code, and dedicated ERC/DRC are not implemented in this
-slice. An optional shared-token MCP endpoint, manufacturing preflight, and
+ACP agent interfaces, user-level authentication, and dedicated ERC/DRC are not
+implemented in this slice. Project code runs in disposable build containers;
+see the [security model](docs/security.md) for the runtime boundary and limits.
+An optional shared-token MCP endpoint, manufacturing preflight, and
 preflight-gated Gerber/drill/BOM/pick-and-place ZIP export are available. These
 do not provide user-level authorization or engineering sign-off. Do not expose
 the service to untrusted users or treat its output as a manufacturing release.
@@ -72,12 +81,15 @@ show named nets and generated PCB copper routes.
 npm ci
 npm ci --prefix web
 npm run build
-npm start
+BUILD_EXECUTION_MODE=trusted-local npm start
 ```
 
 The service listens on `PORT` (default `3000`) and stores projects under
 `PROJECTS_DIR` (default `./projects` for local development; the container sets
-it to `/data/projects`). `GET /healthz` is the container health endpoint.
+it to `/data/projects`). `trusted-local` runs project code on the host and is
+for trusted development projects only; production mode rejects it. To test the
+isolated path locally, run the build-runner service with its configured Docker
+Engine and worker image. `GET /healthz` is the container health endpoint.
 
 ## Documentation
 
