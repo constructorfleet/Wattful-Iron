@@ -5,7 +5,7 @@ import path from "node:path"
 import type { Express } from "express"
 
 export type BuildState = { status: string; revision: string; diagnostics?: unknown[] }
-export type ManufacturingCheck = { id: string; status: "pass" | "fail" | "warning"; message: string }
+export type ManufacturingCheck = { id: string; status: "pass" | "fail" | "warning" | "not-evaluated"; message: string }
 export type ManufacturingPreflight = { ready: boolean; profile: Pick<ManufacturingRuleProfile, "id" | "label">; checks: ManufacturingCheck[] }
 export type ManufacturingRuleProfile = {
   id: string
@@ -133,10 +133,10 @@ function checkCircuitValidation(items: Record<string, unknown>[]): Manufacturing
   return [
     errors.length
       ? { id: "circuit-errors", status: "fail", message: `${errors.length} Circuit JSON ERC/DRC error${errors.length === 1 ? "" : "s"}: ${errors.map(validationMessage).join("; ")}` }
-      : { id: "circuit-errors", status: "pass", message: "No Circuit JSON ERC/DRC errors were reported." },
+      : { id: "circuit-errors", status: "not-evaluated", message: "Circuit JSON contains no ERC/DRC error records; no validator result confirms this check passed." },
     warnings.length
       ? { id: "circuit-warnings", status: "warning", message: `${warnings.length} Circuit JSON warning${warnings.length === 1 ? "" : "s"}: ${warnings.map(validationMessage).join("; ")}` }
-      : { id: "circuit-warnings", status: "pass", message: "No Circuit JSON ERC/DRC warnings were reported." },
+      : { id: "circuit-warnings", status: "not-evaluated", message: "Circuit JSON contains no ERC/DRC warning records; no validator result confirms this check passed." },
   ]
 }
 

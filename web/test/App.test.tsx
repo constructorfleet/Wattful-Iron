@@ -62,7 +62,7 @@ beforeEach(() => {
     { id: 'board-default', label: 'Board defaults', description: 'Use board rules.', rules: { minTraceWidthMm: 0, minNonPlatedHoleMm: 0, copperToBoardEdgeMm: 0 } },
     { id: 'jlcpcb-2layer-1oz', label: 'JLCPCB rigid PCB, 2-layer, 1 oz', description: 'JLCPCB baseline.', rules: { minTraceWidthMm: 0.1, minNonPlatedHoleMm: 0.5, copperToBoardEdgeMm: 0.2 } },
   ] })
-  api.getManufacturingPreflight.mockResolvedValue({ preflight: { ready: true, profile: { id: 'board-default', label: 'Board defaults' }, checks: [{ id: 'circuit-errors', status: 'pass', message: 'No Circuit JSON ERC/DRC errors were reported.' }] } })
+  api.getManufacturingPreflight.mockResolvedValue({ preflight: { ready: true, profile: { id: 'board-default', label: 'Board defaults' }, checks: [{ id: 'circuit-errors', status: 'not-evaluated', message: 'Circuit JSON contains no ERC/DRC error records; no validator result confirms this check passed.' }] } })
   api.getSimulation.mockResolvedValue({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], diagnostics: [] })
   api.createProject.mockResolvedValue({ ...existingProject, id: 'new-1', name: 'Sensor Board' })
   api.importPdfReference.mockResolvedValue({ ...existingProject, id: 'pdf-1', name: 'Shim reference', referencePdfs: [{ id: 'ref-1', name: 'shim.pdf' }] })
@@ -205,7 +205,8 @@ describe('workbench', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Rule checks/ }))
 
     expect(await screen.findByRole('dialog', { name: 'Manufacturing preflight' })).toBeInTheDocument()
-    expect(await screen.findByText('No Circuit JSON ERC/DRC errors were reported.')).toBeInTheDocument()
+    expect(await screen.findByText('Not evaluated')).toBeInTheDocument()
+    expect(await screen.findByText(/no validator result confirms this check passed/)).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Fabricator rule profile'), { target: { value: 'jlcpcb-2layer-1oz' } })
     await waitFor(() => expect(api.getManufacturingPreflight).toHaveBeenCalledWith('led-1', 'jlcpcb-2layer-1oz'))
   })

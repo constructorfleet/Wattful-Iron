@@ -461,8 +461,9 @@ export default function App() {
 }
 
 function ManufacturingCheckRow({ check }: { check: ManufacturingCheck }) {
-  const label = check.status === 'pass' ? 'Pass' : check.status === 'fail' ? 'Blocked' : 'Review'
-  return <div className={`manufacturing-check ${check.status}`}><span className="check-status">{label}</span><span>{check.message}</span></div>
+  const label = check.status === 'pass' ? 'Pass' : check.status === 'fail' ? 'Blocked' : check.status === 'not-evaluated' ? 'Not evaluated' : 'Review'
+  const className = check.status === 'not-evaluated' ? 'warning' : check.status
+  return <div className={`manufacturing-check ${className}`}><span className="check-status">{label}</span><span>{check.message}</span></div>
 }
 
 function formatBytes(bytes: number) {
