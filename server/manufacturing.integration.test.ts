@@ -8,7 +8,7 @@ import { createApp } from "./app.js"
 
 test("a built Circuit JSON downloads a preflight-approved manufacturing ZIP", async () => {
   const projectsDir = await mkdtemp(path.join(tmpdir(), "circuits-manufacturing-http-"))
-  const app = createApp({ projectsDir, watchFiles: false })
+  const app = createApp({ projectsDir, watchFiles: false, buildExecutionMode: "trusted-local" })
   try {
     const { body: project } = await request(app).post("/api/projects").send({ name: "Fab HTTP test" }).expect(201)
     const source = await readFile(path.resolve("examples/manufacturing-board/index.circuit.tsx"), "utf8")

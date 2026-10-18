@@ -9,6 +9,7 @@ import { mountMcp } from "./mcp.js"
 import { createGerberArchive, mountManufacturingRoutes } from "./manufacturing.js"
 import { getSimulationResults } from "./simulation.js"
 import { runCommand } from "./build-process.js"
+import { executeRemoteBuild, type IsolatedBuildResult } from "./build-client.js"
 
 export type Diagnostic = { severity: "error" | "warning" | "info"; message: string; path?: string; line?: number; column?: number }
 type BuildStatus = "idle" | "compiling" | "ready" | "failed"
@@ -18,7 +19,7 @@ type ProjectState = { project: ProjectData; preview?: unknown }
 type ProjectSnapshot = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes: number; files: Record<string, string> }
 type ServerEvent = "project" | "file" | "build.status" | "build.ready" | "build.failed"
 type BuildFn = (projectDir: string, entrypoint: string) => Promise<unknown>
-type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string; workbenchAuthToken?: string }
+type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; buildExecutionMode?: "isolated" | "trusted-local"; buildRunner?: { url: string; token: string }; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string; workbenchAuthToken?: string }
 
 const templates = [
   { id: "blank-board", name: "Blank starter", description: "An empty board ready for your circuit." },
@@ -34,7 +35,9 @@ const HISTORY_RETENTION = 50
 class ProjectService {
   readonly root: string
   readonly examplesDir: string
-  readonly buildCircuit: BuildFn
+  readonly buildCircuit?: BuildFn
+  readonly buildExecutionMode: "isolated" | "trusted-local"
+  readonly buildRunner?: { url: string; token: string }
   readonly watchFiles: boolean
   readonly eventClients = new Map<string, Set<Response>>()
   readonly watchers = new Map<string, FSWatcher>()
@@ -54,7 +57,12 @@ class ProjectService {
   constructor(options: AppOptions) {
     this.root = path.resolve(options.projectsDir ?? process.env.PROJECTS_DIR ?? "/data/projects")
     this.examplesDir = path.resolve(options.examplesDir ?? path.join(process.cwd(), "examples"))
-    this.buildCircuit = options.buildCircuit ?? runTscircuitBuild
+    this.buildCircuit = options.buildCircuit
+    const executionMode = options.buildExecutionMode ?? process.env.BUILD_EXECUTION_MODE ?? "isolated"
+    this.buildExecutionMode = executionMode as "isolated" | "trusted-local"
+    this.buildRunner = options.buildRunner
+    if (!["isolated", "trusted-local"].includes(this.buildExecutionMode)) throw new Error("BUILD_EXECUTION_MODE must be isolated or trusted-local")
+    if (this.buildExecutionMode === "trusted-local" && process.env.NODE_ENV === "production") throw new Error("trusted-local project builds are disabled in production")
     this.watchFiles = options.watchFiles ?? true
     this.appNodeModules = path.resolve(process.cwd(), "node_modules")
     this.ready = this.initialize()
@@ -90,7 +98,7 @@ class ProjectService {
     await writeFile(path.join(dir, "package.json"), projectPackage)
     this.ownFileHashes.set(path.join(dir, project.entrypoint), digest(source))
     this.ownFileHashes.set(path.join(dir, "package.json"), digest(projectPackage))
-    await this.linkNodeModules(dir)
+    if (this.buildExecutionMode === "trusted-local") await this.linkNodeModules(dir)
     const state: ProjectState = { project }
     this.states.set(id, state)
     await this.storeSnapshot(id, project.revision, [project.entrypoint, "package.json"])
@@ -131,7 +139,7 @@ class ProjectService {
     this.ownFileHashes.set(path.join(dir, entrypoint), digest(source))
     this.ownFileHashes.set(path.join(dir, "package.json"), digest(projectPackage))
     for (const file of files) this.ownFileHashes.set(path.join(dir, "imports", path.basename(file.name)), digest(file.content))
-    await this.linkNodeModules(dir)
+    if (this.buildExecutionMode === "trusted-local") await this.linkNodeModules(dir)
     const state: ProjectState = {
       project: { ...project, lastBuild: { buildId: randomUUID(), revision: project.revision, status: "ready", diagnostics: [], updatedAt: new Date().toISOString() }, previewRevision: project.revision },
       preview: circuitJson,
@@ -548,8 +556,16 @@ class ProjectService {
       await this.persist(state)
       this.emit(id, "build.status", { buildId, revision, status: "compiling", step: "compiling" })
       let circuitJson: unknown
+      let buildDiagnostics: Diagnostic[] = []
       try { circuitJson = JSON.parse(await readFile(path.join(this.projectDir(id), ".workbench", "imported-circuit.json"), "utf8")) }
-      catch { circuitJson = await this.buildCircuit(this.projectDir(id), state.project.entrypoint) }
+      catch {
+        const build = await this.executeBuild(this.projectDir(id), state.project.entrypoint)
+        if (isIsolatedBuildResult(build)) {
+          circuitJson = build.circuitJson
+          if (build.isolation === "container-only") buildDiagnostics = [{ severity: "warning", message: `Build used standard ${build.runtime} container isolation only; this is not a strong sandbox for hostile project code. Configure the runsc runtime for the build worker.` }]
+          else buildDiagnostics = [{ severity: "info", message: "Build ran in the configured runsc gVisor sandbox." }]
+        } else circuitJson = build
+      }
       if (state.project.revision !== revision) { this.rerunBuild.add(id); return }
       state.preview = circuitJson
       state.project.previewRevision = revision
@@ -557,7 +573,7 @@ class ProjectService {
       const temporary = previewFile + ".tmp"
       await writeFile(temporary, JSON.stringify(circuitJson))
       await rename(temporary, previewFile)
-      const record: BuildRecord = { buildId, revision, status: "ready", diagnostics: [], updatedAt: new Date().toISOString() }
+      const record: BuildRecord = { buildId, revision, status: "ready", diagnostics: buildDiagnostics, updatedAt: new Date().toISOString() }
       state.project.lastBuild = record
       await this.persist(state)
       this.emit(id, "build.ready", { buildId, revision, artifacts: { circuitJsonUrl: `/api/projects/${id}/preview?kind=pcb` } })
@@ -574,6 +590,26 @@ class ProjectService {
         this.scheduleBuild(id, 0, queuedBuild?.buildId, queuedBuild?.revision)
       }
     }
+  }
+
+  private async executeBuild(projectDir: string, entrypoint: string): Promise<unknown | IsolatedBuildResult> {
+    if (this.buildCircuit) return this.buildCircuit(projectDir, entrypoint)
+    if (this.buildExecutionMode === "trusted-local") return runTscircuitBuild(projectDir, entrypoint)
+    const files = await this.getFileList(path.basename(projectDir))
+    const source = []
+    let size = 0
+    for (const file of files) {
+      const content = await readFile(await this.safeFile(path.basename(projectDir), file, false), "utf8")
+      size += Buffer.byteLength(file) + Buffer.byteLength(content)
+      if (size > 8 * 1024 * 1024) throw new Error("Project source exceeds the isolated build size limit")
+      source.push({ path: file, content })
+    }
+    const tokenFile = process.env.BUILD_RUNNER_TOKEN_FILE
+    const token = tokenFile ? (await readFile(tokenFile, "utf8")).trim() : process.env.BUILD_RUNNER_TOKEN ?? ""
+    return executeRemoteBuild({ entrypoint, files: source }, {
+      url: this.buildRunner?.url ?? process.env.BUILD_RUNNER_URL ?? "http://build-runner:3020",
+      token: this.buildRunner?.token ?? token,
+    })
   }
 
   private emit(id: string, event: ServerEvent, data: unknown) {
@@ -820,6 +856,10 @@ function diagnosticsFrom(error: unknown): Diagnostic[] {
       ? { severity: "error" as const, path: match[1], line: Number(match[2]), column: Number(match[3]), message: match[4] || line }
       : { severity: "error" as const, message: line.slice(0, 2000) }
   })
+}
+
+function isIsolatedBuildResult(value: unknown): value is IsolatedBuildResult {
+  return typeof value === "object" && value !== null && "circuitJson" in value && "isolation" in value && "runtime" in value
 }
 
 function cleanRelative(input: string) {

@@ -43,7 +43,7 @@ test("rejects unsupported and malformed schematic imports with actionable errors
 
 test("imported schematic source builds into a workbench preview", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "circuits-import-build-"))
-  const app = createApp({ projectsDir: root, watchFiles: false })
+  const app = createApp({ projectsDir: root, watchFiles: false, buildExecutionMode: "trusted-local" })
   try {
     const imported = await request(app).post("/api/projects/import").send({
       name: "Imported sample",

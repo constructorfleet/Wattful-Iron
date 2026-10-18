@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
@@ -263,7 +264,7 @@ test("simulation endpoint returns retained tscircuit waveforms with net correlat
 
 test("new projects build Circuit JSON through the documented tscircuit CLI", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "circuits-cli-integration-"))
-  const app = createApp({ projectsDir: root, watchFiles: false })
+  const app = createApp({ projectsDir: root, watchFiles: false, buildExecutionMode: "trusted-local" })
   try {
     const { body: project } = await request(app).post("/api/projects").send({ name: "CLI smoke" }).expect(201)
     await waitForBuild(app, project.id, "ready", 1200, 100)
@@ -274,6 +275,62 @@ test("new projects build Circuit JSON through the documented tscircuit CLI", asy
     assert.ok(result.body.circuitJson.some((item: { type?: string }) => item.type === "pcb_board"))
   } finally {
     await (app.locals.projectService as { close: () => Promise<void> }).close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("default builds fail closed without the runner and do not expose app node_modules", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "circuits-isolated-default-"))
+  const app = createApp({ projectsDir: root, watchFiles: false })
+  try {
+    const { body: project } = await request(app).post("/api/projects").send({ name: "Isolated by default" }).expect(201)
+    const result = await waitForBuild(app, project.id, "failed")
+    assert.match(result.diagnostics[0]?.message ?? "", /BUILD_RUNNER_TOKEN/)
+    await assert.rejects(lstat(path.join(root, project.id, "node_modules")))
+  } finally {
+    await (app.locals.projectService as { close: () => Promise<void> }).close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("production mode refuses trusted-local project builds", () => {
+  const previous = process.env.NODE_ENV
+  process.env.NODE_ENV = "production"
+  try {
+    assert.throws(() => createApp({ projectsDir: "/tmp/not-created", watchFiles: false, buildExecutionMode: "trusted-local" }), /disabled in production/)
+  } finally {
+    if (previous === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = previous
+  }
+})
+
+test("default app builds send a bounded source snapshot to the isolated runner", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "circuits-isolated-runner-"))
+  let requestBody = ""
+  let requestAuthorization = ""
+  const runner = createServer((incoming, response) => {
+    requestAuthorization = incoming.headers.authorization ?? ""
+    incoming.on("data", (chunk) => { requestBody += chunk.toString("utf8") })
+    incoming.on("end", () => {
+      response.writeHead(200, { "content-type": "application/json" })
+      response.end(JSON.stringify({ circuitJson: circuit, isolation: "gvisor", runtime: "runsc" }))
+    })
+  })
+  await new Promise<void>((resolve) => runner.listen(0, "127.0.0.1", resolve))
+  const address = runner.address()
+  assert.ok(address && typeof address !== "string")
+  const token = "app-test-runner-token-with-more-than-32-bytes"
+  const app = createApp({ projectsDir: root, watchFiles: false, buildRunner: { url: `http://127.0.0.1:${address.port}`, token } })
+  try {
+    const { body: project } = await request(app).post("/api/projects").send({ name: "Remote build" }).expect(201)
+    await waitForBuild(app, project.id, "ready")
+    assert.equal(requestAuthorization, `Bearer ${token}`)
+    assert.equal(JSON.parse(requestBody).entrypoint, "index.circuit.tsx")
+    assert.ok(JSON.parse(requestBody).files.some((file: { path: string }) => file.path === "index.circuit.tsx"))
+    await assert.rejects(lstat(path.join(root, project.id, "node_modules")))
+  } finally {
+    await (app.locals.projectService as { close: () => Promise<void> }).close()
+    await new Promise<void>((resolve) => runner.close(() => resolve()))
     await rm(root, { recursive: true, force: true })
   }
 })
@@ -337,7 +394,7 @@ test("workbench auth rejects secrets shorter than 32 bytes", () => {
 async function waitForBuild(app: import("express").Express, id: string, status: "ready" | "failed", maxAttempts = 100, intervalMs = 10) {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const result = await request(app).get("/api/projects/" + id)
-    if (result.body.lastBuild?.status === status) return
+    if (result.body.lastBuild?.status === status) return result.body.lastBuild as { diagnostics: Array<{ message: string }> }
     if (result.body.lastBuild?.status === "failed") assert.fail("build failed: " + JSON.stringify(result.body.lastBuild.diagnostics))
     await new Promise((resolve) => setTimeout(resolve, intervalMs))
   }

@@ -3,7 +3,47 @@
 ## Docker Compose
 
 The repository root `docker-compose.yml` builds the application image and
-mounts the named volume `circuits-projects` at `/data/projects`.
+mounts the named volume `circuits-projects` at `/data/projects`. It also starts
+a separate build-runner service. The API container has no Docker socket; only
+the trusted runner can access the dedicated build Engine.
+
+Install gVisor `runsc` on the Linux host that runs the build Engine, then
+register and verify the runtime:
+
+```sh
+sudo /usr/local/bin/runsc install
+sudo systemctl restart docker
+docker run --rm --runtime=runsc hello-world
+```
+
+See the [gVisor installation guide](https://gvisor.dev/docs/user_guide/install/)
+and [Docker quick start](https://gvisor.dev/docs/user_guide/quick_start/docker/)
+for platform-specific requirements. The app defaults to `runsc` and fails
+closed if it is unavailable; there is no fallback. `runc` may be selected
+explicitly with `BUILD_SANDBOX_RUNTIME=runc`, but builds then report
+`container-only` isolation. Standard OCI containers alone are not a strong
+boundary for hostile project code.
+
+Create the runner secret and build the job image, which contains only the
+pinned tscircuit runtime dependencies and trusted wrapper, without API/web
+code, projects, or deployment secrets:
+
+```sh
+mkdir -p .secrets
+openssl rand -hex 32 > .secrets/build-runner-token
+chmod 600 .secrets/build-runner-token
+docker build --target build-job -t wattful-iron-build-job:local .
+```
+
+Set `BUILD_RUNNER_TOKEN_FILE` in `.env` to the token file path and
+`RUNNER_DOCKER_SOCKET` to the build Engine socket. Rootless Docker commonly
+uses `/run/user/<uid>/docker.sock`. The runner socket has authority to create
+and delete containers, so use a dedicated, patched build host and do not expose
+the runner HTTP port. The job container receives no mounts, network, runner
+token, or host app files. Its root filesystem is read-only and it runs as
+non-root with no capabilities and no-new-privileges. CPU, memory, PIDs,
+temporary storage, time, source, result, and Docker logs are bounded; at most
+two builds run concurrently by default.
 
 ```sh
 cp .env.example .env
@@ -44,6 +84,13 @@ if its visibility is private. Pull requests and manual runs build and check the
 image but do not publish it. The workflow scans the built AMD64 image with
 Trivy; it fails on fixable HIGH or CRITICAL OS/library vulnerabilities. Release
 publishing includes AMD64 and ARM64 manifests.
+
+Compose also expects the local `wattful-iron-build-job:local` image built
+above. Rebuild it whenever the application revision changes. For a remote
+builder, publish the `build-job` target and set `BUILD_JOB_IMAGE` to an
+immutable image tag or digest; make it available on the runner's Engine.
+Project requests cannot choose an image, command, mount, runtime, or other
+container setting.
 
 ## Reverse proxy and TLS
 
@@ -86,6 +133,14 @@ private network. The stack uses one replica and retains its data in the
 build images; the `build` entry is ignored by Swarm. On multi-node clusters,
 use a placement constraint and a node-local volume, or configure a shared
 volume driver yourself.
+
+Swarm ignores Compose `depends_on`. Keep the app in isolated mode and verify
+runner health before routing build traffic; the app never falls back to local
+execution. Label the dedicated builder node `build_runner=true`, install and
+register `runsc` on its Docker Engine, and ensure the job image is present on
+that node. The runner socket bind is node-specific, so do not schedule the
+runner on general-purpose app nodes. Build and publish the `build-job` target
+separately before deploying the stack.
 
 ## Persistent data and backups
 

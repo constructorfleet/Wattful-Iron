@@ -45,3 +45,15 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 CMD ["node", "dist/server/index.js"]
+
+# The untrusted-code container contains only the pinned runtime dependencies
+# and the small trusted build wrapper. It does not contain app code, projects,
+# deployment configuration, or runner credentials.
+FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS build-job
+WORKDIR /app
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/dist/server/build-job.js ./dist/server/build-job.js
+USER node
+WORKDIR /tmp
+ENTRYPOINT ["node", "/app/dist/server/build-job.js"]
