@@ -264,6 +264,14 @@ class ProjectService {
     return out.sort()
   }
 
+  async getSnapshotFiles(id: string) {
+    const files = await this.getFileList(id)
+    return Promise.all(files.map(async (relativePath) => ({
+      path: relativePath,
+      content: await readFile(await this.safeFile(id, relativePath, false), "utf8"),
+    })))
+  }
+
   async listHistory(id: string) {
     return (await this.readSnapshots(id)).map(({ revision, createdAt, changedFiles, sizeBytes }) => ({ revision, createdAt, changedFiles, sizeBytes }))
   }

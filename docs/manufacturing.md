@@ -30,8 +30,14 @@ source traces, routing cannot be verified and preflight reports a warning.
 CLI's `--format gerbers` ZIP after preflight passes. The package contains the
 Gerber copper, mask, paste, silkscreen, and outline files, plus `bom.csv` and
 `pick_and_place.csv`; drill files are included when the design has drilled
-features. The export uses the Circuit JSON snapshot from the successful build,
-and the server rejects a project revision change during export.
+features. It also includes `snapshot-manifest.json` with the project revision,
+SHA-256 hashes of project source files, declared and lockfile-resolved npm
+dependencies when available, source-component metadata, preflight checks,
+simulation status/results, and a checksum and size for each other file in the
+ZIP. `bom_artifact` identifies the BOM path when one is present. The manifest
+does not checksum itself; its `checksum_scope` states this explicitly. The
+export uses the Circuit JSON snapshot from the successful build, and the server
+rejects a project revision change during export.
 
 These checks cover a limited subset of the published profile rules; the
 routing check confirms that route geometry exists for each logical source
