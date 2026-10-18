@@ -15,6 +15,8 @@ const requirementSchema = z.object({
       max_current_ma: z.number().positive().optional(),
     }).strict().optional(),
     interfaces: z.array(z.object({ type: z.string().trim().min(1).max(50), count: z.number().int().positive() }).strict()).max(50).optional(),
+    components: z.array(z.string().trim().min(1).max(100)).max(100).refine((items) => new Set(items).size === items.length, "must not contain duplicates").optional(),
+    nets: z.array(z.string().trim().min(1).max(100)).max(100).refine((items) => new Set(items).size === items.length, "must not contain duplicates").optional(),
     manufacturing: z.object({ assembler: z.string().trim().min(1).max(100).optional() }).strict().optional(),
   }).strict(),
 }).strict()
@@ -32,6 +34,7 @@ export function parseRequirements(content: string): ProjectRequirements {
 
 export function validateRequirements(requirements: ProjectRequirements, circuitJson: unknown) {
   const checks: RequirementCheck[] = []
+  const hasCircuitEvidence = circuitJson !== undefined && circuitJson !== null
   const boardRequirements = requirements.requirements.board
   if (boardRequirements) {
     const boards = records(circuitJson).filter((item) => item.type === "pcb_board")
@@ -53,6 +56,25 @@ export function validateRequirements(requirements: ProjectRequirements, circuitJ
       } else {
         checks.push({ id: `board-${key}`, status: "not-evaluated", message: `The PCB board does not emit ${label}; the requirement could not be fully checked.` })
       }
+    }
+  }
+
+  for (const reference of requirements.requirements.components ?? []) {
+    if (!hasCircuitEvidence) {
+      checks.push({ id: `component-${reference}`, status: "not-evaluated", message: `Required component '${reference}' could not be checked because no successful Circuit JSON evidence is available.` })
+    } else if (records(circuitJson).some((item) => item.type === "source_component" && item.name === reference)) {
+      checks.push({ id: `component-${reference}`, status: "pass", message: `Required component '${reference}' is present in Circuit JSON.` })
+    } else {
+      checks.push({ id: `component-${reference}`, status: "fail", message: `Required component '${reference}' is missing from Circuit JSON source_component records.` })
+    }
+  }
+  for (const name of requirements.requirements.nets ?? []) {
+    if (!hasCircuitEvidence) {
+      checks.push({ id: `net-${name}`, status: "not-evaluated", message: `Required net '${name}' could not be checked because no successful Circuit JSON evidence is available.` })
+    } else if (records(circuitJson).some((item) => item.type === "source_trace" && item.name === name)) {
+      checks.push({ id: `net-${name}`, status: "pass", message: `Required named net '${name}' is present in Circuit JSON.` })
+    } else {
+      checks.push({ id: `net-${name}`, status: "fail", message: `Required named net '${name}' is missing from Circuit JSON source_trace records.` })
     }
   }
 

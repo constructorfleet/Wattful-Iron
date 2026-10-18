@@ -133,6 +133,35 @@ test("project requirements are schema-validated, revisioned, and marked stale un
   } finally { await f.cleanup() }
 })
 
+test("REST requirements validation checks required component references and named nets", async () => {
+  const f = await fixture(async () => [
+    { type: "source_component", name: "U1" },
+    { type: "source_trace", name: "GND" },
+  ])
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Reference checks" }).expect(201)
+    await waitForPreview(f.app, project.id)
+    const saved = await request(f.app).put(`/api/projects/${project.id}/requirements`)
+      .set("If-Match", project.revision).send({ revision: project.revision, requirements: { version: 1, requirements: { components: ["U1", "U2"], nets: ["GND", "SCL"] } } }).expect(200)
+    await request(f.app).post(`/api/projects/${project.id}/build`).expect(202)
+    await waitForPreview(f.app, project.id, saved.body.revision)
+    const validation = await request(f.app).get(`/api/projects/${project.id}/requirements/validate`).expect(200)
+    assert.deepEqual(validation.body.checks.map(({ id, status }: { id: string; status: string }) => [id, status]), [
+      ["component-U1", "pass"], ["component-U2", "fail"], ["net-GND", "pass"], ["net-SCL", "fail"],
+    ])
+    assert.equal(validation.body.failed, 2)
+  } finally { await f.cleanup() }
+})
+
+async function waitForPreview(app: ReturnType<typeof createApp>, projectId: string, revision?: string) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const preview = await request(app).get(`/api/projects/${projectId}/preview?kind=schematic`)
+    if (preview.status === 200 && (!revision || preview.body.revision === revision)) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  assert.fail("timed out waiting for a successful preview")
+}
+
 test("simultaneous writes using one revision allow only one save", async () => {
   const f = await fixture(async () => circuit)
   try {
