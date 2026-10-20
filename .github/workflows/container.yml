@@ -66,27 +66,8 @@ jobs:
         run: bash -n scripts/container-acceptance.sh
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-      - name: Build image without publishing
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: circuits:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Build isolated build-job image without publishing
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64
-          target: build-job
-          push: false
-          load: true
-          tags: wattful-iron-build-job:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Build validation images in parallel
+        run: docker buildx bake --file docker-bake.hcl ci
       - name: Test isolated container workbench acceptance
         run: |
           docker volume create circuits-smoke-projects
