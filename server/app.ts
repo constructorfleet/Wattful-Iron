@@ -110,6 +110,81 @@ class ProjectService {
     return project
   }
 
+  async duplicateProject(id: string, name: string, expectedRevision: string) {
+    return this.withWriteLock(id, async () => {
+      const original = this.state(id)
+      this.assertRevision(original.project, expectedRevision)
+      const duplicateId = randomUUID()
+      const originalDir = this.projectDir(id)
+      const duplicateDir = this.projectDir(duplicateId)
+      try {
+        await mkdir(path.join(duplicateDir, ".workbench"), { recursive: true })
+        const files = await this.getFileList(id)
+        for (const relative of files) {
+          const source = await this.safeFile(id, relative, false)
+          const target = path.join(duplicateDir, relative)
+          await mkdir(path.dirname(target), { recursive: true })
+          const content = await readFile(source)
+          await writeFile(target, content)
+          this.ownFileHashes.set(target, digest(content))
+        }
+
+        const copyInternalFile = async (relative: string) => {
+          const source = path.resolve(originalDir, relative)
+          if (!source.startsWith(originalDir + path.sep)) throw badRequest("Project metadata contains an invalid file path")
+          try {
+            const info = await lstat(source)
+            if (!info.isFile() || info.isSymbolicLink()) throw badRequest("Project metadata contains an unsupported file")
+            const target = path.resolve(duplicateDir, relative)
+            if (!target.startsWith(duplicateDir + path.sep)) throw badRequest("Project metadata contains an invalid file path")
+            await mkdir(path.dirname(target), { recursive: true })
+            const content = await readFile(source)
+            await writeFile(target, content)
+            this.ownFileHashes.set(target, digest(content))
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+          }
+        }
+        await copyInternalFile(".workbench/imported-circuit.json")
+        for (const reference of original.project.referencePdfs ?? []) {
+          if (!isId(reference.id)) throw badRequest("Project metadata contains an invalid PDF reference")
+          await copyInternalFile(path.join(".workbench", "references", `${reference.id}.pdf`))
+        }
+        if (original.preview !== undefined) {
+          const preview = Buffer.from(JSON.stringify(original.preview))
+          await writeFile(path.join(duplicateDir, ".workbench", "circuit.json"), preview)
+        }
+
+        const revision = newRevision()
+        const project: ProjectData = {
+          ...original.project,
+          id: duplicateId,
+          name: name.trim(),
+          revision,
+          ...(original.preview === undefined ? { previewRevision: undefined } : { previewRevision: revision }),
+          ...(original.project.lastBuild ? { lastBuild: { ...original.project.lastBuild, buildId: randomUUID(), revision } } : {}),
+          ...(original.project.referencePdfs ? { referencePdfs: original.project.referencePdfs.map((reference) => ({ ...reference })) } : {}),
+        }
+        const duplicate: ProjectState = { project, ...(original.preview === undefined ? {} : { preview: original.preview }) }
+        if (this.buildExecutionMode === "trusted-local") await this.linkNodeModules(duplicateDir)
+        this.states.set(duplicateId, duplicate)
+        await this.persist(duplicate)
+        await this.storeSnapshot(duplicateId, revision, await this.getFileList(duplicateId))
+        this.watch(duplicateId)
+        this.emit(duplicateId, "project", { project })
+        this.scheduleBuild(duplicateId, 0)
+        return project
+      } catch (error) {
+        this.states.delete(duplicateId)
+        for (const filename of this.ownFileHashes.keys()) {
+          if (filename.startsWith(duplicateDir + path.sep)) this.ownFileHashes.delete(filename)
+        }
+        await rm(duplicateDir, { recursive: true, force: true })
+        throw error
+      }
+    })
+  }
+
   async importSchematics(name: string, files: Array<{ name: string; content: string }>) {
     const converter = new KicadToCircuitJsonConverter()
     for (const file of files) converter.addFile(file.name, file.content)
@@ -671,6 +746,14 @@ export function createApp(options: AppOptions = {}): Express {
       const templateId = request.body?.templateId
       if (templateId !== undefined && typeof templateId !== "string") throw badRequest("Project template must be a string")
       response.status(201).json(await service.create(name, templateId))
+    } catch (error) { next(error) }
+  })
+  app.post("/api/projects/:id/duplicate", async (request, response, next) => {
+    try {
+      const name = typeof request.body?.name === "string" ? request.body.name.trim() : ""
+      if (!name || name.length > 100) throw badRequest("Project name must contain 1 to 100 characters")
+      const revision = request.get("If-Match")?.replace(/^\"|\"$/g, "") ?? ""
+      response.status(201).json(await service.duplicateProject(request.params.id!, name, revision))
     } catch (error) { next(error) }
   })
   app.post("/api/projects/import", async (request, response, next) => {

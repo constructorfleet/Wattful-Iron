@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { compareProjectRevisions, createProject, getManufacturingArchive, getManufacturingPreflight, getManufacturingProfiles, getProjectFile, getProjectHistory, getProjectReferencePdfUrl, importPdfReference, importSchematics, listProjectTemplates, restoreProjectRevision, saveProjectFile, type Project } from '../src/api'
+import { compareProjectRevisions, createProject, duplicateProject, getManufacturingArchive, getManufacturingPreflight, getManufacturingProfiles, getProjectFile, getProjectHistory, getProjectReferencePdfUrl, importPdfReference, importSchematics, listProjectTemplates, restoreProjectRevision, saveProjectFile, type Project } from '../src/api'
 
 describe('project API', () => {
   it('creates a named project and returns the server project record', async () => {
@@ -11,6 +11,22 @@ describe('project API', () => {
       method: 'POST',
       body: JSON.stringify({ name: 'LED board', templateId: 'led-indicator' }),
     }))
+  })
+
+  it('duplicates a project using its current revision', async () => {
+    const project: Project = { id: 'copy-1', name: 'LED copy', entrypoint: 'index.tsx', revision: 'r2' }
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(project), { status: 201 }))
+    await expect(duplicateProject('p-1', 'LED copy', 'r1', fetcher)).resolves.toEqual(project)
+    expect(fetcher).toHaveBeenCalledWith('/api/projects/p-1/duplicate', expect.objectContaining({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'If-Match': 'r1' },
+      body: JSON.stringify({ name: 'LED copy' }),
+    }))
+  })
+
+  it('reports a stale source revision instead of silently duplicating newer contents', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'Project changed since this project was read' }), { status: 409 }))
+    await expect(duplicateProject('p-1', 'LED copy', 'stale-revision', fetcher)).rejects.toThrow('Project changed since this project was read')
   })
 
   it('lists built-in project templates', async () => {
@@ -46,7 +62,7 @@ describe('project API', () => {
   })
 
   it('uses If-Match and reports a stale revision as a conflict', async () => {
-    const fetcher = vi.fn().mockResolvedValue(new Response('revision changed', { status: 409 }))
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'This file changed on disk. Reload it before saving again.' }), { status: 409 }))
     await expect(saveProjectFile('p-1', 'index.tsx', 'new source', 'r2', fetcher)).rejects.toThrow('changed on disk')
     expect(fetcher).toHaveBeenCalledWith('/api/projects/p-1/files?path=index.tsx', expect.objectContaining({
       method: 'PUT',

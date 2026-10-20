@@ -12,6 +12,15 @@ debounced build. Use **Build** to request a build immediately. Wait for
 in the preview area. A failed build does not replace the last successful
 preview.
 
+## Explore a project without changing the original
+
+Select the duplicate icon beside a project in the **Projects** list. Wattful-Iron
+copies the editable files, project configuration, imported circuit data, and PDF
+references into a separate project, then opens the copy. The copy has its own
+revision history and builds independently. If the editor has unsaved changes,
+choose **Save and open**, **Discard and open**, or **Cancel** before duplication
+starts.
+
 Use the **Schematic**, **PCB**, and **3D** tabs to change preview type. The
 example manufacturing board source is at
 [`examples/manufacturing-board/index.circuit.tsx`](../examples/manufacturing-board/index.circuit.tsx).

@@ -22,6 +22,7 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | --- | --- |
 | `list_projects` | List project metadata. |
 | `create_project` | Create a project with an editable tscircuit starter. |
+| `duplicate_project` | Copy a project's editable files and retained references into an independent project using the source revision. |
 | `get_project` | Read metadata, revision, and latest build state. |
 | `get_project_files` | List project files. |
 | `read_project_file` | Read a file and its current project revision. |
@@ -42,7 +43,7 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `get_simulation_results` | Read waveform data and probe/net information from the latest successful build. |
 | `check_manufacturability` | Run the same current-revision completeness checks used by the manufacturing download route. |
 
-`update_project_file` requires the `revision` returned by `read_project_file`; stale writes return a tool error. There are no delete or component-ordering tools.
+`update_project_file` requires the `revision` returned by `read_project_file`; stale writes return a tool error. `duplicate_project` also requires the current project revision and creates a fresh project history. There are no delete or component-ordering tools.
 
 Circuit inspection reads the most recent successful build. These tools expose the fields present in Circuit JSON: logical nets come from `source_trace` and `connected_source_port_ids`, pin details from `source_port`, PCB placement from `pcb_component`, and board data from `pcb_board`. `get_component` accepts a component reference/name or source component ID; it returns only related placement, pins, and trace connections present in that build. `get_circuit_json` returns the complete JSON and its build revision. `trace_net` accepts a source trace name or ID and can return multiple matching traces when a name is reused. These tools do not infer missing component, pin, or board properties.
 

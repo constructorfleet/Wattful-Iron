@@ -4,6 +4,7 @@ import { configureMonaco } from './configureMonaco'
 import {
   compareProjectRevisions,
   createProject,
+  duplicateProject as duplicateProjectApi,
   getManufacturingArchive,
   getManufacturingPreflight,
   getManufacturingProfiles,
@@ -95,6 +96,7 @@ export default function App() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [restoringHistory, setRestoringHistory] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [duplicatingProjectId, setDuplicatingProjectId] = useState('')
   const [projectName, setProjectName] = useState('')
   const [projectTemplate, setProjectTemplate] = useState('blank-board')
   const [schematicFiles, setSchematicFiles] = useState<File[]>([])
@@ -164,6 +166,21 @@ export default function App() {
   const openProject = useCallback((listedProject: Project) => {
     requestNavigation(() => loadProject(listedProject))
   }, [loadProject, requestNavigation])
+
+  const duplicateExistingProject = (item: Project) => requestNavigation(async () => {
+    setError('')
+    setDuplicatingProjectId(item.id)
+    try {
+      const current = await getProject(item.id)
+      const duplicate = await duplicateProjectApi(item.id, `${item.name.slice(0, 95)} copy`, current.revision)
+      setProjects((items) => [duplicate, ...items.filter(({ id }) => id !== duplicate.id)])
+      await loadProject(duplicate)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to duplicate project')
+    } finally {
+      setDuplicatingProjectId('')
+    }
+  })
 
   const openFile = useCallback((path: string) => {
     if (!project || path === filePath) return
@@ -451,9 +468,12 @@ export default function App() {
           <button className="new-project-link" onClick={() => setCreating(true)}><span>＋</span> New project</button>
           <div className="project-list" aria-label="Project list">
             {loading ? <div className="sidebar-empty">Loading projects…</div> : projects.length === 0 ? <div className="sidebar-empty">Your projects will appear here.</div> : projects.map((item) => (
-              <button key={item.id} className={`project-item ${project?.id === item.id ? 'selected' : ''}`} onClick={() => void openProject(item)}>
-                <span className="project-icon">▱</span><span className="project-item-copy"><strong>{item.name}</strong><small>{item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : 'TSX project'}</small></span>
-              </button>
+              <div key={item.id} className="project-row">
+                <button className={`project-item ${project?.id === item.id ? 'selected' : ''}`} onClick={() => void openProject(item)}>
+                  <span className="project-icon">▱</span><span className="project-item-copy"><strong>{item.name}</strong><small>{item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : 'TSX project'}</small></span>
+                </button>
+                <button className="project-action" aria-label={`Duplicate ${item.name}`} title="Duplicate project" disabled={duplicatingProjectId === item.id} onClick={() => void duplicateExistingProject(item)}>{duplicatingProjectId === item.id ? '…' : '⧉'}</button>
+              </div>
             ))}
           </div>
           {project && <div className="file-browser" aria-label="Project files">
