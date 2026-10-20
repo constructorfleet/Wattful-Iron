@@ -468,6 +468,7 @@ export default function App() {
           <button className="build-button history-button" disabled={!project} onClick={() => setHistoryDialogOpen(true)}>History</button>
           <button className="build-button" disabled={!project?.referencePdfs?.length} onClick={() => setReferencePdfOpen(true)}>PDF reference</button>
           <button className="build-button manufacturing-button" disabled={!project} onClick={() => setManufacturingDialogOpen(true)}>Rule checks · Manufacturing</button>
+          {source.includes('ImportedBoard') && projectFiles.some((file) => /^imports\/[^/]+\.json$/i.test(file)) && <button className="build-button" disabled={!project || dirty} onClick={() => void createPcbDraft()}>Refresh component names</button>}
           <button className="build-button" disabled={!project || build.status === 'compiling'} onClick={runBuild}><span>▶</span> Build</button>
         </div>
       </header>

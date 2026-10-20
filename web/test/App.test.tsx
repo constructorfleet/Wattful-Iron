@@ -129,6 +129,17 @@ describe('workbench', () => {
     await waitFor(() => expect(api.generatePcbDraft).toHaveBeenCalledWith('led-1', 'rev-1'))
   })
 
+  it('lets existing EasyEDA PCB drafts refresh component names from the retained source', async () => {
+    api.getProjectFiles.mockResolvedValue(['index.circuit.tsx', 'imports/SCH_Hunter.json', 'package.json'])
+    api.getProjectFile.mockResolvedValueOnce({ path: 'index.circuit.tsx', content: 'export const ImportedBoard = () => <board />', revision: 'rev-1' })
+    api.generatePcbDraft.mockResolvedValue({ revision: 'rev-2', placements: 27 })
+    api.getProjectFile.mockResolvedValue({ path: 'index.circuit.tsx', content: 'export const ImportedBoard = () => <board />', revision: 'rev-2' })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Refresh component names' }))
+    await waitFor(() => expect(api.generatePcbDraft).toHaveBeenCalledWith('led-1', 'rev-1'))
+  })
+
   it('duplicates a project into a separate editable project', async () => {
     const duplicate = { ...existingProject, id: 'copy-1', name: 'LED Board copy', revision: 'copy-rev-1' }
     api.duplicateProject.mockResolvedValue(duplicate)

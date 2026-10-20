@@ -34,7 +34,7 @@ test("imports EasyEDA Standard schematics into editable source and preserves the
     const generated = await request(app).post(`/api/projects/${imported.body.project.id}/generate-pcb`).set("If-Match", imported.body.project.revision).expect(200)
     assert.ok(generated.body.placements > 0)
     const boardSource = await request(app).get(`/api/projects/${imported.body.project.id}/files`).query({ path: "index.circuit.tsx" }).expect(200)
-    assert.match(boardSource.body.content, /<chip name="R1"/)
+    assert.match(boardSource.body.content, /<chip name="[A-Z]+\d+"/)
     assert.match(boardSource.body.content, /<schematicline/)
     const pcb = await request(app).get(`/api/projects/${imported.body.project.id}/preview`).query({ kind: "pcb" }).expect(200)
     assert.ok(pcb.body.circuitJson.some((item: { type: string }) => item.type === "pcb_component"))

@@ -16,6 +16,7 @@ import { parseRequirements, validateRequirements } from "./requirements.js"
 import { runCommand } from "./build-process.js"
 import { executeRemoteBuild, type IsolatedBuildResult } from "./build-client.js"
 import { withGeneratedPcbDraft } from "./pcb-draft.js"
+import { convertEasyedaFileToCircuit, enrichEasyedaComponentMetadata } from "./easyeda-component-metadata.js"
 
 export type Diagnostic = { severity: "error" | "warning" | "info"; message: string; path?: string; line?: number; column?: number }
 type BuildStatus = "idle" | "compiling" | "ready" | "failed"
@@ -197,6 +198,7 @@ class ProjectService {
   async importSchematics(name: string, files: Array<{ name: string; content: string }>) {
     const converter = new KicadToCircuitJsonConverter()
     const importWarnings: string[] = []
+    const easyedaDocuments: unknown[] = []
     let conversionDir: string | undefined
     try {
       for (const file of files) {
@@ -211,6 +213,7 @@ class ProjectService {
         if (document.docType !== "5" || !Array.isArray(document.schematics) || document.schematics.length === 0 || !document.schematics[0] || typeof document.schematics[0] !== "object") {
           throw badRequest(`File ${file.name} is not an EasyEDA Standard schematic document (expected docType 5 with at least one sheet)`)
         }
+        easyedaDocuments.push(document)
         importWarnings.push(`${file.name} contains schematic sheets only; PCB placement and 3D geometry are not present in this file.`)
         try {
           const [converted] = convertSchematicV6(document as never, 1, path.basename(file.name, path.extname(file.name)))
@@ -235,7 +238,7 @@ class ProjectService {
     } finally {
       if (conversionDir) await rm(conversionDir, { recursive: true, force: true })
     }
-    const circuitJson = converter.getOutput()
+    const circuitJson = enrichEasyedaComponentMetadata(converter.getOutput(), easyedaDocuments) as ReturnType<typeof converter.getOutput>
     const sourceComponents = circuitJson.filter((item) => item.type === "source_component").length
     if (!sourceComponents) throw badRequest("No schematic components could be imported; check that the files contain supported KiCad symbols")
     let generated: string
@@ -352,8 +355,14 @@ class ProjectService {
       const state = this.state(id)
       this.assertRevision(state.project, expectedRevision)
       let original: unknown
-      try { original = JSON.parse(await readFile(path.join(this.projectDir(id), ".workbench", "imported-circuit.json"), "utf8")) }
-      catch { throw badRequest("PCB draft generation is available for imported schematics") }
+      try { original = JSON.parse(await readFile(path.join(this.projectDir(id), ".workbench", "imported-circuit.json"), "utf8")) } catch { /* Rebuild it from the retained source below. */ }
+      const easyedaPath = (await this.getFileList(id)).find((file) => /^imports\/[^/]+\.json$/i.test(file))
+      const alreadyHasPcb = Array.isArray(original) && original.some((item) => (item as { type?: string }).type === "pcb_component")
+      if (easyedaPath && (!Array.isArray(original) || alreadyHasPcb)) {
+        try { original = await convertEasyedaFileToCircuit(path.basename(easyedaPath), await readFile(await this.safeFile(id, easyedaPath, false), "utf8"), this.kicadCliPath) }
+        catch (error) { throw badRequest(`Unable to refresh EasyEDA component metadata: ${error instanceof Error ? error.message : "conversion failed"}`) }
+      }
+      if (!Array.isArray(original)) throw badRequest("PCB draft generation is available for imported schematics")
       let draft: ReturnType<typeof withGeneratedPcbDraft>
       try { draft = withGeneratedPcbDraft(original) }
       catch (error) { throw badRequest(error instanceof Error ? error.message : "Unable to generate PCB draft") }

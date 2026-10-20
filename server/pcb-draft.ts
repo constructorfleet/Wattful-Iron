@@ -6,12 +6,10 @@ const refPattern = /^[A-Z]+\d+$/
 export function withGeneratedPcbDraft(input: unknown): { circuitJson: Item[]; placements: number } {
   if (!Array.isArray(input)) throw new Error("Imported schematic data is unavailable")
   const circuit = input as Item[]
-  const components = circuit.filter((item) => item.type === "source_component")
+  const components = circuit.filter((item) => item.type === "source_component" && !/Powerflag_/i.test(String(item.name ?? "")))
   if (!components.length) throw new Error("No schematic components are available to place")
   if (circuit.some((item) => item.type === "pcb_component")) throw new Error("PCB placements already exist")
   const symbols = circuit.filter((item) => item.type === "schematic_component")
-  const labels = circuit.filter((item) => item.type === "schematic_text" && refPattern.test(item.text ?? ""))
-  const usedRefs = new Set<string>()
   const placements: Item[] = []
   const ports: Item[] = []
   const pads: Item[] = []
@@ -25,11 +23,8 @@ export function withGeneratedPcbDraft(input: unknown): { circuitJson: Item[]; pl
     const id = String(component.source_component_id)
     const symbol = symbols.find((item) => item.source_component_id === id)
     const center = symbol?.center ?? { x: 0, y: 0 }
-    const nearest = labels.filter((item) => !usedRefs.has(item.text)).sort((a, b) =>
-      Math.hypot(a.position.x - center.x, a.position.y - center.y) - Math.hypot(b.position.x - center.x, b.position.y - center.y))[0]
     const prefix = component.ftype === "simple_resistor" ? "R" : component.ftype === "simple_capacitor" ? "C" : component.ftype === "simple_diode" ? "D" : "U"
-    const ref = nearest?.text ?? `${prefix}${index + 1}`
-    usedRefs.add(ref)
+    const ref = refPattern.test(component.name ?? "") ? component.name : `${prefix}${index + 1}`
     refdesBySourceId.set(id, ref)
     const pcbId = `generated_pcb_component_${index}`
     pcbIds.set(id, pcbId)
@@ -46,11 +41,15 @@ export function withGeneratedPcbDraft(input: unknown): { circuitJson: Item[]; pl
       pads.push({ type: "pcb_smtpad", pcb_smtpad_id: `${pcbId}_pad_${portIndex}`, pcb_port_id: portId, pcb_component_id: pcbId, shape: "rect", x: px, y: py, width: padWidth, height: 1.8, layer: "top", port_hints: [String(sourcePort.pin_number ?? sourcePort.name ?? portIndex + 1)] })
     })
     placements.push({ type: "pcb_component", pcb_component_id: pcbId, source_component_id: id, center: { x, y }, width: 4, height: 4, rotation: 0, layer: "top" })
-    labels.push({ type: "schematic_text", text: ref, position: center })
   })
   const board = { type: "pcb_board", pcb_board_id: "generated_pcb_board", center: { x: 0, y: 0 }, width, height, thickness: 1.6, num_layers: 2, material: "fr4" }
   const namedCircuit = circuit.map((item) => item.type === "source_component" && refdesBySourceId.has(String(item.source_component_id))
-    ? { ...item, name: refdesBySourceId.get(String(item.source_component_id)) }
+    ? {
+        ...item,
+        name: refdesBySourceId.get(String(item.source_component_id)),
+        display_name: item.display_name ?? symbols.find((symbol) => symbol.source_component_id === item.source_component_id)?.symbol_display_value ?? item.manufacturer_part_number,
+        display_value: item.display_value ?? symbols.find((symbol) => symbol.source_component_id === item.source_component_id)?.symbol_display_value,
+      }
     : item)
   return { circuitJson: [...namedCircuit, board, ...placements, ...ports, ...pads], placements: placements.length }
 }
