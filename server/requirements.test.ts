@@ -42,3 +42,29 @@ test("reports a known mismatch as failed even if another board omits the propert
   ])
   assert.equal(result.checks[0]?.status, "fail")
 })
+
+test("validates explicit required component references and named nets", () => {
+  const requirements = parseRequirements(JSON.stringify({ version: 1, requirements: {
+    components: ["U1", "R7"],
+    nets: ["GND", "SDA"],
+  } }))
+  const result = validateRequirements(requirements, [
+    { type: "source_component", name: "U1" },
+    { type: "source_trace", name: "GND" },
+  ])
+  assert.deepEqual(result.checks.map(({ id, status }) => [id, status]), [
+    ["component-U1", "pass"], ["component-R7", "fail"], ["net-GND", "pass"], ["net-SDA", "fail"],
+  ])
+  assert.deepEqual([result.passed, result.failed], [2, 2])
+})
+
+test("does not pass required references when Circuit JSON evidence is absent", () => {
+  const requirements = parseRequirements(JSON.stringify({ version: 1, requirements: { components: ["U1"], nets: ["GND"] } }))
+  const result = validateRequirements(requirements, undefined)
+  assert.deepEqual(result.checks.map(({ status }) => status), ["not-evaluated", "not-evaluated"])
+})
+
+test("rejects malformed required component references and nets", () => {
+  assert.throws(() => parseRequirements(JSON.stringify({ version: 1, requirements: { components: [" "] } })), /requirements/i)
+  assert.throws(() => parseRequirements(JSON.stringify({ version: 1, requirements: { nets: ["GND", "GND"] } })), /requirements/i)
+})

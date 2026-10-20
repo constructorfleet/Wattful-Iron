@@ -109,7 +109,11 @@ test("MCP exposes read-only inspection of components, nets, pins, routes, and bo
 })
 
 test("MCP reads and validates versioned project requirements", async () => {
-  const fixture = await makeFixture(async () => [{ type: "pcb_board", width: 50, height: 35, num_layers: 4 }])
+  const fixture = await makeFixture(async () => [
+    { type: "pcb_board", width: 50, height: 35, num_layers: 4 },
+    { type: "source_component", name: "U1" },
+    { type: "source_trace", name: "GND" },
+  ])
   const server = createServer(fixture.app)
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
   const address = server.address()
@@ -125,7 +129,7 @@ test("MCP reads and validates versioned project requirements", async () => {
     const initial = readResult<{ revision: string }>(await client.callTool({ name: "get_project", arguments: { projectId: project.id } }))
     await client.callTool({ name: "update_project_file", arguments: {
       projectId: project.id, path: "requirements.json", revision: initial.revision,
-      content: JSON.stringify({ version: 1, requirements: { board: { width_mm: 50, height_mm: 35, layers: 4 }, power: { voltage: 5 } } }),
+      content: JSON.stringify({ version: 1, requirements: { board: { width_mm: 50, height_mm: 35, layers: 4 }, components: ["U1"], nets: ["GND", "SDA"], power: { voltage: 5 } } }),
     } })
     const build = readResult<{ status: string }>(await client.callTool({ name: "build_project", arguments: { projectId: project.id } }))
     assert.equal(build.status, "ready")
@@ -134,7 +138,7 @@ test("MCP reads and validates versioned project requirements", async () => {
     assert.equal(requirements.requirements.requirements.board.width_mm, 50)
     const validation = readResult<{ stale: boolean; checks: Array<{ id: string; status: string }> }>(await client.callTool({ name: "validate_project_requirements", arguments: { projectId: project.id } }))
     assert.equal(validation.stale, false)
-    assert.deepEqual(validation.checks.map(({ status }) => status), ["pass", "pass", "pass", "not-evaluated"])
+    assert.deepEqual(validation.checks.map(({ status }) => status), ["pass", "pass", "pass", "pass", "pass", "fail", "not-evaluated"])
   } finally {
     await client.close()
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
