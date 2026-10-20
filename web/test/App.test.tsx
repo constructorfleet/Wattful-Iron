@@ -169,6 +169,26 @@ describe('workbench', () => {
     expect(await screen.findByTestId('pcb-viewer')).toHaveAttribute('data-circuit-types', 'pcb_board,pcb_component')
   })
 
+  it('inspects component properties, stable ID, PCB placement, and connected nets from the build', async () => {
+    api.getPreview.mockResolvedValue({ kind: 'schematic', revision: 'rev-1', circuitJson: [
+      { type: 'source_component', source_component_id: 'sc-r1', name: 'R1', ftype: 'simple_resistor', resistance: 1000 },
+      { type: 'source_port', source_port_id: 'sp-r1-1', source_component_id: 'sc-r1', name: 'pin1', pin_number: 1 },
+      { type: 'source_trace', source_trace_id: 'st-vcc', name: 'VCC', connected_source_port_ids: ['sp-r1-1'] },
+      { type: 'pcb_component', source_component_id: 'sc-r1', center: { x: 2, y: 3 }, rotation: 90, layer: 'top' },
+    ] })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Components 1/ }))
+
+    expect(screen.getByRole('complementary', { name: 'Component inspector' })).toBeInTheDocument()
+    expect(screen.getByText('sc-r1')).toBeInTheDocument()
+    expect(screen.getByText('simple_resistor')).toBeInTheDocument()
+    expect(screen.getByText('VCC')).toBeInTheDocument()
+    expect(screen.getByText('{"x":2,"y":3}')).toBeInTheDocument()
+    expect(screen.getByText(/Canvas highlighting is not available in the current viewer/)).toBeInTheDocument()
+  })
+
   it('runs simulation by rebuilding current source and shows emitted waveform results', async () => {
     api.saveProjectFile.mockResolvedValue({ path: 'index.tsx', content: 'export default () => <board name="updated" />', revision: 'rev-2' })
     api.getPreview.mockResolvedValue({ kind: 'schematic', revision: 'rev-2', circuitJson: [] })

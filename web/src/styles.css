@@ -93,8 +93,31 @@ button { color: inherit; cursor: pointer; }
 .view-tab.active { color: #eaf1ed; }
 .view-tab.active::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--accent); content: ''; }
 .preview-meta { color: #727d87; font: 9px var(--mono); }
+.inspector-toggle { align-self: center; display: flex; align-items: center; gap: 6px; height: 25px; margin-left: auto; padding: 0 8px; color: #9ca9a3; border: 1px solid #303b36; border-radius: 4px; background: #1a211e; font-size: 9px; }
+.inspector-toggle:hover,.inspector-toggle.active { color: #d8e8df; border-color: #4c6e5a; background: #202d26; }
+.inspector-toggle span { color: #72d4af; font: 9px var(--mono); }
 .preview-content { position: relative; flex: 1; min-height: 0; overflow: hidden; background-color: #15191e; background-image: radial-gradient(#293039 0.65px, transparent 0.65px); background-size: 15px 15px; }
 .preview-content > div { height: 100%; }
+.component-inspector { position: absolute; z-index: 3; top: 10px; right: 10px; bottom: 10px; display: flex; width: min(310px, calc(100% - 20px)); flex-direction: column; overflow: hidden auto; color: #cbd5d9; border: 1px solid #39454a; border-radius: 6px; background: #171d21f5; box-shadow: 0 10px 30px #0008; }
+.component-inspector > header { position: sticky; z-index: 1; top: 0; display: flex; align-items: center; justify-content: space-between; padding: 11px 12px; border-bottom: 1px solid #2c363c; background: #1b2227; }
+.component-inspector > header h2 { margin: 0 0 3px; color: #e1e9e5; font-size: 12px; }
+.component-inspector > header span,.inspector-note { color: #7f8d94; font: 9px var(--mono); }
+.component-inspector > header button { color: #a1adb6; border: 0; background: transparent; font-size: 20px; }
+.inspector-select { display: flex; flex-direction: column; gap: 5px; margin: 11px 12px 2px; color: #929fa5; font-size: 9px; }
+.inspector-select select { height: 30px; padding: 0 7px; color: #dce5e0; border: 1px solid #3b464f; border-radius: 4px; background: #12171b; font: 10px var(--mono); }
+.inspector-section { padding: 10px 12px; border-bottom: 1px solid #283137; }
+.inspector-section h3 { margin: 0 0 8px; color: #72d4af; font: 9px var(--mono); text-transform: uppercase; }
+.inspector-section > p,.inspector-empty { margin: 0; color: #859199; font-size: 9px; line-height: 1.5; }
+.inspector-section dl { display: grid; grid-template-columns: minmax(66px, .7fr) minmax(0, 1.3fr); gap: 5px 8px; margin: 0; font-size: 9px; line-height: 1.4; }
+.inspector-section dt { color: #829097; overflow-wrap: anywhere; }
+.inspector-section dd { min-width: 0; margin: 0; color: #c5d0d4; overflow-wrap: anywhere; }
+.inspector-section code,.inspector-pin code { color: #a9b8bc; font: 8px var(--mono); overflow-wrap: anywhere; }
+.inspector-pin { display: grid; gap: 3px; padding: 7px 0; border-top: 1px solid #252e34; font-size: 9px; }
+.inspector-pin:first-of-type { border-top: 0; padding-top: 0; }
+.inspector-pin strong { color: #d2ddd9; font-weight: 500; }
+.inspector-pin span { color: #72d4af; font: 9px var(--mono); overflow-wrap: anywhere; }
+.inspector-note { padding: 10px 12px; line-height: 1.5; }
+.inspector-empty { padding: 16px 12px; }
 .circuit-preview [role="tablist"] { display: none; }
 .pcb-preview { min-height: 620px; height: 100%; overflow: hidden; }
 .preview-loading { display: grid; height: 100%; place-items: center; color: #87918c; font: 11px var(--mono); }
