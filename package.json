@@ -18,6 +18,7 @@
     "circuit-json-to-connectivity-map": "0.0.33",
     "circuit-json-to-tscircuit": "0.0.93",
     "express": "5.1.0",
+    "fflate": "0.8.3",
     "kicad-to-circuit-json": "0.0.142",
     "react": "19.1.0",
     "three": "0.179.1",

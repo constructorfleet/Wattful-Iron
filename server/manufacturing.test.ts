@@ -1,9 +1,11 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { spawn } from "node:child_process"
 import test from "node:test"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import { unzipSync, zipSync } from "fflate"
 import express from "express"
 import request from "supertest"
 import { checkManufacturability, cleanupManufacturingArchive, createGerberArchive, mountManufacturingRoutes } from "./manufacturing.js"
@@ -129,6 +131,7 @@ test("manufacturing preflight endpoint returns current build checks", async () =
     get: async () => ({ name: "Manufacturing project", revision: "rev-1", previewRevision: "rev-1", lastBuild: { status: "ready", revision: "rev-1" } }),
     preview: async () => ({ revision: "rev-1", circuitJson: elements }),
     exportGerbers: async () => { throw new Error("not expected") },
+    getSnapshotFiles: async () => [],
   })
   const response = await request(app).get("/api/projects/project-id/manufacturing").expect(200)
   assert.equal(response.body.projectRevision, "rev-1")
@@ -145,6 +148,7 @@ test("manufacturing profiles include JLCPCB rigid two-layer one-ounce limits", a
     get: async () => ({ revision: "rev-1" }),
     preview: async () => ({ revision: "rev-1", circuitJson: [] }),
     exportGerbers: async () => { throw new Error("not expected") },
+    getSnapshotFiles: async () => [],
   })
   const response = await request(app).get("/api/manufacturing/profiles").expect(200)
   const profile = response.body.profiles.find((item: { id: string }) => item.id === "jlcpcb-2layer-1oz")
@@ -226,6 +230,7 @@ test("manufacturing download returns the verified CLI ZIP", async () => {
       get: async () => ({ name: "Fab test", revision: "rev-1", lastBuild: { status: "ready", revision: "rev-1" } }),
       preview: async () => ({ revision: "rev-1", circuitJson: elements }),
       exportGerbers: () => createGerberArchive(projectDir, "index.circuit.tsx"),
+      getSnapshotFiles: async () => [],
     })
     const response = await request(app).get("/api/projects/project-id/manufacturing.zip")
       .buffer(true)
@@ -251,6 +256,7 @@ test("manufacturing download does not export when preflight fails", async () => 
     get: async () => ({ revision: "rev-2", lastBuild: { status: "failed", revision: "rev-1" } }),
     preview: async () => ({ revision: "rev-1", circuitJson: elements }),
     exportGerbers: async () => { exportCalled = true; throw new Error("should not export") },
+    getSnapshotFiles: async () => [],
   })
   const response = await request(app).get("/api/projects/project-id/manufacturing.zip").expect(422)
   assert.equal(exportCalled, false)
@@ -264,16 +270,58 @@ test("manufacturing download applies the selected profile before exporting", asy
     get: async () => ({ revision: "rev-1", lastBuild: { status: "ready", revision: "rev-1" } }),
     preview: async () => ({ revision: "rev-1", circuitJson: [...elements, { type: "pcb_hole", hole_shape: "circle", hole_diameter: 0.4 }] }),
     exportGerbers: async () => { exportCalled = true; return "/tmp/never.zip" },
+    getSnapshotFiles: async () => [],
   })
   const response = await request(app).get("/api/projects/project-id/manufacturing.zip?profile=jlcpcb-2layer-1oz").expect(422)
   assert.equal(exportCalled, false)
   assert.equal(response.body.preflight.profile.id, "jlcpcb-2layer-1oz")
 })
 
+test("manufacturing ZIP contains a revisioned provenance manifest with artifact checksums", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "circuits-fab-manifest-"))
+  const archive = path.join(tempDir, "manufacturing.zip")
+  const gerber = Buffer.from("gerber-artifact")
+  const bom = Buffer.from("Reference,Value\\nR1,1k\\n")
+  await writeFile(archive, zipSync({ "F_Cu.gbr": gerber, "bom.csv": bom }, { level: 0 }))
+  const app = express()
+  mountManufacturingRoutes(app, {
+    get: async () => ({ id: "project-id", name: "Snapshot board", revision: "rev-1", lastBuild: { status: "ready", revision: "rev-1" } }),
+    preview: async () => ({ revision: "rev-1", circuitJson: elements.map((item) => item.type === "source_component" ? { ...item, manufacturer_part_number: "RES-1K" } : item) }),
+    exportGerbers: async () => archive,
+    getSnapshotFiles: async () => [
+      { path: "index.circuit.tsx", content: "export default () => <board />" },
+      { path: "package.json", content: JSON.stringify({ dependencies: { tscircuit: "0.0.2930" } }) },
+      { path: "package-lock.json", content: JSON.stringify({ lockfileVersion: 3, packages: { "": {}, "node_modules/tscircuit": { version: "0.0.2930" } } }) },
+    ],
+  })
+  try {
+    const response = await request(app).get("/api/projects/project-id/manufacturing.zip")
+      .buffer(true)
+      .parse((res, callback) => {
+        const chunks: Buffer[] = []
+        res.on("data", (chunk: Buffer) => chunks.push(chunk))
+        res.on("end", () => callback(null, Buffer.concat(chunks)))
+      })
+      .expect(200)
+    const entries = unzipSync(new Uint8Array(response.body))
+    const manifest = JSON.parse(Buffer.from(entries["snapshot-manifest.json"]!).toString("utf8"))
+    assert.deepEqual(manifest.project, { id: "project-id", name: "Snapshot board", revision: "rev-1" })
+    assert.equal(manifest.source.files[0].sha256, createHash("sha256").update("export default () => <board />").digest("hex"))
+    assert.equal(manifest.dependencies.resolved.tscircuit, "0.0.2930")
+    assert.equal(manifest.bom_artifact, "bom.csv")
+    assert.equal(manifest.checksum_scope, "all files in archive except snapshot-manifest.json")
+    assert.equal(manifest.components[0].manufacturer_part_number, "RES-1K")
+    assert.equal(manifest.validation.checks.length > 0, true)
+    assert.equal(manifest.simulation.status, "not_configured")
+    assert.equal(manifest.artifacts.find((item: { path: string }) => item.path === "bom.csv").sha256, createHash("sha256").update(bom).digest("hex"))
+    assert.equal(entries["F_Cu.gbr"]?.byteLength, gerber.byteLength)
+  } finally { await rm(tempDir, { recursive: true, force: true }) }
+})
+
 test("manufacturing download rejects a project revision change and cleans its temporary ZIP", async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "circuits-fab-race-"))
   const archive = path.join(tempDir, "manufacturing.zip")
-  await writeFile(archive, "test archive")
+  await writeFile(archive, zipSync({ "F_Cu.gbr": Buffer.from("gerber") }, { level: 0 }))
   let getCount = 0
   const app = express()
   mountManufacturingRoutes(app, {
@@ -282,6 +330,7 @@ test("manufacturing download rejects a project revision change and cleans its te
       : { name: "Fab test", revision: "rev-2", lastBuild: { status: "ready", revision: "rev-1" } },
     preview: async () => ({ revision: "rev-1", circuitJson: elements }),
     exportGerbers: async () => archive,
+    getSnapshotFiles: async () => [],
   })
   app.use((error: Error & { status?: number }, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     response.status(error.status ?? 500).json({ error: error.message })

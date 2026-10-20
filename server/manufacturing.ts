@@ -1,8 +1,12 @@
 import { spawn } from "node:child_process"
-import { mkdtemp, realpath, rm } from "node:fs/promises"
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { Express } from "express"
+import { unzipSync, zipSync } from "fflate"
+import { createHash } from "node:crypto"
+import { writeFile } from "node:fs/promises"
+import { getSimulationResults } from "./simulation.js"
 
 export type BuildState = { status: string; revision: string; diagnostics?: unknown[] }
 export type ManufacturingCheck = { id: string; status: "pass" | "fail" | "warning" | "not-evaluated"; message: string }
@@ -23,6 +27,8 @@ type ManufacturingService = {
   get(id: string): Promise<ManufacturingProject>
   preview(id: string): Promise<{ revision: string; circuitJson: unknown }>
   exportGerbers(id: string): Promise<string>
+  getSnapshotFiles(id: string): Promise<Array<{ path: string; content: string }>>
+  getSnapshotFiles(id: string): Promise<Array<{ path: string; content: string }>>
 }
 
 const records = (json: unknown) => Array.isArray(json) ? json.filter(isRecord) : []
@@ -104,6 +110,8 @@ export function mountManufacturingRoutes(app: Express, service: ManufacturingSer
       const preflight = checkManufacturability(preview.circuitJson, project.lastBuild ?? { status: "idle", revision: "" }, preview.revision, project.revision, profileId)
       if (!preflight.ready) return response.status(422).json({ error: "Manufacturing preflight failed", projectRevision: project.revision, preflight })
       archive = await service.exportGerbers(request.params.id!)
+      const sourceFiles = await service.getSnapshotFiles(request.params.id!)
+      await addSnapshotManifest(archive, createSnapshotManifest(project, preview, preflight, sourceFiles))
       const current = await service.get(request.params.id!)
       if (current.revision !== project.revision) throw Object.assign(new Error("Project changed while manufacturing files were generated"), { status: 409, revision: current.revision })
       const filename = `${safeFilename(project.name ?? "circuit")}-manufacturing.zip`
@@ -116,6 +124,58 @@ export function mountManufacturingRoutes(app: Express, service: ManufacturingSer
       next(error)
     }
   })
+}
+
+function createSnapshotManifest(project: ManufacturingProject, preview: { revision: string; circuitJson: unknown }, preflight: ManufacturingPreflight, sourceFiles: Array<{ path: string; content: string }>) {
+  const files = [...sourceFiles].sort((first, second) => first.path.localeCompare(second.path))
+  const packageJson = readJsonFile(files, "package.json")
+  const lock = readJsonFile(files, "package-lock.json")
+  const resolved = isRecord(lock) && isRecord(lock.packages)
+    ? Object.fromEntries(Object.entries(lock.packages).flatMap(([name, value]) => name.startsWith("node_modules/") && !name.slice("node_modules/".length).includes("/node_modules/") && isRecord(value) && typeof value.version === "string" ? [[name.slice("node_modules/".length), value.version]] : []))
+    : {}
+  const items = records(preview.circuitJson)
+  const components = items.filter((item) => item.type === "source_component").map((component) => Object.fromEntries(
+    ["source_component_id", "name", "manufacturer", "manufacturer_part_number", "ftype", "footprint", "package", "version"]
+      .flatMap((key) => component[key] === undefined ? [] : [[key, component[key]]]),
+  ))
+  return {
+    manifest_version: 1,
+    generated_at: new Date().toISOString(),
+    project: { id: project.id ?? null, name: project.name ?? null, revision: project.revision },
+    source: { revision: project.revision, files: files.map(({ path: filePath, content }) => ({ path: filePath, sha256: sha256(content) })) },
+    dependencies: {
+      declared: isRecord(packageJson) && isRecord(packageJson.dependencies) ? packageJson.dependencies : {},
+      declared_dev: isRecord(packageJson) && isRecord(packageJson.devDependencies) ? packageJson.devDependencies : {},
+      resolved,
+    },
+    components,
+    validation: { ready: preflight.ready, profile: preflight.profile, checks: preflight.checks },
+    simulation: getSimulationResults(preview.circuitJson),
+  }
+}
+
+async function addSnapshotManifest(archive: string, manifest: Record<string, unknown>) {
+  const entries = unzipSync(await readFile(archive))
+  const manifestPath = "snapshot-manifest.json"
+  if (entries[manifestPath]) throw new Error(`Manufacturing export already contains ${manifestPath}`)
+  const artifacts = Object.entries(entries)
+    .filter(([entryPath]) => !entryPath.endsWith("/"))
+    .sort(([first], [second]) => first.localeCompare(second))
+    .map(([entryPath, content]) => ({ path: entryPath, size_bytes: content.byteLength, sha256: sha256(content) }))
+  const bomArtifact = artifacts.find(({ path: artifactPath }) => path.posix.basename(artifactPath).toLowerCase() === "bom.csv")?.path ?? null
+  const complete = { ...manifest, bom_artifact: bomArtifact, checksum_scope: "all files in archive except snapshot-manifest.json", artifacts }
+  entries[manifestPath] = new TextEncoder().encode(JSON.stringify(complete, null, 2) + "\n")
+  await writeFile(archive, zipSync(entries, { level: 0 }))
+}
+
+function readJsonFile(files: Array<{ path: string; content: string }>, filename: string) {
+  const file = files.find(({ path: filePath }) => filePath === filename)
+  if (!file) return undefined
+  try { return JSON.parse(file.content) as unknown } catch { return undefined }
+}
+
+function sha256(value: string | Uint8Array) {
+  return createHash("sha256").update(value).digest("hex")
 }
 
 function readProfileId(value: unknown, response: import("express").Response) {
