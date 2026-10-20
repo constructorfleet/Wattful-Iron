@@ -210,6 +210,7 @@ class ProjectService {
         if (document.docType !== "5" || !Array.isArray(document.schematics) || document.schematics.length === 0 || !document.schematics[0] || typeof document.schematics[0] !== "object") {
           throw badRequest(`File ${file.name} is not an EasyEDA Standard schematic document (expected docType 5 with at least one sheet)`)
         }
+        importWarnings.push(`${file.name} contains schematic sheets only; PCB placement and 3D geometry are not present in this file.`)
         try {
           const [converted] = convertSchematicV6(document as never, 1, path.basename(file.name, path.extname(file.name)))
           if (!converted?.trim()) throw new Error("converter returned an empty schematic")

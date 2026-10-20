@@ -116,6 +116,14 @@ describe('workbench', () => {
     expect(screen.getByRole('tab', { name: '3D' })).toBeInTheDocument()
   })
 
+  it('explains when the selected project has schematic data but no PCB layout', async () => {
+    api.getPreview.mockResolvedValue({ kind: 'pcb', revision: 'rev-1', circuitJson: [{ type: 'schematic_component' }] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'PCB' }))
+    expect(await screen.findByText('This EasyEDA import contains a schematic only. Import a matching EasyEDA PCB layout or add PCB placements and footprints to the project source.')).toBeInTheDocument()
+  })
+
   it('duplicates a project into a separate editable project', async () => {
     const duplicate = { ...existingProject, id: 'copy-1', name: 'LED Board copy', revision: 'copy-rev-1' }
     api.duplicateProject.mockResolvedValue(duplicate)

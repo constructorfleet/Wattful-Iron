@@ -1,6 +1,7 @@
 import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Editor from '@monaco-editor/react'
 import { configureMonaco } from './configureMonaco'
+import { hasPcbPreviewData } from './previewAvailability'
 import { getInspectedComponents } from './componentInspector'
 import {
   compareProjectRevisions,
@@ -426,6 +427,7 @@ export default function App() {
   }
 
   const statusText = build.status === 'idle' ? 'Idle' : build.step || build.status[0].toUpperCase() + build.status.slice(1)
+  const hasPcbPreview = hasPcbPreviewData(preview)
 
   useEffect(() => {
     if (project && view === 'simulation') getSimulation(project.id).then(setSimulation).catch(() => setSimulation(null))
@@ -515,7 +517,11 @@ export default function App() {
           </div>
           <div className="preview-content">
             {build.status === 'failed' && view !== 'simulation' && <div className="build-errors" role="alert"><div className="error-title"><span>!</span> Build failed</div>{build.diagnostics?.length ? build.diagnostics.map((diagnostic, index) => { const path = diagnostic.path || diagnostic.file; return <div className="diagnostic" key={`${path}-${diagnostic.line}-${index}`}><strong>{path}{diagnostic.line ? `:${diagnostic.line}` : ''}</strong><span>{diagnostic.message}</span></div> }) : <p>Check the source and build output for details.</p>}</div>}
-            {view === 'simulation' ? <SimulationPanel simulation={simulation} build={build} canRun={Boolean(project)} onRun={() => { setSimulation(null); void runBuild() }} /> : preview ? view === 'pcb' ? <Suspense fallback={<div className="preview-loading">Loading PCB preview…</div>}><PcbPreview circuitJson={preview as PcbCircuitJson} /></Suspense> : <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview className="circuit-preview" key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={view === '3d' ? 'cad' : view} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : <div className="preview-placeholder">
+            {view === 'simulation' ? <SimulationPanel simulation={simulation} build={build} canRun={Boolean(project)} onRun={() => { setSimulation(null); void runBuild() }} /> : preview && (view === 'schematic' || hasPcbPreview) ? view === 'pcb' ? <Suspense fallback={<div className="preview-loading">Loading PCB preview…</div>}><PcbPreview circuitJson={preview as PcbCircuitJson} /></Suspense> : <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview className="circuit-preview" key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={view === '3d' ? 'cad' : view} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : preview ? <div className="preview-placeholder">
+              <div className="placeholder-board"><span className="board-edge edge-a" /><span className="board-edge edge-b" /><span className="board-chip chip-a" /><span className="board-chip chip-b" /><span className="board-pad pad-a" /><span className="board-pad pad-b" /><span className="board-route route-a" /><span className="board-route route-b" /></div>
+              <h2>{view === 'pcb' ? 'No PCB layout in this project' : 'No PCB data for 3D preview'}</h2>
+              <p>This EasyEDA import contains a schematic only. Import a matching EasyEDA PCB layout or add PCB placements and footprints to the project source.</p>
+            </div> : <div className="preview-placeholder">
               <div className="placeholder-board"><span className="board-edge edge-a" /><span className="board-edge edge-b" /><span className="board-chip chip-a" /><span className="board-chip chip-b" /><span className="board-pad pad-a" /><span className="board-pad pad-b" /><span className="board-route route-a" /><span className="board-route route-b" /></div>
               <h2>{project ? build.status === 'failed' ? 'Last good preview is unavailable' : 'Waiting for first build' : 'Your design workspace'}</h2>
               <p>{project ? build.status === 'failed' ? 'Fix the source and build again to update this view.' : 'Build the project to generate a schematic, PCB layout, and 3D preview.' : 'Create a project to see your design take shape.'}</p>
