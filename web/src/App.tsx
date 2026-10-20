@@ -563,7 +563,7 @@ export default function App() {
           <div className="project-list" aria-label="Project list">
             {loading ? <div className="sidebar-empty">Loading projects…</div> : projects.length === 0 ? <div className="sidebar-empty">Your projects will appear here.</div> : projects.map((item) => (
               <div key={item.id} className="project-row">
-                <button className={`project-item ${project?.id === item.id ? 'selected' : ''}`} onClick={() => void openProject(item)}>
+                <button className={`project-item ${project?.id === item.id ? 'selected' : ''}`} aria-label={`${item.name} ${item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : 'TSX project'}`} onClick={() => void openProject(item)}>
                   <span className="project-icon">▱</span><span className="project-item-copy"><strong>{item.name}</strong><small>{item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : 'TSX project'}</small></span>
                 </button>
                 <button className="project-action" aria-label={`Duplicate ${item.name}`} title="Duplicate project" disabled={duplicatingProjectId === item.id} onClick={() => void duplicateExistingProject(item)}>{duplicatingProjectId === item.id ? '…' : '⧉'}</button>
