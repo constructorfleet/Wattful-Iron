@@ -3,6 +3,7 @@ import Editor from '@monaco-editor/react'
 import { configureMonaco } from './configureMonaco'
 import { hasPcbPreviewData } from './previewAvailability'
 import { getInspectedComponents } from './componentInspector'
+import { WaveformViewer } from './WaveformViewer'
 import { applyBoardOutline, getBoardOutline, parseSvgOutline, validateBoardOutline, type BoardOutlinePoint } from './boardOutline'
 import {
   compareProjectRevisions,
@@ -756,22 +757,7 @@ function SimulationPanel({ simulation, build, canRun, onRun }: { simulation: Sim
     <div className="simulation-heading"><div><h2>Simulation</h2><span>Runs tscircuit's configured analog simulation</span></div><button className="build-button" disabled={!canRun || building} onClick={onRun}>{building ? 'Running simulation…' : 'Run simulation'}</button></div>
     {building ? <p className="simulation-message" aria-live="polite">Building with tscircuit…</p> : build.status === 'failed' ? <div className="simulation-message" role="alert"><strong>Build failed</strong>{build.diagnostics?.length ? build.diagnostics.map((item, index) => <p key={`${item.path ?? item.file}-${item.line}-${index}`}>{item.path || item.file}{item.line ? `:${item.line}` : ''}{item.path || item.file ? ': ' : ''}{item.message}</p>) : <p>Check the project source and build output for details.</p>}</div> : simulation?.status === 'failed' ? <div className="simulation-message" role="alert"><strong>Simulation failed</strong>{simulation.diagnostics.map((item) => <p key={item.message}>{item.message}</p>)}</div> : !simulation ? <p className="simulation-message">Run the current source to inspect its simulation results.</p> : simulation.status === 'not_configured' ? <div className="simulation-message"><strong>No simulation configured</strong><p>Add tscircuit <code>&lt;analogsimulation /&gt;</code> and voltage/current probes to the circuit source.</p></div> : <>
       <div className="simulation-heading"><h2>{simulation.experiments.map((item) => item.name).join(', ') || 'Simulation results'}</h2><span>{simulation.signals.length} signals · build {simulation.revision.slice(0, 8)}</span></div>
-    {simulation.signals.map((signal) => <div className="waveform" key={signal.id}><div className="waveform-label"><strong>{signal.name}</strong><span>{signal.netId ? `Net ${signal.netId}` : 'Unmapped net'} · {signal.unit}</span></div><svg viewBox="0 0 600 150" role="img" aria-label={`${signal.name} waveform`} preserveAspectRatio="none">
-      <path className="waveform-grid" d="M0 30H600M0 75H600M0 120H600M150 0V150M300 0V150M450 0V150" />
-      {signal.samples.length > 1 && <polyline className="waveform-line" points={waveformPoints(signal.samples)} />}
-    </svg><div className="waveform-axis"><span>{signal.samples[0]?.x ?? 0} ms</span><span>{signal.samples.at(-1)?.x ?? 0} ms</span><span>{signal.unit}</span></div></div>)}
+      <WaveformViewer key={simulation.revision} signals={simulation.signals} />
     </>}
   </div>
-}
-
-function waveformPoints(samples: Array<{ x: number; y: number }>) {
-  const xMin = samples[0]?.x ?? 0
-  const xMax = samples.at(-1)?.x ?? xMin
-  const values = samples.map((sample) => sample.y)
-  const yMin = Math.min(...values)
-  const yMax = Math.max(...values)
-  const xSpan = xMax - xMin || 1
-  const ySpan = yMax - yMin || 1
-  const stride = Math.max(1, Math.ceil(samples.length / 1500))
-  return samples.filter((_, index) => index % stride === 0 || index === samples.length - 1).map((sample) => `${((sample.x - xMin) / xSpan) * 600},${145 - ((sample.y - yMin) / ySpan) * 135}`).join(' ')
 }
