@@ -43,6 +43,7 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `run_simulation` | Build the current source and return transient SPICE results emitted by tscircuit, when configured. |
 | `get_simulation_results` | Read waveform data and probe/net information from the latest successful build. |
 | `check_manufacturability` | Run the same current-revision completeness checks used by the manufacturing download route. |
+| `get_manufacturing_package` | Return a `GET` path and `application/zip` content type for the preflight-gated manufacturing download route, optionally selecting a fabricator profile. |
 
 `update_project_file` requires the `revision` returned by `read_project_file`; stale writes return a tool error. `duplicate_project` also requires the current project revision and creates a fresh project history. There are no delete or component-ordering tools.
 
@@ -59,10 +60,13 @@ workbench does not implement a separate solver or expose every analysis type.
 board, reference, footprint, revision, supported tscircuit design, and selected
 fabricator-profile checks. It includes supported design-check findings and
 affected Circuit JSON element IDs. This is not full KiCad-equivalent ERC/DRC.
-The browser can download a
-preflight-approved manufacturing ZIP from
-`/api/projects/{projectId}/manufacturing.zip`; it contains Gerber/drill files,
-BOM, and pick-and-place data. The checks do not replace complete vendor rules
+`get_manufacturing_package` returns a relative download path, HTTP method, and
+content type. Fetch that path on the same workbench using the MCP bearer token;
+the download route reruns preflight, produces the ZIP with its provenance
+manifest, and rejects the download if the project revision changes during
+generation. Pass `profile=jlcpcb-2layer-1oz` to apply the JLCPCB two-layer
+profile, or omit it to use board defaults. The ZIP contains Gerber/drill files,
+BOM, and pick-and-place data. These checks do not replace complete vendor rules
 or manufacturing review.
 
 Projects can define engineering constraints in `requirements.json`. The

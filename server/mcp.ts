@@ -253,6 +253,20 @@ function createServer(service: ProjectService): McpServer {
     }
   }))
 
+  server.registerTool("get_manufacturing_package", {
+    title: "Get manufacturing package download reference",
+    description: "Return a machine-usable reference to the manufacturing ZIP download. Fetch the path with GET and the same bearer token; the download route reruns manufacturing preflight and rejects project revision changes.",
+    inputSchema: z.object({ projectId, profile: z.enum(["board-default", "jlcpcb-2layer-1oz"]).optional() }),
+  }, async ({ projectId, profile }) => {
+    const query = profile ? `?profile=${encodeURIComponent(profile)}` : ""
+    return result({
+      method: "GET",
+      path: `/api/projects/${projectId}/manufacturing.zip${query}`,
+      contentType: "application/zip",
+      generatedBy: "preflight-gated manufacturing download route",
+    })
+  })
+
 
   return server
 }

@@ -36,6 +36,7 @@ test("MCP clients can list and create projects through registered tools", async 
     assert.ok(tools.tools.some((tool) => tool.name === "list_projects"))
     assert.ok(tools.tools.some((tool) => tool.name === "duplicate_project"))
     assert.ok(tools.tools.some((tool) => tool.name === "check_manufacturability"))
+    assert.ok(tools.tools.some((tool) => tool.name === "get_manufacturing_package"))
     assert.ok(tools.tools.some((tool) => tool.name === "check_connectivity"))
     const created = await client.callTool({ name: "create_project", arguments: { name: "MCP board" } })
     assert.equal(created.isError, undefined)
@@ -49,6 +50,13 @@ test("MCP clients can list and create projects through registered tools", async 
     const listed = await client.callTool({ name: "list_projects", arguments: {} })
     const projects = JSON.parse(listed.content.find((item) => item.type === "text")?.text ?? "null")
     assert.deepEqual(projects.map((project: { id: string }) => project.id).sort(), [copy.id, payload.id].sort())
+    const packageReference = readResult<{ method: string; path: string; contentType: string; generatedBy: string }>(await client.callTool({
+      name: "get_manufacturing_package", arguments: { projectId: payload.id, profile: "jlcpcb-2layer-1oz" },
+    }))
+    assert.equal(packageReference.method, "GET")
+    assert.equal(packageReference.path, `/api/projects/${payload.id}/manufacturing.zip?profile=jlcpcb-2layer-1oz`)
+    assert.equal(packageReference.contentType, "application/zip")
+    assert.equal(packageReference.generatedBy, "preflight-gated manufacturing download route")
   } finally {
     await client.close()
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
