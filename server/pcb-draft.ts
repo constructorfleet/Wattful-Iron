@@ -22,7 +22,6 @@ export function withGeneratedPcbDraft(input: unknown): { circuitJson: Item[]; pl
   components.forEach((component, index) => {
     const id = String(component.source_component_id)
     const symbol = symbols.find((item) => item.source_component_id === id)
-    const center = symbol?.center ?? { x: 0, y: 0 }
     const prefix = component.ftype === "simple_resistor" ? "R" : component.ftype === "simple_capacitor" ? "C" : component.ftype === "simple_diode" ? "D" : "U"
     const ref = refPattern.test(component.name ?? "") ? component.name : `${prefix}${index + 1}`
     refdesBySourceId.set(id, ref)
