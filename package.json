@@ -22,7 +22,7 @@
     "express": "5.1.0",
     "fflate": "0.8.3",
     "kicad-to-circuit-json": "0.0.143",
-    "react": "19.1.0",
+    "react": "19.3.1",
     "three": "0.179.1",
     "tscircuit": "0.0.2930",
     "typescript": "5.8.3",
