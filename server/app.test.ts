@@ -161,6 +161,7 @@ test("project requirements are schema-validated, revisioned, and marked stale un
   const f = await fixture(async () => [{ type: "pcb_board", width: 50, height: 35, num_layers: 4 }])
   try {
     const { body: project } = await request(f.app).post("/api/projects").send({ name: "Requirements" }).expect(201)
+    await waitForBuild(f.app, project.id, "ready")
     const empty = await request(f.app).get(`/api/projects/${project.id}/requirements`).expect(200)
     assert.equal(empty.body.configured, false)
     const document = { version: 1, requirements: { board: { width_mm: 50, height_mm: 35, layers: 4 } } }
