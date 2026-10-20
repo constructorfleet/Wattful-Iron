@@ -19,7 +19,7 @@
     "circuit-json-to-connectivity-map": "0.0.33",
     "circuit-json-to-tscircuit": "0.0.93",
     "easyeda2kicad6": "https://github.com/yaybee/easyeda2kicad6/archive/217d5063b0b4425df21f71af1292282bd5cd592a.tar.gz",
-    "express": "5.1.0",
+    "express": "5.3.0",
     "fflate": "0.8.3",
     "kicad-to-circuit-json": "0.0.143",
     "react": "19.1.0",
@@ -39,7 +39,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.3.1",
-    "@types/express": "5.0.3",
+    "@types/express": "5.0.6",
     "@types/node": "24.0.10",
     "@types/supertest": "6.0.3",
     "supertest": "7.1.1",
