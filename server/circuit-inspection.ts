@@ -86,6 +86,40 @@ export function getBoardProperties(input: unknown) {
   return boards
 }
 
+export function checkConnectivity(input: unknown) {
+  const all = elements(input)
+  const componentElements = all.filter((item) => item.type === "source_component")
+  const components = new Map(componentElements
+    .filter((item): item is Element & { source_component_id: string } => typeof item.source_component_id === "string")
+    .map((item) => [item.source_component_id, item]))
+  const ports = all.filter((item) => item.type === "source_port")
+  const portIds = new Set(ports.map((port) => port.source_port_id).filter((id): id is string => typeof id === "string"))
+  const traces = all.filter((item) => item.type === "source_trace")
+  const connectedIds = new Set(traces.flatMap((trace) => stringArray(trace.connected_source_port_ids)))
+  const danglingPortIds = [...connectedIds].filter((id) => !portIds.has(id)).sort()
+
+  return {
+    componentCount: componentElements.length,
+    portCount: ports.length,
+    connectedPortCount: ports.filter((port) => typeof port.source_port_id === "string" && connectedIds.has(port.source_port_id)).length,
+    unconnectedPorts: ports.filter((port) => typeof port.source_port_id !== "string" || !connectedIds.has(port.source_port_id)).map((port) => {
+      const component = typeof port.source_component_id === "string" ? components.get(port.source_component_id) : undefined
+      return {
+        source_port_id: port.source_port_id,
+        source_component_id: port.source_component_id,
+        source_component_name: component?.name ?? component?.reference_designator,
+        name: port.name,
+        pin_number: port.pin_number,
+      }
+    }),
+    danglingPortIds,
+    limitations: [
+      "Reports source-port links emitted in Circuit JSON; unconnected ports may be intentional.",
+      "Does not perform electrical rule checking or infer intended connectivity.",
+    ],
+  }
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
 }
