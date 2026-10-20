@@ -13,6 +13,8 @@ docs: explain the local build workflow
 The title check accepts lowercase types such as `feat`, `fix`, `docs`, `test`,
 `refactor`, `chore`, and `ci`, an optional scope in parentheses, and the
 Conventional Commits breaking-change marker (`!`).
+Dependabot is configured to use conventional `chore(deps)`,
+`chore(deps-web)`, and `chore(ci)` titles for dependency and action updates.
 
 The repository allows squash merging only, and GitHub uses the PR title as the
 squash commit title. This keeps merged history in the same format that
