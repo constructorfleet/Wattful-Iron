@@ -29,8 +29,8 @@ jobs:
             exit 1
           fi
 
-  validate-image:
-    name: Build container image
+  application-validation:
+    name: Application validation
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -55,6 +55,13 @@ jobs:
         run: npm test
       - name: Build application
         run: npm run build
+
+  container-integration:
+    name: Container integration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
       - name: Check container acceptance script syntax
         run: bash -n scripts/container-acceptance.sh
       - name: Set up Docker Buildx
@@ -142,6 +149,23 @@ jobs:
           vuln-type: os,library
           severity: CRITICAL,HIGH
           scanners: vuln
+
+  validate-image:
+    name: Build container image
+    if: always()
+    needs: [application-validation, container-integration]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require application and container validation to pass
+        env:
+          APPLICATION_RESULT: ${{ needs.application-validation.result }}
+          CONTAINER_RESULT: ${{ needs.container-integration.result }}
+        run: |
+          if [[ "$APPLICATION_RESULT" != success || "$CONTAINER_RESULT" != success ]]; then
+            echo "Application validation: $APPLICATION_RESULT"
+            echo "Container integration: $CONTAINER_RESULT"
+            exit 1
+          fi
 
   publish:
     name: Publish to GitHub Container Registry
