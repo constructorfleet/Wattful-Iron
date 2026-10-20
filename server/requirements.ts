@@ -71,10 +71,24 @@ export function validateRequirements(requirements: ProjectRequirements, circuitJ
   for (const name of requirements.requirements.nets ?? []) {
     if (!hasCircuitEvidence) {
       checks.push({ id: `net-${name}`, status: "not-evaluated", message: `Required net '${name}' could not be checked because no successful Circuit JSON evidence is available.` })
-    } else if (records(circuitJson).some((item) => item.type === "source_trace" && item.name === name)) {
-      checks.push({ id: `net-${name}`, status: "pass", message: `Required named net '${name}' is present in Circuit JSON.` })
     } else {
-      checks.push({ id: `net-${name}`, status: "fail", message: `Required named net '${name}' is missing from Circuit JSON source_trace records.` })
+      const matches = records(circuitJson).filter((item) => item.type === "source_trace" && item.name === name)
+      if (matches.length === 0) {
+        checks.push({ id: `net-${name}`, status: "fail", message: `Required named net '${name}' is missing from Circuit JSON source_trace records.` })
+      } else {
+        const connectedPortCounts = matches
+          .map((trace) => trace.connected_source_port_ids)
+          .filter((ports): ports is unknown[] => Array.isArray(ports))
+          .map((ports) => ports.length)
+        if (connectedPortCounts.some((count) => count < 2)) {
+          const count = Math.min(...connectedPortCounts)
+          checks.push({ id: `net-${name}`, status: "fail", message: `Required named net '${name}' has only ${count} connected source port${count === 1 ? "" : "s"}; at least two are needed for a connection.` })
+        } else if (connectedPortCounts.length !== matches.length) {
+          checks.push({ id: `net-${name}`, status: "not-evaluated", message: `Required named net '${name}' is present, but Circuit JSON does not report connected source ports for every matching source_trace.` })
+        } else {
+          checks.push({ id: `net-${name}`, status: "pass", message: `Required named net '${name}' is connected to at least two source ports in Circuit JSON.` })
+        }
+      }
     }
   }
 

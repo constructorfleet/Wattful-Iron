@@ -184,7 +184,7 @@ test("project requirements are schema-validated, revisioned, and marked stale un
 test("REST requirements validation checks required component references and named nets", async () => {
   const f = await fixture(async () => [
     { type: "source_component", name: "U1" },
-    { type: "source_trace", name: "GND" },
+    { type: "source_trace", name: "GND", connected_source_port_ids: ["port-1", "port-2"] },
   ])
   try {
     const { body: project } = await request(f.app).post("/api/projects").send({ name: "Reference checks" }).expect(201)
