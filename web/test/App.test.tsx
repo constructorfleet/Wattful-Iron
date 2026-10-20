@@ -119,6 +119,24 @@ describe('workbench', () => {
     expect(screen.getByRole('tab', { name: '3D' })).toBeInTheDocument()
   })
 
+  it('shows schematic, PCB, and 3D previews together with keyboard-resizable panels', async () => {
+    api.getPreview.mockResolvedValue({ kind: 'schematic', revision: 'rev-1', circuitJson: [
+      { type: 'pcb_board' }, { type: 'pcb_component' }, { type: 'schematic_component' },
+    ] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show all views' }))
+
+    expect(screen.getByRole('region', { name: 'Schematic preview' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'PCB preview' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '3D preview' })).toBeInTheDocument()
+    const divider = screen.getByRole('separator', { name: 'Resize schematic and PCB previews' })
+    const before = Number(divider.getAttribute('aria-valuenow'))
+    divider.focus()
+    fireEvent.keyDown(divider, { key: 'ArrowRight' })
+    expect(Number(divider.getAttribute('aria-valuenow'))).toBeGreaterThan(before)
+  })
+
   it('explains when the selected project has schematic data but no PCB layout', async () => {
     api.getProjectFile.mockResolvedValueOnce({ path: 'index.tsx', content: 'const ImportedSchematic = () => null', revision: 'rev-1' })
     api.getPreview.mockResolvedValue({ kind: 'pcb', revision: 'rev-1', circuitJson: [{ type: 'schematic_component' }] })
