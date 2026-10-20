@@ -20,10 +20,31 @@ test("manufacturing preflight accepts the current successful board and reports l
   const result = checkManufacturability(elements, { status: "ready", revision: "rev-1" }, "rev-1")
   assert.equal(result.ready, true)
   assert.equal(result.profile.id, "board-default")
-  assert.equal(result.checks.find(({ id }) => id === "bom-review")?.status, "warning")
+  assert.equal(result.checks.find(({ id }) => id === "bom-data")?.status, "warning")
   assert.equal(result.checks.find(({ id }) => id === "circuit-errors")?.status, "not-evaluated")
   assert.equal(result.checks.find(({ id }) => id === "circuit-warnings")?.status, "not-evaluated")
   assert.equal(result.checks.find(({ id }) => id === "trace-width")?.status, "warning")
+})
+
+test("BOM preflight identifies source components missing values or supplier part numbers", () => {
+  const result = checkManufacturability([
+    ...elements,
+    { type: "source_component", source_component_id: "source_component_2", name: "C1", value: "100nF" },
+  ], { status: "ready", revision: "rev-1" }, "rev-1")
+
+  assert.equal(result.checks.find(({ id }) => id === "bom-data")?.status, "warning")
+  assert.match(result.checks.find(({ id }) => id === "bom-data")?.message ?? "", /R1.*manufacturer part number/)
+  assert.match(result.checks.find(({ id }) => id === "bom-data")?.message ?? "", /C1.*manufacturer part number/)
+})
+
+test("BOM preflight passes when source components have values and supplier part numbers", () => {
+  const result = checkManufacturability([
+    { ...elements[0] },
+    { ...elements[1], value: "10k", manufacturer_part_number: "RC0402FR-0710KL" },
+    elements[2]!,
+  ], { status: "ready", revision: "rev-1" }, "rev-1")
+
+  assert.equal(result.checks.find(({ id }) => id === "bom-data")?.status, "pass")
 })
 
 test("fabricator profile blocks traces and non-plated holes below its published minima", () => {

@@ -21,6 +21,12 @@ reported for manual review because this check only measures rectangular boards.
 `board-default` applies no vendor minima and reports that those checks were not
 evaluated.
 
+The BOM data check reports each source component missing a `value` or
+`manufacturer_part_number` in Circuit JSON. Missing fields are review warnings,
+so the preflight can still permit export; they are not evidence that a supplier
+stocks a part or that an assembly house accepts it. Confirm the generated BOM
+with the fabricator and assembler.
+
 Preflight also matches each `source_trace` to a `pcb_trace` with a non-empty
 route. A logical source trace without routed PCB geometry blocks export and is
 identified by its source trace ID. If the Circuit JSON contains no logical

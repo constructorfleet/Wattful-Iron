@@ -63,9 +63,25 @@ export function checkManufacturability(circuitJson: unknown, build: BuildState, 
     ...validationChecks,
     routingCheck,
     ...ruleChecks,
-    { id: "bom-review", status: "warning", message: "Review generated BOM supplier part numbers and values before ordering." },
+    checkBomData(sources),
   ]
   return { ready: checks.every((check) => check.status !== "fail"), profile: { id: profile.id, label: profile.label }, checks }
+}
+
+function checkBomData(sources: Record<string, unknown>[]): ManufacturingCheck {
+  if (sources.length === 0) return { id: "bom-data", status: "not-evaluated", message: "No source components were found; BOM data could not be checked." }
+  const missing: string[] = []
+  for (const component of sources) {
+    const reference = typeof component.name === "string" && component.name.trim() ? component.name.trim() : "(unnamed component)"
+    const absent = [
+      ["value", component.value],
+      ["manufacturer part number", component.manufacturer_part_number],
+    ].filter(([, value]) => typeof value !== "string" || value.trim().length === 0).map(([field]) => field)
+    if (absent.length > 0) missing.push(`${reference}: missing ${absent.join(" and ")}`)
+  }
+  return missing.length > 0
+    ? { id: "bom-data", status: "warning", message: `Review BOM data for ${missing.join("; ")}.` }
+    : { id: "bom-data", status: "pass", message: `All ${sources.length} source component${sources.length === 1 ? " has" : "s have"} a value and manufacturer part number in Circuit JSON.` }
 }
 
 function checkRoutedConnections(items: Record<string, unknown>[]): ManufacturingCheck {
