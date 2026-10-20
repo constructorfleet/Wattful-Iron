@@ -2,7 +2,7 @@
 
 FROM oven/bun:1.4.3-debian@sha256:923bedb355f7746666659f71e724998159a5c8c54bd1cb1030e1975a0698415b AS bun
 
-FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS build
+FROM node:26.12.0-trixie-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS build
 WORKDIR /app
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 
@@ -14,7 +14,7 @@ RUN npm ci --prefix web
 COPY . .
 RUN npm run build
 
-FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS production-dependencies
+FROM node:26.12.0-trixie-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS production-dependencies
 WORKDIR /app
 COPY .npmrc package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
@@ -22,7 +22,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 # The untrusted-code container contains only the pinned runtime dependencies
 # and the small trusted build wrapper. It does not contain app code, projects,
 # deployment configuration, or runner credentials.
-FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS build-job
+FROM node:26.12.0-trixie-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS build-job
 WORKDIR /app
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=production-dependencies /app/node_modules ./node_modules
@@ -32,7 +32,7 @@ WORKDIR /tmp
 ENTRYPOINT ["node", "/app/dist/server/build-job.js"]
 
 # Keep the application runtime as the default target for ordinary `docker build`.
-FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS runtime
+FROM node:26.12.0-trixie-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS runtime
 ENV NODE_ENV=production \
     PORT=3000 \
     PROJECTS_DIR=/data/projects \
