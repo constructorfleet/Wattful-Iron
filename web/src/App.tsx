@@ -1,6 +1,7 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Editor from '@monaco-editor/react'
 import { configureMonaco } from './configureMonaco'
+import { getInspectedComponents } from './componentInspector'
 import {
   compareProjectRevisions,
   createProject,
@@ -82,6 +83,8 @@ export default function App() {
   const [unsavedDialogOpen, setUnsavedDialogOpen] = useState(false)
   const [view, setView] = useState<PreviewKind | 'simulation'>('schematic')
   const [preview, setPreview] = useState<unknown>(null)
+  const [componentInspectorOpen, setComponentInspectorOpen] = useState(false)
+  const [selectedComponentId, setSelectedComponentId] = useState('')
   const [simulation, setSimulation] = useState<Simulation | null>(null)
   const [build, setBuild] = useState<BuildStatus>(initialBuild)
   const [error, setError] = useState('')
@@ -115,6 +118,8 @@ export default function App() {
   const revisionRef = useRef(revision)
   const restoringHistoryRef = useRef(false)
   const pendingNavigationRef = useRef<(() => Promise<void>) | null>(null)
+  const inspectedComponents = getInspectedComponents(preview)
+  const selectedComponent = inspectedComponents.find(({ id }) => id === selectedComponentId) ?? inspectedComponents[0]
 
   useEffect(() => { sourceRef.current = source }, [source])
   useEffect(() => { revisionRef.current = revision }, [revision])
@@ -506,6 +511,7 @@ export default function App() {
               {views.map(({ kind, label }) => <button key={kind} role="tab" aria-selected={view === kind} className={`view-tab ${view === kind ? 'active' : ''}`} onClick={() => setView(kind)}>{label}</button>)}
             </div>
             <span className="preview-meta">{preview ? `Revision ${build.revision || revision}` : 'Live preview'}</span>
+            {view !== 'simulation' && inspectedComponents.length > 0 && <button className={`inspector-toggle ${componentInspectorOpen ? 'active' : ''}`} aria-expanded={componentInspectorOpen} aria-controls="component-inspector" onClick={() => setComponentInspectorOpen((open) => !open)}>Components <span>{inspectedComponents.length}</span></button>}
           </div>
           <div className="preview-content">
             {build.status === 'failed' && view !== 'simulation' && <div className="build-errors" role="alert"><div className="error-title"><span>!</span> Build failed</div>{build.diagnostics?.length ? build.diagnostics.map((diagnostic, index) => { const path = diagnostic.path || diagnostic.file; return <div className="diagnostic" key={`${path}-${diagnostic.line}-${index}`}><strong>{path}{diagnostic.line ? `:${diagnostic.line}` : ''}</strong><span>{diagnostic.message}</span></div> }) : <p>Check the source and build output for details.</p>}</div>}
@@ -515,6 +521,17 @@ export default function App() {
               <p>{project ? build.status === 'failed' ? 'Fix the source and build again to update this view.' : 'Build the project to generate a schematic, PCB layout, and 3D preview.' : 'Create a project to see your design take shape.'}</p>
               {project && <button className="outline-button" onClick={runBuild}>Build project</button>}
             </div>}
+            {componentInspectorOpen && view !== 'simulation' && <aside id="component-inspector" className="component-inspector" aria-label="Component inspector">
+              <header><div><h2>Components</h2><span>{inspectedComponents.length} from build data</span></div><button aria-label="Close component inspector" onClick={() => setComponentInspectorOpen(false)}>×</button></header>
+              {!selectedComponent ? <p className="inspector-empty">No source components were found in this build.</p> : <>
+                <label className="inspector-select">Component<select aria-label="Select component" value={selectedComponent.id} onChange={(event) => setSelectedComponentId(event.target.value)}>{inspectedComponents.map(({ id, name }) => <option key={id} value={id}>{name}</option>)}</select></label>
+                <div className="inspector-section"><h3>Identity</h3><dl><dt>Name</dt><dd>{selectedComponent.name}</dd><dt>Source ID</dt><dd><code>{selectedComponent.id}</code></dd></dl></div>
+                <div className="inspector-section"><h3>Properties</h3>{selectedComponent.properties.length ? <dl>{selectedComponent.properties.map(([key, value]) => <Fragment key={key}><dt>{key}</dt><dd>{formatInspectorValue(value)}</dd></Fragment>)}</dl> : <p>No additional source properties.</p>}</div>
+                <div className="inspector-section"><h3>PCB placement</h3>{selectedComponent.placement ? <dl>{(['center', 'rotation', 'layer', 'width', 'height'] as const).filter((key) => selectedComponent.placement?.[key] !== undefined).map((key) => <Fragment key={key}><dt>{key}</dt><dd>{formatInspectorValue(selectedComponent.placement?.[key])}</dd></Fragment>)}</dl> : <p>No PCB placement in this build.</p>}</div>
+                <div className="inspector-section"><h3>Pins and nets</h3>{selectedComponent.pins.length ? selectedComponent.pins.map((pin) => <div className="inspector-pin" key={pin.id || pin.name}><strong>{pin.name}</strong><code>{pin.id || 'No source port ID'}</code><span>{pin.connections.length ? pin.connections.join(', ') : 'No source trace connection found'}</span></div>) : <p>No source ports were found for this component.</p>}</div>
+                <p className="inspector-note">Details reflect the latest successful Circuit JSON build. Canvas highlighting is not available in the current viewer.</p>
+              </>}
+            </aside>}
           </div>
           {build.status === 'failed' && !preview && build.diagnostics?.length ? null : build.status !== 'failed' && build.status !== 'ready' && <div className="preview-footer"><span className="pulse-dot" />Previews update when source changes</div>}
         </section>
@@ -567,6 +584,12 @@ function ManufacturingCheckRow({ check }: { check: ManufacturingCheck }) {
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
   return `${(bytes / 1024).toFixed(1)} KB`
+}
+
+function formatInspectorValue(value: unknown) {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return JSON.stringify(value)
 }
 
 function PcbPreview({ circuitJson }: { circuitJson: PcbCircuitJson }) {

@@ -21,6 +21,8 @@ against one project volume.
 - Local source history with compare and concurrency-checked restore.
 - tscircuit build execution and build diagnostics.
 - Generated Circuit JSON retained for preview.
+- A read-only component inspector that joins source components to PCB placements,
+  source ports, and connected source traces by Circuit JSON IDs.
 - Live SSE updates.
 - Schematic, PCB, and 3D preview panels.
 - A simulation panel and `/api/projects/:id/simulation` results endpoint that
@@ -55,11 +57,15 @@ manufacturing sign-off.
 
 The following capabilities in the project vision are not available in this
 slice: ACP servers, per-user authentication and authorization, dedicated full
-ERC/DRC, interactive cross-view connectivity tracing, complete fabricator rule
-coverage, Git-backed revision history, approval states, and purchasing or
-fabrication integrations. Optional workbench authentication uses a shared
-token for the browser and REST API; MCP has its own shared bearer token. There
-is no per-user identity or access control. Requirements validation only
+ERC/DRC, interactive cross-view connectivity tracing, simultaneous resizable
+views, component datasheets and supplier/availability/cost enrichment, complete
+fabricator rule coverage, Git-backed revision history, approval states, and
+purchasing or fabrication integrations. The component inspector only displays
+data present in Circuit JSON; it does not highlight the selected component in
+preview canvases or edit its source properties. Optional workbench
+authentication uses a shared token for the browser and REST API; MCP has its own
+shared bearer token. There is no per-user identity or access control.
+Requirements validation only
 evaluates the emitted board dimensions and layer count; other requirement types
 are retained but marked not evaluated.
 Simulation execution uses tscircuit's configured SPICE support during its
