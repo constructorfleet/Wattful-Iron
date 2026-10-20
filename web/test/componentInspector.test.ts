@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getInspectedComponents } from '../src/componentInspector'
+import { getInspectedComponents, getPcbComponentId } from '../src/componentInspector'
 
 describe('getInspectedComponents', () => {
   it('joins source components to placements, pins, and nets by Circuit JSON IDs', () => {
@@ -24,5 +24,12 @@ describe('getInspectedComponents', () => {
   it('ignores malformed records and components without stable IDs', () => {
     expect(getInspectedComponents(null)).toEqual([])
     expect(getInspectedComponents([null, { type: 'source_component', name: 'R1' }, { type: 'pcb_component', source_component_id: 'sc-1' }])).toEqual([])
+  })
+
+  it('resolves a source component ID to its PCB component ID for cross-view focus', () => {
+    expect(getPcbComponentId([
+      { type: 'pcb_component', pcb_component_id: 'pcb-1', source_component_id: 'source-1' },
+    ], 'source-1')).toBe('pcb-1')
+    expect(getPcbComponentId([], 'source-1')).toBeUndefined()
   })
 })

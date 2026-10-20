@@ -89,6 +89,13 @@ Select **PCB** after the build reaches **Ready**. The viewer includes layer,
 routing, bounds, and measurement controls. The manufacturing example shows its
 board outline, two placed components, plated hole, and non-plated hole.
 
+Open **Components** and select a component to focus its footprint in the PCB
+viewer. To move from a footprint back to its source component details, open the
+PCB component's context menu and choose its **on Schematic** action. This
+switches to the schematic view and selects that component in the inspector.
+The schematic and 3D canvases do not yet draw selection highlights, and net
+tracing does not yet highlight wires or copper.
+
 ![PCB preview showing the manufacturing example board and components](images/workbench-pcb.png)
 
 ## Download manufacturing files

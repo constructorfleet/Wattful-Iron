@@ -1,4 +1,4 @@
-import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import Editor from '@monaco-editor/react'
 import { configureMonaco } from './configureMonaco'
 import { hasPcbPreviewData } from './previewAvailability'
@@ -53,8 +53,8 @@ function editorLanguage(path: string) {
 
 const initialBuild: BuildStatus = { status: 'idle' }
 const CircuitJsonPreview = lazy(() => import('@tscircuit/runframe').then((module) => ({ default: module.CircuitJsonPreview })))
-const PCBViewer = lazy(() => import('@tscircuit/pcb-viewer').then((module) => ({ default: module.PCBViewer })))
-type PcbCircuitJson = NonNullable<Parameters<typeof PCBViewer>[0]['circuitJson']>
+const PcbPreview = lazy(() => import('./PcbPreview'))
+type PcbCircuitJson = import('./PcbPreview').PcbCircuitJson
 
 async function fetchPdfUrl(value: string): Promise<File> {
   let url: URL
@@ -539,7 +539,7 @@ export default function App() {
           </div>
           <div className="preview-content">
             {build.status === 'failed' && view !== 'simulation' && <div className="build-errors" role="alert"><div className="error-title"><span>!</span> Build failed</div>{build.diagnostics?.length ? build.diagnostics.map((diagnostic, index) => { const path = diagnostic.path || diagnostic.file; return <div className="diagnostic" key={`${path}-${diagnostic.line}-${index}`}><strong>{path}{diagnostic.line ? `:${diagnostic.line}` : ''}</strong><span>{diagnostic.message}</span></div> }) : <p>Check the source and build output for details.</p>}</div>}
-            {view === 'simulation' ? <SimulationPanel simulation={simulation} build={build} canRun={Boolean(project)} onRun={() => { setSimulation(null); void runBuild() }} /> : preview && (view === 'schematic' || hasPcbPreview) ? view === 'pcb' ? <Suspense fallback={<div className="preview-loading">Loading PCB preview…</div>}><PcbPreview circuitJson={preview as PcbCircuitJson} /></Suspense> : <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview className="circuit-preview" key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={view === '3d' ? 'cad' : view} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : preview ? <div className="preview-placeholder">
+            {view === 'simulation' ? <SimulationPanel simulation={simulation} build={build} canRun={Boolean(project)} onRun={() => { setSimulation(null); void runBuild() }} /> : preview && (view === 'schematic' || hasPcbPreview) ? view === 'pcb' ? <Suspense fallback={<div className="preview-loading">Loading PCB preview…</div>}><PcbPreview circuitJson={preview as PcbCircuitJson} selectedSourceComponentId={selectedComponentId} onViewSchematicComponent={(event) => { setSelectedComponentId(event.source_component_id); setComponentInspectorOpen(true); setView('schematic') }} /></Suspense> : <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview className="circuit-preview" key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={view === '3d' ? 'cad' : view} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : preview ? <div className="preview-placeholder">
               <div className="placeholder-board"><span className="board-edge edge-a" /><span className="board-edge edge-b" /><span className="board-chip chip-a" /><span className="board-chip chip-b" /><span className="board-pad pad-a" /><span className="board-pad pad-b" /><span className="board-route route-a" /><span className="board-route route-b" /></div>
               <h2>{view === 'pcb' ? 'No PCB layout in this project' : 'No PCB data for 3D preview'}</h2>
               <p>This schematic has no PCB placements. Generate a draft layout, then review footprints, component models, pin mappings, and routing before fabrication.</p>
@@ -558,7 +558,7 @@ export default function App() {
                 <div className="inspector-section"><h3>Properties</h3>{selectedComponent.properties.length ? <dl>{selectedComponent.properties.map(([key, value]) => <Fragment key={key}><dt>{key}</dt><dd>{formatInspectorValue(value)}</dd></Fragment>)}</dl> : <p>No additional source properties.</p>}</div>
                 <div className="inspector-section"><h3>PCB placement</h3>{selectedComponent.placement ? <dl>{(['center', 'rotation', 'layer', 'width', 'height'] as const).filter((key) => selectedComponent.placement?.[key] !== undefined).map((key) => <Fragment key={key}><dt>{key}</dt><dd>{formatInspectorValue(selectedComponent.placement?.[key])}</dd></Fragment>)}</dl> : <p>No PCB placement in this build.</p>}</div>
                 <div className="inspector-section"><h3>Pins and nets</h3>{selectedComponent.pins.length ? selectedComponent.pins.map((pin) => <div className="inspector-pin" key={pin.id || pin.name}><strong>{pin.name}</strong><code>{pin.id || 'No source port ID'}</code><span>{pin.connections.length ? pin.connections.join(', ') : 'No source trace connection found'}</span></div>) : <p>No source ports were found for this component.</p>}</div>
-                <p className="inspector-note">Details reflect the latest successful Circuit JSON build. Canvas highlighting is not available in the current viewer.</p>
+                <p className="inspector-note">Details reflect the latest successful build. Selecting a component focuses its PCB footprint; use that footprint’s context menu to open it here from the PCB. Schematic and 3D canvas highlighting are not available yet.</p>
               </>}
             </aside>}
           </div>
@@ -619,27 +619,6 @@ function formatInspectorValue(value: unknown) {
   if (typeof value === 'string') return value
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
   return JSON.stringify(value)
-}
-
-function PcbPreview({ circuitJson }: { circuitJson: PcbCircuitJson }) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [height, setHeight] = useState(620)
-
-  useLayoutEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-    const updateHeight = () => setHeight(Math.min(Math.max(container.clientHeight, 620), window.innerHeight))
-    updateHeight()
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateHeight)
-    observer?.observe(container)
-    window.addEventListener('resize', updateHeight)
-    return () => {
-      observer?.disconnect()
-      window.removeEventListener('resize', updateHeight)
-    }
-  }, [])
-
-  return <div ref={containerRef} className="pcb-preview"><PCBViewer circuitJson={circuitJson} height={height} /></div>
 }
 
 function SimulationPanel({ simulation, build, canRun, onRun }: { simulation: Simulation | null; build: BuildStatus; canRun: boolean; onRun: () => void }) {

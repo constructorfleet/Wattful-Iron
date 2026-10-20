@@ -40,3 +40,11 @@ export function getInspectedComponents(circuitJson: unknown): InspectedComponent
     }
   })
 }
+
+export function getPcbComponentId(circuitJson: unknown, sourceComponentId: string): string | undefined {
+  if (!Array.isArray(circuitJson)) return undefined
+  const placement = circuitJson.find((item): item is CircuitRecord =>
+    isRecord(item) && item.type === 'pcb_component' && item.source_component_id === sourceComponentId,
+  )
+  return typeof placement?.pcb_component_id === 'string' ? placement.pcb_component_id : undefined
+}
