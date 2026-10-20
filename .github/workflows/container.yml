@@ -55,6 +55,8 @@ jobs:
         run: npm test
       - name: Build application
         run: npm run build
+      - name: Check container acceptance script syntax
+        run: bash -n scripts/container-acceptance.sh
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Build image without publishing
@@ -78,7 +80,7 @@ jobs:
           tags: wattful-iron-build-job:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Smoke test container
+      - name: Test isolated container workbench acceptance
         run: |
           docker volume create circuits-smoke-projects
           docker network create circuits-smoke-net
@@ -125,34 +127,11 @@ jobs:
           fi
           curl --fail --silent --show-error http://127.0.0.1:3000/healthz
           curl --fail --silent --show-error http://127.0.0.1:3000/ | grep -Eq 'Circuits|circuits|<div id="root"'
-          project_json=$(curl --fail --silent --show-error \
-            -H 'Content-Type: application/json' \
-            -d '{"name":"Container smoke"}' \
-            http://127.0.0.1:3000/api/projects)
-          project_id=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).id)' "$project_json")
-          curl --fail --silent --show-error -X POST \
-            "http://127.0.0.1:3000/api/projects/$project_id/build"
-          for attempt in $(seq 1 60); do
-            project_state=$(curl --fail --silent --show-error \
-              "http://127.0.0.1:3000/api/projects/$project_id")
-            build_state=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).lastBuild?.status ?? "none")' "$project_state")
-            if [ "$build_state" = ready ]; then
-              curl --fail --silent --show-error \
-                "http://127.0.0.1:3000/api/projects/$project_id/preview?kind=pcb" |
-                node -e 'let data=""; process.stdin.on("data", chunk => data += chunk); process.stdin.on("end", () => { const result = JSON.parse(data); if (!result.circuitJson) process.exit(1) })'
-              exit 0
-            fi
-            if [ "$build_state" = failed ]; then
-              printf '%s\n' "$project_state"
-              docker logs circuits-build-runner
-              docker logs circuits-smoke
-              exit 1
-            fi
-            sleep 2
-          done
-          docker logs circuits-build-runner
-          docker logs circuits-smoke
-          exit 1
+          if ! BASE_URL=http://127.0.0.1:3000 bash scripts/container-acceptance.sh; then
+            docker logs circuits-build-runner
+            docker logs circuits-smoke
+            exit 1
+          fi
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@v0.36.0
         with:
