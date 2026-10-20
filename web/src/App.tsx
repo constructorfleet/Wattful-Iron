@@ -9,6 +9,7 @@ import {
   compareProjectRevisions,
   createProject,
   duplicateProject as duplicateProjectApi,
+  exportProjectArchive,
   getManufacturingArchive,
   getManufacturingPreflight,
   getManufacturingProfiles,
@@ -21,6 +22,7 @@ import {
   generatePcbDraft,
   getSimulation,
   importPdfReference,
+  importProjectArchive,
   importSchematics,
   listProjects,
   listProjectTemplates,
@@ -117,6 +119,9 @@ export default function App() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [restoringHistory, setRestoringHistory] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [archiveFile, setArchiveFile] = useState<File | null>(null)
+  const [importingArchive, setImportingArchive] = useState(false)
+  const [exportingArchive, setExportingArchive] = useState(false)
   const [duplicatingProjectId, setDuplicatingProjectId] = useState('')
   const [projectName, setProjectName] = useState('')
   const [projectTemplate, setProjectTemplate] = useState('blank-board')
@@ -204,6 +209,46 @@ export default function App() {
       setDuplicatingProjectId('')
     }
   })
+
+  const handleArchiveImport = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!archiveFile) return
+    setError('')
+    setImportingArchive(true)
+    try {
+      const imported = await importProjectArchive(archiveFile)
+      setProjects((items) => [imported, ...items.filter(({ id }) => id !== imported.id)])
+      setArchiveFile(null)
+      const input = document.getElementById('project-archive') as HTMLInputElement | null
+      if (input) input.value = ''
+      openProject(imported)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to import project archive')
+    } finally {
+      setImportingArchive(false)
+    }
+  }
+
+  const downloadProjectArchive = async () => {
+    if (!project) return
+    setError('')
+    setExportingArchive(true)
+    try {
+      const archive = await exportProjectArchive(project.id)
+      const url = URL.createObjectURL(archive)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${project.name.replace(/[^a-z0-9._-]+/gi, '-').replace(/^-|-$/g, '') || 'project'}.zip`
+      document.body.append(link)
+      link.click()
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to export project archive')
+    } finally {
+      setExportingArchive(false)
+    }
+  }
 
   const openFile = useCallback((path: string) => {
     if (!project || path === filePath) return
@@ -532,6 +577,7 @@ export default function App() {
         <div className="top-actions">
           <div className={`build-state ${build.status}`} aria-live="polite"><span className="status-dot" />{statusText}</div>
           <button className="build-button history-button" disabled={!project} onClick={() => setHistoryDialogOpen(true)}>History</button>
+          <button className="build-button" disabled={!project || exportingArchive} onClick={() => void downloadProjectArchive()}>{exportingArchive ? 'Exporting…' : 'Export project ZIP'}</button>
           <button className="build-button" disabled={!project?.referencePdfs?.length} onClick={() => setReferencePdfOpen(true)}>PDF reference</button>
           <button className="build-button manufacturing-button" disabled={!project} onClick={() => setManufacturingDialogOpen(true)}>Rule checks · Manufacturing</button>
           {source.includes('ImportedBoard') && projectFiles.some((file) => /^imports\/[^/]+\.json$/i.test(file)) && <button className="build-button" disabled={!project || dirty} onClick={() => void createPcbDraft()}>Refresh component names</button>}
@@ -561,6 +607,12 @@ export default function App() {
             <div className="form-actions"><button type="button" className="quiet-button" onClick={() => setCreating(false)}>Cancel</button><button className="small-primary" type="submit">{referencePdf || referencePdfUrl.trim() ? 'Import PDF reference' : schematicFiles.length ? 'Import schematics' : 'Create project'}</button></div>
           </form>}
           <button className="new-project-link" onClick={() => setCreating(true)}><span>＋</span> New project</button>
+          <form className="archive-form" onSubmit={handleArchiveImport}>
+            <label htmlFor="project-archive">Import project archive (.zip)</label>
+            <input id="project-archive" type="file" accept=".zip,application/zip" onChange={(event) => setArchiveFile(event.target.files?.[0] ?? null)} />
+            <button className="quiet-button" type="submit" disabled={!archiveFile || importingArchive}>{importingArchive ? 'Importing…' : 'Import archive'}</button>
+            <small>Imports as a separate project. Your open project stays intact; unsaved edits are protected by the normal save/discard prompt.</small>
+          </form>
           <div className="project-list" aria-label="Project list">
             {loading ? <div className="sidebar-empty">Loading projects…</div> : projects.length === 0 ? <div className="sidebar-empty">Your projects will appear here.</div> : projects.map((item) => (
               <div key={item.id} className="project-row">

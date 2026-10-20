@@ -1,6 +1,20 @@
 # Workbench how-tos
 
-## Project archive REST API
+## Import and export a project archive
+
+Use **Import project archive (.zip)** under the project list to add a project
+from a Wattful-Iron ZIP. The imported project appears in the list as a separate
+project. Opening it uses the regular unsaved changes prompt, so edits in the
+current project can be saved, discarded, or kept open while you decide.
+
+Open a project and choose **Export project ZIP** in the top bar to download its
+visible source files and project manifest. The ZIP can be imported into another
+Wattful-Iron workspace. Export does not include hidden server data or generated
+build artifacts. Archives are limited to 20 MB compressed, 50 MB expanded,
+500 entries, and 10 MB per file; invalid archives show an error and do not
+replace the open project.
+
+The same operations are available through the REST API:
 
 Export a project's visible source files as a ZIP archive:
 

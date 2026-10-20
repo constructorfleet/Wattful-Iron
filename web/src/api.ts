@@ -40,6 +40,14 @@ export type ManufacturingCheck = { id: string; status: 'pass' | 'fail' | 'warnin
 export type ManufacturingPreflight = { ready: boolean; profile: Pick<ManufacturingProfile, 'id' | 'label'>; checks: ManufacturingCheck[] }
 type Fetcher = typeof fetch
 
+function responseErrorMessage(detail: string, fallback: string) {
+  try {
+    const payload = JSON.parse(detail) as { error?: unknown }
+    if (typeof payload.error === 'string') return payload.error
+  } catch { /* Keep a plain-text server message as-is. */ }
+  return detail || fallback
+}
+
 async function request<T>(url: string, init: RequestInit = {}, fetcher: Fetcher = fetch): Promise<T> {
   const response = await fetcher(url, init)
   if (response.status === 409 || response.status === 412) {
@@ -48,7 +56,7 @@ async function request<T>(url: string, init: RequestInit = {}, fetcher: Fetcher 
   }
   if (!response.ok) {
     const detail = await response.text()
-    throw new Error(detail || `Request failed (${response.status})`)
+    throw new Error(responseErrorMessage(detail, `Request failed (${response.status})`))
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
@@ -86,6 +94,21 @@ export const importPdfReference = (name: string, file: File, fetcher?: Fetcher) 
     headers: { 'Content-Type': 'application/pdf' },
     body: file,
   }, fetcher)
+}
+
+export const importProjectArchive = (file: File, fetcher?: Fetcher) => request<Project>('/api/projects/import-archive', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/zip' },
+  body: file,
+}, fetcher)
+
+export async function exportProjectArchive(id: string, fetcher: Fetcher = fetch) {
+  const response = await fetcher(`/api/projects/${encodeURIComponent(id)}/export`)
+  if (!response.ok) {
+    const detail = await response.text()
+    throw new Error(responseErrorMessage(detail, `Project export failed (${response.status})`))
+  }
+  return response.blob()
 }
 
 export const getProjectReferencePdfUrl = (projectId: string, referenceId: string) =>
