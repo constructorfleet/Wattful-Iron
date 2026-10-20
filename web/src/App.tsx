@@ -1,8 +1,9 @@
-import { Fragment, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, lazy, Suspense, useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
 import Editor from '@monaco-editor/react'
 import { configureMonaco } from './configureMonaco'
 import { hasPcbPreviewData } from './previewAvailability'
 import { getInspectedComponents } from './componentInspector'
+import { applyBoardOutline, getBoardOutline, parseSvgOutline, validateBoardOutline, type BoardOutlinePoint } from './boardOutline'
 import {
   compareProjectRevisions,
   createProject,
@@ -86,6 +87,9 @@ export default function App() {
   const [view, setView] = useState<PreviewKind | 'simulation'>('schematic')
   const [preview, setPreview] = useState<unknown>(null)
   const [componentInspectorOpen, setComponentInspectorOpen] = useState(false)
+  const [boardOutlineOpen, setBoardOutlineOpen] = useState(false)
+  const [boardOutlinePoints, setBoardOutlinePoints] = useState<BoardOutlinePoint[]>([])
+  const [boardOutlineError, setBoardOutlineError] = useState('')
   const [selectedComponentId, setSelectedComponentId] = useState('')
   const [simulation, setSimulation] = useState<Simulation | null>(null)
   const [build, setBuild] = useState<BuildStatus>(initialBuild)
@@ -370,6 +374,37 @@ export default function App() {
     }
   }
 
+  const openBoardOutlineEditor = () => {
+    setBoardOutlineError('')
+    setBoardOutlinePoints(getBoardOutline(sourceRef.current, preview))
+    setBoardOutlineOpen(true)
+  }
+
+  const applyEditedBoardOutline = () => {
+    const validationError = validateBoardOutline(boardOutlinePoints)
+    if (validationError) {
+      setBoardOutlineError(validationError)
+      return
+    }
+    try {
+      setSource(applyBoardOutline(sourceRef.current, boardOutlinePoints))
+      setDirty(true)
+      setBoardOutlineOpen(false)
+      setError('')
+    } catch (cause) {
+      setBoardOutlineError(cause instanceof Error ? cause.message : 'Unable to update board outline')
+    }
+  }
+
+  const importBoardOutlineSvg = async (file: File) => {
+    try {
+      setBoardOutlinePoints(parseSvgOutline(await readFileText(file)))
+      setBoardOutlineError('')
+    } catch (cause) {
+      setBoardOutlineError(cause instanceof Error ? cause.message : 'Unable to read SVG outline')
+    }
+  }
+
   const createPcbDraft = async () => {
     if (!project || dirty || !revision) return
     setError('')
@@ -535,6 +570,7 @@ export default function App() {
               {views.map(({ kind, label }) => <button key={kind} role="tab" aria-selected={view === kind} className={`view-tab ${view === kind ? 'active' : ''}`} onClick={() => setView(kind)}>{label}</button>)}
             </div>
             <span className="preview-meta">{preview ? `Revision ${build.revision || revision}` : 'Live preview'}</span>
+            {view === 'pcb' && project && <button className="outline-button" onClick={openBoardOutlineEditor}>Board outline</button>}
             {view !== 'simulation' && inspectedComponents.length > 0 && <button className={`inspector-toggle ${componentInspectorOpen ? 'active' : ''}`} aria-expanded={componentInspectorOpen} aria-controls="component-inspector" onClick={() => setComponentInspectorOpen((open) => !open)}>Components <span>{inspectedComponents.length}</span></button>}
           </div>
           <div className="preview-content">
@@ -599,9 +635,63 @@ export default function App() {
           <footer><span>{manufacturingPreflight?.ready ? 'Preflight ready' : manufacturingPreflight ? 'Resolve blocking checks before export' : 'Preflight unavailable'}</span><button className="build-button" disabled={!project || dirty || build.status !== 'ready' || build.revision !== revision || exportingManufacturing || loadingManufacturing || !manufacturingPreflight?.ready} onClick={downloadManufacturing}>{exportingManufacturing ? 'Exporting…' : 'Download Manufacturing ZIP'}</button></footer>
         </section>
       </div>}
+      {boardOutlineOpen && <BoardOutlineDialog points={boardOutlinePoints} error={boardOutlineError} onChange={setBoardOutlinePoints} onImport={(file) => void importBoardOutlineSvg(file)} onError={setBoardOutlineError} onApply={applyEditedBoardOutline} onClose={() => setBoardOutlineOpen(false)} />}
       {error && <div className="toast-error" role="alert"><span>{error}</span>{error.includes('changed on disk') || error.includes('changed outside') ? <button className="reload-button" onClick={reloadFile}>Reload file</button> : null}<button aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
     </main>
   )
+}
+
+function readFileText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Unable to read SVG file text.'))
+    reader.onerror = () => reject(new Error('Unable to read SVG file.'))
+    reader.readAsText(file)
+  })
+}
+
+function BoardOutlineDialog({ points, error, onChange, onImport, onError, onApply, onClose }: {
+  points: BoardOutlinePoint[]
+  error: string
+  onChange: (points: BoardOutlinePoint[]) => void
+  onImport: (file: File) => void
+  onError: (error: string) => void
+  onApply: () => void
+  onClose: () => void
+}) {
+  const canvasPoints = points.map(({ x, y }) => `${200 + x * 5},${150 - y * 5}`).join(' ')
+  const addPoint = (event: MouseEvent<SVGSVGElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const x = bounds.width ? (event.clientX - bounds.left) * (400 / bounds.width) : event.clientX
+    const y = bounds.height ? (event.clientY - bounds.top) * (300 / bounds.height) : event.clientY
+    onChange([...points, { x: Math.round((x - 200) / 5 * 10) / 10, y: Math.round((150 - y) / 5 * 10) / 10 }])
+    onError('')
+  }
+
+  return <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+    <section className="history-dialog board-outline-dialog" role="dialog" aria-modal="true" aria-labelledby="board-outline-title">
+      <header><div><h2 id="board-outline-title">Board outline</h2><p>Click to place points on the canvas, edit coordinates, or import an SVG polygon.</p></div><button aria-label="Close board outline editor" onClick={onClose}>×</button></header>
+      <div className="board-outline-content">
+        <label className="outline-upload">Import outline SVG<input aria-label="Import outline SVG" type="file" accept=".svg,image/svg+xml" onChange={(event) => { const file = event.target.files?.[0]; if (file) onImport(file); event.currentTarget.value = '' }} /></label>
+        <svg className="outline-canvas" viewBox="0 0 400 300" role="application" aria-label="Draw board outline" onClick={addPoint}>
+          <path d="M200 0V300M0 150H400" className="outline-axis" />
+          {points.length >= 2 && <polyline points={points.length >= 3 ? `${canvasPoints} ${canvasPoints.split(' ')[0]}` : canvasPoints} className="outline-polygon" />}
+          {points.map(({ x, y }, index) => <g key={`${index}-${x}-${y}`}><circle cx={200 + x * 5} cy={150 - y * 5} r="4" className="outline-point" /><text x={204 + x * 5} y={146 - y * 5}>{index + 1}</text></g>)}
+        </svg>
+        <div className="outline-point-list" aria-label="Outline points">
+          {points.map((point, index) => <div className="outline-point-row" key={index}>
+            <strong>{index + 1}</strong>
+            <label>X (mm)<input aria-label={`Outline point ${index + 1} x`} type="number" step="0.1" value={point.x} onChange={(event) => onChange(points.map((item, pointIndex) => pointIndex === index ? { ...item, x: Number(event.target.value) } : item))} /></label>
+            <label>Y (mm)<input aria-label={`Outline point ${index + 1} y`} type="number" step="0.1" value={point.y} onChange={(event) => onChange(points.map((item, pointIndex) => pointIndex === index ? { ...item, y: Number(event.target.value) } : item))} /></label>
+            <button className="quiet-button" aria-label={`Remove point ${index + 1}`} onClick={() => { onChange(points.filter((_, pointIndex) => pointIndex !== index)); onError('') }}>Remove</button>
+          </div>)}
+        </div>
+        <button className="outline-button" onClick={() => { const last = points.at(-1); onChange([...points, last ? { x: last.x + 5, y: last.y } : { x: 0, y: 0 }]); onError('') }}>Add point</button>
+        {error && <p className="outline-error" role="alert">{error}</p>}
+      </div>
+      <footer><span>{points.length} points · millimeters</span><div><button className="quiet-button" onClick={onClose}>Cancel</button><button className="build-button" onClick={onApply}>Apply outline</button></div></footer>
+    </section>
+  </div>
 }
 
 function ManufacturingCheckRow({ check }: { check: ManufacturingCheck }) {
