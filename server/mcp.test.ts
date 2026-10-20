@@ -36,6 +36,7 @@ test("MCP clients can list and create projects through registered tools", async 
     assert.ok(tools.tools.some((tool) => tool.name === "list_projects"))
     assert.ok(tools.tools.some((tool) => tool.name === "duplicate_project"))
     assert.ok(tools.tools.some((tool) => tool.name === "check_manufacturability"))
+    assert.ok(tools.tools.some((tool) => tool.name === "check_connectivity"))
     const created = await client.callTool({ name: "create_project", arguments: { name: "MCP board" } })
     assert.equal(created.isError, undefined)
     const payload = JSON.parse(created.content.find((item) => item.type === "text")?.text ?? "null")
@@ -63,8 +64,9 @@ test("MCP exposes read-only inspection of components, nets, pins, routes, and bo
     { type: "source_port", source_port_id: "source_port_0", source_component_id: "source_component_0", name: "VCC", pin_number: 1, port_hints: ["VCC", "pin1", "1"], subcircuit_connectivity_map_key: "net0" },
     { type: "source_port", source_port_id: "source_port_1", source_component_id: "source_component_1", name: "pin1", pin_number: 1, port_hints: ["pin1", "1"], subcircuit_connectivity_map_key: "net0" },
     { type: "source_port", source_port_id: "source_port_2", source_component_id: "source_component_1", name: "pin2", pin_number: 2, port_hints: ["pin2", "2"], subcircuit_connectivity_map_key: "net1" },
+    { type: "source_port", source_port_id: "source_port_3", source_component_id: "source_component_0", name: "NC", pin_number: 2 },
     { type: "source_trace", source_trace_id: "source_trace_0", name: "VCC", connected_source_port_ids: ["source_port_0", "source_port_1"], connected_source_net_ids: [] },
-    { type: "source_trace", source_trace_id: "source_trace_1", name: "GND", connected_source_port_ids: ["source_port_2"], connected_source_net_ids: [] },
+    { type: "source_trace", source_trace_id: "source_trace_1", name: "GND", connected_source_port_ids: ["source_port_2", "source_port_404"], connected_source_net_ids: [] },
     { type: "pcb_component", pcb_component_id: "pcb_component_0", source_component_id: "source_component_1", center: { x: 2, y: 3 }, width: 1, height: 1, rotation: 90, layer: "top" },
     { type: "pcb_trace", pcb_trace_id: "pcb_trace_0", source_trace_id: "source_trace_0", route: [{ route_type: "wire", x: 1, y: 2, width: 0.15, layer: "top" }] },
   ]
@@ -107,6 +109,15 @@ test("MCP exposes read-only inspection of components, nets, pins, routes, and bo
     assert.deepEqual(pins.map(({ name, connectedNets }) => [name, connectedNets]), [["pin1", ["VCC"]], ["pin2", ["GND"]]])
     const board = readResult<Array<{ width: number; height: number; num_layers: number }>>(await client.callTool({ name: "get_board_properties", arguments: { projectId: project.id } }))
     assert.deepEqual([board[0]?.width, board[0]?.height, board[0]?.num_layers], [24, 12, 2])
+    const connectivity = readResult<{ revision: string; componentCount: number; portCount: number; connectedPortCount: number; unconnectedPorts: Array<{ source_port_id: string; source_component_name: string; name: string }>; danglingPortIds: string[] }>(await client.callTool({
+      name: "check_connectivity", arguments: { projectId: project.id },
+    }))
+    assert.equal(connectivity.revision, rawCircuit.revision)
+    assert.equal(connectivity.componentCount, 2)
+    assert.equal(connectivity.portCount, 4)
+    assert.equal(connectivity.connectedPortCount, 3)
+    assert.deepEqual(connectivity.unconnectedPorts.map(({ source_port_id, source_component_name, name }) => [source_port_id, source_component_name, name]), [["source_port_3", "J1", "NC"]])
+    assert.deepEqual(connectivity.danglingPortIds, ["source_port_404"])
   } finally {
     await client.close()
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))

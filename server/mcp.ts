@@ -6,7 +6,7 @@ import { timingSafeEqual } from "node:crypto"
 import { z } from "zod4"
 import { getSimulationResults } from "./simulation.js"
 import { checkManufacturability } from "./manufacturing.js"
-import { getBoardProperties, getComponent, getPinConnections, listComponents, listNets, traceNet } from "./circuit-inspection.js"
+import { checkConnectivity, getBoardProperties, getComponent, getPinConnections, listComponents, listNets, traceNet } from "./circuit-inspection.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
 
 type Project = {
@@ -181,6 +181,15 @@ function createServer(service: ProjectService): McpServer {
     description: "Return pcb_board elements from the latest successful Circuit JSON build, including dimensions, material, stackup, and emitted design-rule fields.",
     inputSchema: z.object({ projectId }),
   }, async ({ projectId }) => safeTool(async () => getBoardProperties((await service.preview(projectId)).circuitJson)))
+
+  server.registerTool("check_connectivity", {
+    title: "Check emitted connectivity",
+    description: "Summarize source-port connections present in the latest successful Circuit JSON. Reports unconnected and dangling port references without inferring design intent or performing ERC.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => {
+    const preview = await service.preview(projectId)
+    return { revision: preview.revision, ...checkConnectivity(preview.circuitJson) }
+  }))
 
   server.registerTool("get_project_requirements", {
     title: "Get project requirements",

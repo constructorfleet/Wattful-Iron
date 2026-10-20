@@ -37,6 +37,7 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `trace_net` | Inspect `source_trace` elements by net name or trace ID, connected ports and components, and matching `pcb_trace` routes. |
 | `get_pin_connections` | List a component's `source_port` elements and the source traces that include each port. Match components by name or `source_component_id`. |
 | `get_board_properties` | Return the emitted `pcb_board` elements, including dimensions, material, stackup, and design-rule properties. |
+| `check_connectivity` | Summarize source-port links emitted in Circuit JSON, including ports with no emitted trace and trace references to missing ports. |
 | `get_project_requirements` | Read a project's revisioned `requirements.json` document, when configured. |
 | `validate_project_requirements` | Compare supported board requirements with the latest successful build and report unsupported checks as not evaluated. |
 | `run_simulation` | Build the current source and return transient SPICE results emitted by tscircuit, when configured. |
@@ -46,6 +47,8 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 `update_project_file` requires the `revision` returned by `read_project_file`; stale writes return a tool error. `duplicate_project` also requires the current project revision and creates a fresh project history. There are no delete or component-ordering tools.
 
 Circuit inspection reads the most recent successful build. These tools expose the fields present in Circuit JSON: logical nets come from `source_trace` and `connected_source_port_ids`, pin details from `source_port`, PCB placement from `pcb_component`, and board data from `pcb_board`. `get_component` accepts a component reference/name or source component ID; it returns only related placement, pins, and trace connections present in that build. `get_circuit_json` returns the complete JSON and its build revision. `trace_net` accepts a source trace name or ID and can return multiple matching traces when a name is reused. These tools do not infer missing component, pin, or board properties.
+
+`check_connectivity` reports source-port link coverage from the latest successful build and includes its revision. A port with no emitted `source_trace` link is listed as unconnected, and trace references to absent ports are listed as dangling. Unconnected ports may be intentional; this report does not infer design intent or replace ERC.
 
 Simulation uses the existing tscircuit build integration. Add supported analog
 simulation elements and probes to the source; `run_simulation` rebuilds the
