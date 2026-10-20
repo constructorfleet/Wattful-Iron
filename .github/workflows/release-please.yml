@@ -107,7 +107,10 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=ghcr.io/constructorfleet/wattful-iron,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=release-${{ matrix.architecture }}
+          cache-from: |
+            type=gha,scope=wattful-runtime-ci
+            type=gha,scope=wattful-build-job-ci
+            type=gha,scope=release-${{ matrix.architecture }}
           cache-to: type=gha,mode=max,scope=release-${{ matrix.architecture }}
       - name: Export release image digest
         env:

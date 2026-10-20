@@ -217,7 +217,10 @@ jobs:
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=ghcr.io/constructorfleet/wattful-iron,push-by-digest=true,name-canonical=true,push=true
           labels: ${{ steps.metadata.outputs.labels }}
-          cache-from: type=gha,scope=publish-${{ matrix.architecture }}
+          cache-from: |
+            type=gha,scope=wattful-runtime-ci
+            type=gha,scope=wattful-build-job-ci
+            type=gha,scope=publish-${{ matrix.architecture }}
           cache-to: type=gha,mode=max,scope=publish-${{ matrix.architecture }}
       - name: Export image digest
         env:
