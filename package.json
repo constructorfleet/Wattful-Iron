@@ -23,7 +23,7 @@
     "fflate": "0.8.3",
     "kicad-to-circuit-json": "0.0.143",
     "react": "19.1.0",
-    "three": "0.179.1",
+    "three": "0.186.1",
     "tscircuit": "0.0.2930",
     "typescript": "5.8.3",
     "uuid": "14.0.0",
