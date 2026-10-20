@@ -61,6 +61,54 @@ test("built-in examples are listed and copied into independent editable projects
   }
 })
 
+test("projects can be duplicated at a known revision with independent files and retained metadata", async () => {
+  const f = await fixture(async () => circuit)
+  try {
+    const { body: original } = await request(f.app).post("/api/projects").send({ name: "Sensor board" }).expect(201)
+    const source = await request(f.app).get(`/api/projects/${original.id}/files`).query({ path: original.entrypoint }).expect(200)
+    const edited = await request(f.app).put(`/api/projects/${original.id}/files`).query({ path: original.entrypoint })
+      .set("If-Match", source.body.revision).send({ revision: source.body.revision, content: "export default () => <board name=\"sensor\" />" }).expect(200)
+    const extra = await request(f.app).put(`/api/projects/${original.id}/files`).query({ path: "src/config.json" })
+      .set("If-Match", edited.body.revision).send({ revision: edited.body.revision, content: "{\"gain\":2}" }).expect(200)
+    const originalPackage = await request(f.app).get(`/api/projects/${original.id}/files`).query({ path: "package.json" }).expect(200)
+    const duplicate = await request(f.app).post(`/api/projects/${original.id}/duplicate`)
+      .set("If-Match", extra.body.revision).send({ name: "Sensor board experiment" }).expect(201)
+    assert.notEqual(duplicate.body.id, original.id)
+    assert.equal(duplicate.body.name, "Sensor board experiment")
+    assert.equal(duplicate.body.entrypoint, original.entrypoint)
+    assert.notEqual(duplicate.body.revision, extra.body.revision)
+
+    const duplicateSource = await request(f.app).get(`/api/projects/${duplicate.body.id}/files`).query({ path: original.entrypoint }).expect(200)
+    const duplicateConfig = await request(f.app).get(`/api/projects/${duplicate.body.id}/files`).query({ path: "src/config.json" }).expect(200)
+    const duplicatePackage = await request(f.app).get(`/api/projects/${duplicate.body.id}/files`).query({ path: "package.json" }).expect(200)
+    assert.equal(duplicateSource.body.content, "export default () => <board name=\"sensor\" />")
+    assert.equal(duplicateConfig.body.content, "{\"gain\":2}")
+    assert.equal(duplicatePackage.body.content, originalPackage.body.content)
+    const changed = await request(f.app).put(`/api/projects/${duplicate.body.id}/files`).query({ path: "src/config.json" })
+      .set("If-Match", duplicate.body.revision).send({ revision: duplicate.body.revision, content: "{\"gain\":4}" }).expect(200)
+    assert.equal((await request(f.app).get(`/api/projects/${original.id}/files`).query({ path: "src/config.json" })).body.content, "{\"gain\":2}")
+    await request(f.app).post(`/api/projects/${original.id}/duplicate`).set("If-Match", edited.body.revision)
+      .send({ name: "Stale copy" }).expect(409)
+    await request(f.app).get(`/api/projects/${duplicate.body.id}`).expect(200)
+    assert.notEqual(changed.body.revision, duplicate.body.revision)
+  } finally { await f.cleanup() }
+})
+
+test("project duplication preserves PDF references and their document bytes", async () => {
+  const f = await fixture(async () => circuit)
+  try {
+    const pdf = Buffer.from("%PDF-1.4\nreference content")
+    const imported = await request(f.app).post("/api/projects/import-pdf").query({ name: "PDF project", filename: "schematic.pdf" })
+      .set("Content-Type", "application/pdf").send(pdf).expect(201)
+    const duplicate = await request(f.app).post(`/api/projects/${imported.body.id}/duplicate`)
+      .set("If-Match", imported.body.revision).send({ name: "PDF project copy" }).expect(201)
+    assert.deepEqual(duplicate.body.referencePdfs, imported.body.referencePdfs)
+    const referenceId = duplicate.body.referencePdfs[0].id
+    const copiedPdf = await request(f.app).get(`/api/projects/${duplicate.body.id}/references/${referenceId}`).expect(200)
+    assert.deepEqual(copiedPdf.body, pdf)
+  } finally { await f.cleanup() }
+})
+
 test("project metadata can be renamed and deletion requires current revision and explicit name confirmation", async () => {
   const f = await fixture(async () => circuit)
   try {

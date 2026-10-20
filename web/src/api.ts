@@ -42,7 +42,8 @@ type Fetcher = typeof fetch
 async function request<T>(url: string, init: RequestInit = {}, fetcher: Fetcher = fetch): Promise<T> {
   const response = await fetcher(url, init)
   if (response.status === 409 || response.status === 412) {
-    throw new Error('This file changed on disk. Reload it before saving again.')
+    const payload = await response.json().catch(() => ({})) as { error?: string }
+    throw new Error(payload.error || 'The project changed while this action was in progress. Reload it and try again.')
   }
   if (!response.ok) {
     const detail = await response.text()
@@ -59,6 +60,12 @@ export const createProject = (name: string, templateId?: string, fetcher?: Fetch
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ name, templateId }),
+}, fetcher)
+
+export const duplicateProject = (id: string, name: string, revision: string, fetcher?: Fetcher) => request<Project>(`/api/projects/${encodeURIComponent(id)}/duplicate`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'If-Match': revision },
+  body: JSON.stringify({ name }),
 }, fetcher)
 
 export const importSchematics = (name: string, files: Array<{ name: string; content: string }>, fetcher?: Fetcher) => request<{

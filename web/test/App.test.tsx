@@ -6,6 +6,7 @@ const api = vi.hoisted(() => ({
   listProjects: vi.fn(),
   listProjectTemplates: vi.fn(),
   createProject: vi.fn(),
+  duplicateProject: vi.fn(),
   importPdfReference: vi.fn(),
   getProject: vi.fn(),
   getProjectReferencePdfUrl: vi.fn((projectId: string, referenceId: string) => `/api/projects/${projectId}/references/${referenceId}`),
@@ -67,6 +68,7 @@ beforeEach(() => {
   api.getManufacturingPreflight.mockResolvedValue({ preflight: { ready: true, profile: { id: 'board-default', label: 'Board defaults' }, checks: [{ id: 'circuit-errors', status: 'not-evaluated', message: 'Circuit JSON contains no ERC/DRC error records; no validator result confirms this check passed.' }] } })
   api.getSimulation.mockResolvedValue({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], diagnostics: [] })
   api.createProject.mockResolvedValue({ ...existingProject, id: 'new-1', name: 'Sensor Board' })
+  api.duplicateProject.mockResolvedValue({ ...existingProject, id: 'copy-1', name: 'LED Board copy', revision: 'copy-rev-1' })
   api.importPdfReference.mockResolvedValue({ ...existingProject, id: 'pdf-1', name: 'Shim reference', referencePdfs: [{ id: 'ref-1', name: 'shim.pdf' }] })
   api.getProject.mockImplementation((id: string) => Promise.resolve(id === 'pdf-1'
     ? { ...existingProject, id: 'pdf-1', name: 'Shim reference', referencePdfs: [{ id: 'ref-1', name: 'shim.pdf' }] }
@@ -104,7 +106,7 @@ describe('workbench', () => {
   it('opens a project in the TSX editor and preview workspace', async () => {
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: /LED Board/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
 
     expect(await screen.findByLabelText('TSX source editor')).toHaveValue('export default () => <board />')
     expect(await screen.findByTestId('circuit-preview')).toBeInTheDocument()
@@ -114,12 +116,23 @@ describe('workbench', () => {
     expect(screen.getByRole('tab', { name: '3D' })).toBeInTheDocument()
   })
 
+  it('duplicates a project into a separate editable project', async () => {
+    const duplicate = { ...existingProject, id: 'copy-1', name: 'LED Board copy', revision: 'copy-rev-1' }
+    api.duplicateProject.mockResolvedValue(duplicate)
+    api.getProject.mockImplementation((id: string) => Promise.resolve(id === 'copy-1' ? duplicate : existingProject))
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Duplicate LED Board' }))
+    await waitFor(() => expect(api.duplicateProject).toHaveBeenCalledWith('led-1', 'LED Board copy', 'rev-1'))
+    expect(await screen.findByLabelText('TSX source editor')).toHaveValue('export default () => <board />')
+    expect(await screen.findByRole('button', { name: /LED Board copy TSX project/ })).toBeInTheDocument()
+  })
+
   it('browses project files, opens them with matching editor language, and protects unsaved edits', async () => {
     api.getProjectFile.mockImplementation((_id: string, path: string) => Promise.resolve({
       path, content: path === 'src/helpers.js' ? 'export const pin = 1' : 'export default () => <board />', revision: 'rev-1',
     }))
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: /LED Board/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
     expect(await screen.findByRole('button', { name: 'src/helpers.js' })).toBeInTheDocument()
     fireEvent.change(await screen.findByLabelText('TSX source editor'), { target: { value: 'unsaved circuit' } })
     fireEvent.click(screen.getByRole('button', { name: 'src/helpers.js' }))
@@ -133,7 +146,7 @@ describe('workbench', () => {
   it('cancels or saves before changing the active file', async () => {
     api.saveProjectFile.mockResolvedValue({ path: 'index.tsx', content: 'edited', revision: 'rev-2' })
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: /LED Board/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
     fireEvent.change(await screen.findByLabelText('TSX source editor'), { target: { value: 'edited source' } })
     fireEvent.click(screen.getByRole('button', { name: 'package.json' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
@@ -150,7 +163,7 @@ describe('workbench', () => {
     api.getPreview.mockResolvedValue({ kind: 'pcb', revision: 'rev-1', circuitJson: [{ type: 'pcb_board' }, { type: 'pcb_component' }] })
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: /LED Board/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
     fireEvent.click(screen.getByRole('tab', { name: 'PCB' }))
 
     expect(await screen.findByTestId('pcb-viewer')).toHaveAttribute('data-circuit-types', 'pcb_board,pcb_component')
@@ -166,7 +179,7 @@ describe('workbench', () => {
         signals: [{ id: 'trace-1', name: 'OUT', unit: 'V', netId: 'net-1', samples: [{ x: 0, y: 0 }, { x: 1, y: 5 }] }], diagnostics: [],
       })
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: /LED Board/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
     fireEvent.change(await screen.findByLabelText('TSX source editor'), { target: { value: 'export default () => <board name="updated" />' } })
     fireEvent.click(screen.getByRole('tab', { name: 'Simulation' }))
 
@@ -182,7 +195,7 @@ describe('workbench', () => {
 
   it('shows tscircuit build diagnostics when a simulation rebuild fails', async () => {
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: /LED Board/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
     fireEvent.click(screen.getByRole('tab', { name: 'Simulation' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Run simulation' }))
     await waitFor(() => expect(api.startBuild).toHaveBeenCalledWith('led-1'))
@@ -220,7 +233,7 @@ describe('workbench', () => {
 
   it('browses, compares, and restores a saved source revision', async () => {
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: /LED Board/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
     fireEvent.click(await screen.findByRole('button', { name: 'History' }))
 
     expect(await screen.findByRole('dialog', { name: 'Project source history' })).toBeInTheDocument()
@@ -235,7 +248,7 @@ describe('workbench', () => {
 
   it('shows selected-profile preflight checks before manufacturing export', async () => {
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: /LED Board/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
     fireEvent.click(await screen.findByRole('button', { name: /Rule checks/ }))
 
     expect(await screen.findByRole('dialog', { name: 'Manufacturing preflight' })).toBeInTheDocument()

@@ -55,9 +55,13 @@ button { color: inherit; cursor: pointer; }
 .quiet-button { padding: 5px; color: #98a2ad; border: 0; background: transparent; font-size: 11px; }
 .small-primary { min-height: 28px; padding: 0 10px; font-size: 11px; }
 .project-list { display: flex; flex-direction: column; gap: 3px; padding: 0 8px; overflow-y: auto; }
-.project-item { display: flex; width: 100%; align-items: center; gap: 10px; min-height: 49px; padding: 6px 10px; border: 1px solid transparent; border-radius: 5px; color: #aeb6bf; background: transparent; text-align: left; }
+.project-row { display: flex; align-items: center; gap: 3px; }
+.project-item { display: flex; flex: 1; min-width: 0; align-items: center; gap: 10px; min-height: 49px; padding: 6px 10px; border: 1px solid transparent; border-radius: 5px; color: #aeb6bf; background: transparent; text-align: left; }
 .project-item:hover { background: #1e242a; }
 .project-item.selected { color: #eff4f2; border-color: #30483e; background: #1c2924; }
+.project-action { flex: 0 0 30px; width: 30px; height: 30px; border: 1px solid transparent; border-radius: 4px; color: #8a959e; background: transparent; font-size: 15px; }
+.project-action:hover:not(:disabled) { color: #78d7b2; border-color: #30483e; background: #1c2924; }
+.project-action:disabled { opacity: .5; }
 .project-icon { flex: 0 0 23px; display: grid; place-items: center; width: 23px; height: 23px; border-radius: 5px; color: #74d4b0; background: #263b33; font-size: 14px; }
 .project-item-copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .project-item-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }

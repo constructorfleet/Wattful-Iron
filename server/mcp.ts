@@ -20,6 +20,7 @@ type Project = {
 type ProjectService = {
   list(): Promise<Project[]>
   create(name: string): Promise<Project>
+  duplicateProject(id: string, name: string, expectedRevision: string): Promise<Project>
   get(id: string): Promise<Project>
   getFileList(id: string): Promise<string[]>
   readFile(id: string, relativePath: string): Promise<{ path: string; content: string; revision: string }>
@@ -81,6 +82,12 @@ function createServer(service: ProjectService): McpServer {
     description: "Create a project with a minimal editable tscircuit starter. The initial build is scheduled automatically.",
     inputSchema: z.object({ name: z.string().trim().min(1).max(100) }),
   }, async ({ name }) => result(await service.create(name)))
+
+  server.registerTool("duplicate_project", {
+    title: "Duplicate project",
+    description: "Copy a project's editable files and references into a new independent project. The current source revision is required.",
+    inputSchema: z.object({ projectId, name: z.string().trim().min(1).max(100), revision: z.string().uuid() }),
+  }, async ({ projectId, name, revision }) => safeTool(() => service.duplicateProject(projectId, name, revision)))
 
   server.registerTool("get_project", {
     title: "Get project",
