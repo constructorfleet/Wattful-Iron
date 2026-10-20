@@ -98,6 +98,17 @@ button { color: inherit; cursor: pointer; }
 .inspector-toggle span { color: #72d4af; font: 9px var(--mono); }
 .preview-content { position: relative; flex: 1; min-height: 0; overflow: hidden; background-color: #15191e; background-image: radial-gradient(#293039 0.65px, transparent 0.65px); background-size: 15px 15px; }
 .preview-content > div { height: 100%; }
+.multiview-toggle { margin-right: 12px; white-space: nowrap; }
+.multiview-toggle.active { color: #d8e8df; border-color: #4c6e5a; background: #202d26; }
+.multiview-grid { display: grid; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
+.multiview-card { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; border-right: 1px solid #293139; }
+.multiview-card > h2 { flex: 0 0 30px; margin: 0; padding: 9px 12px 6px; color: #9aa7a2; border-bottom: 1px solid #293139; background: #191e23; font: 9px var(--mono); text-transform: uppercase; }
+.multiview-canvas { min-width: 0; min-height: 0; flex: 1; overflow: hidden; }
+.multiview-canvas > div { height: 100%; min-height: 0; }
+.multiview-canvas .pcb-preview { min-height: 0; }
+.multiview-divider { z-index: 1; width: 10px; min-height: 0; cursor: col-resize; touch-action: none; background: #20262d; border-right: 1px solid #11161a; border-left: 1px solid #11161a; }
+.multiview-divider:hover,.multiview-divider:focus-visible { outline: none; background: #345044; }
+.multiview-divider:focus-visible { box-shadow: inset 0 0 0 1px #72d4af; }
 .component-inspector { position: absolute; z-index: 3; top: 10px; right: 10px; bottom: 10px; display: flex; width: min(310px, calc(100% - 20px)); flex-direction: column; overflow: hidden auto; color: #cbd5d9; border: 1px solid #39454a; border-radius: 6px; background: #171d21f5; box-shadow: 0 10px 30px #0008; }
 .component-inspector > header { position: sticky; z-index: 1; top: 0; display: flex; align-items: center; justify-content: space-between; padding: 11px 12px; border-bottom: 1px solid #2c363c; background: #1b2227; }
 .component-inspector > header h2 { margin: 0 0 3px; color: #e1e9e5; font-size: 12px; }

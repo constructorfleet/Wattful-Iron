@@ -1,4 +1,4 @@
-import { Fragment, lazy, Suspense, useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
+import { Fragment, lazy, Suspense, useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import Editor from '@monaco-editor/react'
 import { configureMonaco } from './configureMonaco'
 import { hasPcbPreviewData } from './previewAvailability'
@@ -57,6 +57,14 @@ const CircuitJsonPreview = lazy(() => import('@tscircuit/runframe').then((module
 const PcbPreview = lazy(() => import('./PcbPreview'))
 type PcbCircuitJson = import('./PcbPreview').PcbCircuitJson
 
+function Divider({ index, widths, drag, resizePanel }: { index: number; widths: number[]; drag: { current: { index: number; startX: number; width: number; lastDelta: number } | null }; resizePanel: (index: number, amount: number) => void }) {
+  return <div className="multiview-divider" role="separator" aria-orientation="vertical" aria-label={index === 0 ? 'Resize schematic and PCB previews' : 'Resize PCB and 3D previews'} aria-valuemin={15} aria-valuemax={85} aria-valuenow={Math.round(widths[index])} tabIndex={0}
+    onKeyDown={(event) => { if (event.key === 'ArrowLeft') { event.preventDefault(); resizePanel(index, -2) } if (event.key === 'ArrowRight') { event.preventDefault(); resizePanel(index, 2) } }}
+    onPointerDown={(event: ReactPointerEvent<HTMLDivElement>) => { drag.current = { index, startX: event.clientX, width: event.currentTarget.parentElement?.getBoundingClientRect().width || 1, lastDelta: 0 }; event.currentTarget.setPointerCapture(event.pointerId) }}
+    onPointerMove={(event: ReactPointerEvent<HTMLDivElement>) => { const start = drag.current; if (!start || start.index !== index) return; const delta = (event.clientX - start.startX) / start.width * 100; drag.current = { ...start, lastDelta: delta }; resizePanel(index, delta - start.lastDelta) }}
+    onPointerUp={() => { drag.current = null }} />
+}
+
 async function fetchPdfUrl(value: string): Promise<File> {
   let url: URL
   try { url = new URL(value) } catch { throw new Error('Enter a valid public PDF URL') }
@@ -85,6 +93,9 @@ export default function App() {
   const [dirty, setDirty] = useState(false)
   const [unsavedDialogOpen, setUnsavedDialogOpen] = useState(false)
   const [view, setView] = useState<PreviewKind | 'simulation'>('schematic')
+  const [showAllViews, setShowAllViews] = useState(false)
+  const [panelWidths, setPanelWidths] = useState([33.3, 33.4, 33.3])
+  const panelDrag = useRef<{ index: number; startX: number; width: number; lastDelta: number } | null>(null)
   const [preview, setPreview] = useState<unknown>(null)
   const [componentInspectorOpen, setComponentInspectorOpen] = useState(false)
   const [boardOutlineOpen, setBoardOutlineOpen] = useState(false)
@@ -485,6 +496,25 @@ export default function App() {
   const statusText = build.status === 'idle' ? 'Idle' : build.step || build.status[0].toUpperCase() + build.status.slice(1)
   const hasPcbPreview = hasPcbPreviewData(preview)
 
+  const resizePanel = (index: number, amount: number) => setPanelWidths((widths) => {
+    const next = [...widths]
+    const min = 15
+    const delta = Math.max(-next[index] + min, Math.min(next[index + 1] - min, amount))
+    next[index] += delta
+    next[index + 1] -= delta
+    return next
+  })
+
+  const renderPreviewCard = (kind: 'schematic' | 'pcb' | '3d') => <section className="multiview-card" role="region" aria-label={`${kind === '3d' ? '3D' : kind === 'pcb' ? 'PCB' : 'Schematic'} preview`} key={kind}>
+    <h2>{kind === '3d' ? '3D' : kind === 'pcb' ? 'PCB' : 'Schematic'}</h2>
+    <div className="multiview-canvas">
+      {preview && (kind !== 'pcb' || hasPcbPreview) ? kind === 'pcb'
+        ? <Suspense fallback={<div className="preview-loading">Loading PCB preview…</div>}><PcbPreview circuitJson={preview as PcbCircuitJson} selectedSourceComponentId={selectedComponentId} onViewSchematicComponent={(event) => { setSelectedComponentId(event.source_component_id); setComponentInspectorOpen(true); setView('schematic'); setShowAllViews(false) }} /></Suspense>
+        : <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview className="circuit-preview" key={`${kind}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={kind === '3d' ? 'cad' : 'schematic'} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense>
+        : <div className="preview-placeholder"><h2>{preview ? 'No PCB layout in this project' : 'Waiting for first build'}</h2><p>{preview ? 'Generate a PCB draft to inspect placements and the 3D board.' : 'Build the project to generate design previews.'}</p></div>}
+    </div>
+  </section>
+
   useEffect(() => {
     if (project && view === 'simulation') getSimulation(project.id).then(setSimulation).catch(() => setSimulation(null))
   }, [project, view, build.status, build.revision])
@@ -566,6 +596,7 @@ export default function App() {
 
         <section className="preview-panel" aria-label="Design previews">
           <div className="preview-toolbar">
+            <button className={`outline-button multiview-toggle ${showAllViews ? 'active' : ''}`} aria-pressed={showAllViews} onClick={() => setShowAllViews((show) => !show)}>{showAllViews ? 'Single view' : 'Show all views'}</button>
             <div className="view-tabs" role="tablist" aria-label="Preview type">
               {views.map(({ kind, label }) => <button key={kind} role="tab" aria-selected={view === kind} className={`view-tab ${view === kind ? 'active' : ''}`} onClick={() => setView(kind)}>{label}</button>)}
             </div>
@@ -574,6 +605,13 @@ export default function App() {
             {view !== 'simulation' && inspectedComponents.length > 0 && <button className={`inspector-toggle ${componentInspectorOpen ? 'active' : ''}`} aria-expanded={componentInspectorOpen} aria-controls="component-inspector" onClick={() => setComponentInspectorOpen((open) => !open)}>Components <span>{inspectedComponents.length}</span></button>}
           </div>
           <div className="preview-content">
+            {showAllViews ? <div className="multiview-grid" style={{ gridTemplateColumns: `minmax(0, ${panelWidths[0]}fr) 10px minmax(0, ${panelWidths[1]}fr) 10px minmax(0, ${panelWidths[2]}fr)` }}>
+              {renderPreviewCard('schematic')}
+              <Divider index={0} widths={panelWidths} drag={panelDrag} resizePanel={resizePanel} />
+              {renderPreviewCard('pcb')}
+              <Divider index={1} widths={panelWidths} drag={panelDrag} resizePanel={resizePanel} />
+              {renderPreviewCard('3d')}
+            </div> : <>
             {build.status === 'failed' && view !== 'simulation' && <div className="build-errors" role="alert"><div className="error-title"><span>!</span> Build failed</div>{build.diagnostics?.length ? build.diagnostics.map((diagnostic, index) => { const path = diagnostic.path || diagnostic.file; return <div className="diagnostic" key={`${path}-${diagnostic.line}-${index}`}><strong>{path}{diagnostic.line ? `:${diagnostic.line}` : ''}</strong><span>{diagnostic.message}</span></div> }) : <p>Check the source and build output for details.</p>}</div>}
             {view === 'simulation' ? <SimulationPanel simulation={simulation} build={build} canRun={Boolean(project)} onRun={() => { setSimulation(null); void runBuild() }} /> : preview && (view === 'schematic' || hasPcbPreview) ? view === 'pcb' ? <Suspense fallback={<div className="preview-loading">Loading PCB preview…</div>}><PcbPreview circuitJson={preview as PcbCircuitJson} selectedSourceComponentId={selectedComponentId} onViewSchematicComponent={(event) => { setSelectedComponentId(event.source_component_id); setComponentInspectorOpen(true); setView('schematic') }} /></Suspense> : <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview className="circuit-preview" key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={view === '3d' ? 'cad' : view} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : preview ? <div className="preview-placeholder">
               <div className="placeholder-board"><span className="board-edge edge-a" /><span className="board-edge edge-b" /><span className="board-chip chip-a" /><span className="board-chip chip-b" /><span className="board-pad pad-a" /><span className="board-pad pad-b" /><span className="board-route route-a" /><span className="board-route route-b" /></div>
@@ -586,6 +624,7 @@ export default function App() {
               <p>{project ? build.status === 'failed' ? 'Fix the source and build again to update this view.' : 'Build the project to generate a schematic, PCB layout, and 3D preview.' : 'Create a project to see your design take shape.'}</p>
               {project && <button className="outline-button" onClick={runBuild}>Build project</button>}
             </div>}
+            </>}
             {componentInspectorOpen && view !== 'simulation' && <aside id="component-inspector" className="component-inspector" aria-label="Component inspector">
               <header><div><h2>Components</h2><span>{inspectedComponents.length} from build data</span></div><button aria-label="Close component inspector" onClick={() => setComponentInspectorOpen(false)}>×</button></header>
               {!selectedComponent ? <p className="inspector-empty">No source components were found in this build.</p> : <>
