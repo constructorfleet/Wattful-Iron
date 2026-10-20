@@ -26,7 +26,7 @@ jobs:
           manifest-file: .release-please-manifest.json
       - name: Validate release PR title and dispatch its checks
         if: steps.release.outputs.prs_created == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           RELEASE_PRS: ${{ steps.release.outputs.prs }}
         with:
