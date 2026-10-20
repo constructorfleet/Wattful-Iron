@@ -1,7 +1,32 @@
 import { describe, expect, it, vi } from 'vitest'
-import { compareProjectRevisions, createProject, duplicateProject, getManufacturingArchive, getManufacturingPreflight, getManufacturingProfiles, getProjectFile, getProjectHistory, getProjectReferencePdfUrl, importPdfReference, importSchematics, listProjectTemplates, restoreProjectRevision, saveProjectFile, type Project } from '../src/api'
+import { compareProjectRevisions, createProject, duplicateProject, exportProjectArchive, getManufacturingArchive, getManufacturingPreflight, getManufacturingProfiles, getProjectFile, getProjectHistory, getProjectReferencePdfUrl, importPdfReference, importProjectArchive, importSchematics, listProjectTemplates, restoreProjectRevision, saveProjectFile, type Project } from '../src/api'
 
 describe('project API', () => {
+  it('imports a ZIP archive as a new project without decoding its bytes', async () => {
+    const project: Project = { id: 'p-imported', name: 'Imported board', entrypoint: 'index.tsx', revision: 'r1' }
+    const file = new File(['zip bytes'], 'board.zip', { type: 'application/zip' })
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(project), { status: 201 }))
+    await expect(importProjectArchive(file, fetcher)).resolves.toEqual(project)
+    expect(fetcher).toHaveBeenCalledWith('/api/projects/import-archive', expect.objectContaining({
+      method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: file,
+    }))
+  })
+
+  it('shows the archive validation message instead of raw JSON', async () => {
+    const file = new File(['invalid'], 'bad.zip', { type: 'application/zip' })
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'Project archive is missing its manifest' }), { status: 400 }))
+    await expect(importProjectArchive(file, fetcher)).rejects.toThrow(/^Project archive is missing its manifest$/)
+  })
+
+  it('downloads a project ZIP and reports server export errors', async () => {
+    const archive = new Blob(['zip bytes'], { type: 'application/zip' })
+    const fetcher = vi.fn().mockResolvedValue(new Response(archive, { status: 200 }))
+    await expect(exportProjectArchive('p/1', fetcher)).resolves.toEqual(archive)
+    expect(fetcher).toHaveBeenCalledWith('/api/projects/p%2F1/export')
+    await expect(exportProjectArchive('missing', vi.fn().mockResolvedValue(new Response('Project not found', { status: 404 }))))
+      .rejects.toThrow('Project not found')
+  })
+
   it('creates a named project and returns the server project record', async () => {
     const project: Project = { id: 'p-1', name: 'LED board', entrypoint: 'index.tsx', revision: 'r1' }
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(project), { status: 201 }))

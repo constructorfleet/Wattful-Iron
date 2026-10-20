@@ -45,6 +45,10 @@ button { color: inherit; cursor: pointer; }
 .new-project-link:hover { background: #252c33; }
 .new-project-link span { color: var(--accent); font-size: 16px; }
 .create-form { margin: 0 11px 12px; padding: 12px; background: #1c2127; border: 1px solid #303841; border-radius: 6px; }
+.archive-form { margin: 0 11px 12px; padding: 10px; display: grid; gap: 7px; background: #1c2127; border: 1px solid #303841; border-radius: 6px; }
+.archive-form label { color: #b4bcc5; font-size: 11px; }
+.archive-form input { width: 100%; color: var(--text); font-size: 10px; }
+.archive-form small { color: #89929c; font-size: 10px; line-height: 1.45; }
 .create-form label { display: block; margin-bottom: 7px; color: #b4bcc5; font-size: 11px; }
 .create-form input { width: 100%; height: 32px; padding: 0 8px; color: var(--text); outline: none; border: 1px solid #414b55; border-radius: 4px; background: #12161a; font-size: 12px; }
 .create-form input:focus { border-color: var(--accent-dark); }

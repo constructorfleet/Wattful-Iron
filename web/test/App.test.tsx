@@ -8,6 +8,8 @@ const api = vi.hoisted(() => ({
   createProject: vi.fn(),
   duplicateProject: vi.fn(),
   importPdfReference: vi.fn(),
+  importProjectArchive: vi.fn(),
+  exportProjectArchive: vi.fn(),
   getProject: vi.fn(),
   getProjectReferencePdfUrl: vi.fn((projectId: string, referenceId: string) => `/api/projects/${projectId}/references/${referenceId}`),
   getProjectFile: vi.fn(),
@@ -90,6 +92,50 @@ describe('workbench', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'PDF reference' }))
     expect(await screen.findByRole('dialog', { name: 'shim.pdf' })).toBeInTheDocument()
     expect(screen.getByTitle('PDF reference: shim.pdf')).toHaveAttribute('src', '/api/projects/pdf-1/references/ref-1')
+  })
+
+  it('imports a project archive and asks before replacing unsaved editor state', async () => {
+    api.importProjectArchive.mockResolvedValue({ ...existingProject, id: 'archive-1', name: 'Archived Board' })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.change(await screen.findByLabelText('TSX source editor'), { target: { value: 'unsaved local edit' } })
+    fireEvent.change(screen.getByLabelText('Import project archive (.zip)'), { target: { files: [new File(['zip'], 'board.zip', { type: 'application/zip' })] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Import archive' }))
+    await waitFor(() => expect(api.importProjectArchive).toHaveBeenCalledWith(expect.any(File)))
+    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument()
+    expect(screen.getByLabelText('TSX source editor')).toHaveValue('unsaved local edit')
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByLabelText('TSX source editor')).toHaveValue('unsaved local edit')
+  })
+
+  it('shows archive import errors without replacing the open project', async () => {
+    api.importProjectArchive.mockRejectedValue(new Error('Project archive is missing index.tsx'))
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.change(screen.getByLabelText('Import project archive (.zip)'), { target: { files: [new File(['bad'], 'bad.zip', { type: 'application/zip' })] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Import archive' }))
+    expect(await screen.findByText('Project archive is missing index.tsx')).toBeInTheDocument()
+    expect(screen.getByLabelText('TSX source editor')).toHaveValue('export default () => <board />')
+  })
+
+  it('downloads the open project as a ZIP archive', async () => {
+    api.exportProjectArchive.mockResolvedValue(new Blob(['archive'], { type: 'application/zip' }))
+    const createObjectURL = vi.fn(() => 'blob:project-archive')
+    const originalCreateObjectURL = URL.createObjectURL
+    URL.createObjectURL = createObjectURL
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    try {
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+      await screen.findByLabelText('TSX source editor')
+      fireEvent.click(screen.getByRole('button', { name: 'Export project ZIP' }))
+      await waitFor(() => expect(api.exportProjectArchive).toHaveBeenCalledWith('led-1'))
+      expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
+      expect(click).toHaveBeenCalled()
+    } finally {
+      URL.createObjectURL = originalCreateObjectURL
+      click.mockRestore()
+    }
   })
 
   it('downloads a public PDF URL in the browser and imports it as a reference', async () => {
