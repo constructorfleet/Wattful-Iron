@@ -3,6 +3,7 @@ name: Container
 on:
   pull_request:
     branches: [main]
+    types: [opened, edited, reopened, synchronize]
   push:
     branches: [main]
     tags: ["v*.*.*"]
@@ -12,6 +13,22 @@ permissions:
   contents: read
 
 jobs:
+  conventional-pr-title:
+    name: Conventional PR title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      PR_TITLE: ${{ github.event.pull_request.title }}
+    steps:
+      - name: Validate title format
+        shell: bash
+        run: |
+          pattern='^[a-z][a-z0-9-]*(\([[:alnum:]_.\/-]+\))?(!)?: .+$'
+          if [[ ! "$PR_TITLE" =~ $pattern ]]; then
+            echo "Pull request title must use Conventional Commit format, for example: feat(import): support another schematic format"
+            exit 1
+          fi
+
   validate-image:
     name: Build container image
     runs-on: ubuntu-latest
