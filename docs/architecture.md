@@ -31,8 +31,9 @@ against one project volume.
   current source on demand and display the resulting waveforms or diagnostics.
 - An optional bearer-token protected Streamable HTTP MCP endpoint with project,
   build, preview, diagnostics, and simulation tools.
-- A `/api/projects/:id/manufacturing` preflight for current builds, Circuit JSON
-  ERC/DRC diagnostics, and a limited set of selected fabricator rule checks.
+- A `/api/projects/:id/manufacturing` preflight for current builds, supported
+  tscircuit Circuit JSON design checks, emitted validation diagnostics, and a
+  limited set of selected fabricator rule checks.
 - A preflight-gated `/api/projects/:id/manufacturing.zip` download using
   tscircuit's verified Gerber/drill/BOM/pick-and-place ZIP export.
 - Board-default and JLCPCB rigid two-layer, one-ounce profiles for checking
@@ -56,8 +57,8 @@ manufacturing sign-off.
 ## Not implemented
 
 The following capabilities in the project vision are not available in this
-slice: ACP servers, per-user authentication and authorization, dedicated full
-ERC/DRC, interactive cross-view connectivity tracing, simultaneous resizable
+slice: ACP servers, per-user authentication and authorization, full
+KiCad-equivalent ERC/DRC, interactive cross-view connectivity tracing, simultaneous resizable
 views, component datasheets and supplier/availability/cost enrichment, complete
 fabricator rule coverage, Git-backed revision history, approval states, and
 purchasing or fabrication integrations. The component inspector only displays

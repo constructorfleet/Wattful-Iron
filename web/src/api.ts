@@ -35,7 +35,8 @@ export type Simulation = {
   diagnostics: Array<{ message: string; severity: 'error' }>
 }
 export type ManufacturingProfile = { id: string; label: string; description: string; rules: { minTraceWidthMm: number; minNonPlatedHoleMm: number; copperToBoardEdgeMm: number } }
-export type ManufacturingCheck = { id: string; status: 'pass' | 'fail' | 'warning' | 'not-evaluated'; message: string }
+export type ManufacturingCheckIssue = { severity: 'error' | 'warning'; type: string; category: string; message: string; affectedIds: string[] }
+export type ManufacturingCheck = { id: string; status: 'pass' | 'fail' | 'warning' | 'not-evaluated'; message: string; issues?: ManufacturingCheckIssue[] }
 export type ManufacturingPreflight = { ready: boolean; profile: Pick<ManufacturingProfile, 'id' | 'label'>; checks: ManufacturingCheck[] }
 type Fetcher = typeof fetch
 

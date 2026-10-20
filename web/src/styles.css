@@ -207,6 +207,10 @@ button { color: inherit; cursor: pointer; }
 .manufacturing-check.pass .check-status { color: #70d3ac; }
 .manufacturing-check.warning .check-status { color: #e6bb72; }
 .manufacturing-check.fail .check-status { color: #ef8989; }
+.check-issue { margin: 6px 0 0; padding-left: 8px; border-left: 2px solid #e6bb72; color: #d6b978; }
+.check-issue.error { border-color: #ef8989; color: #efa2a2; }
+.check-issue strong { text-transform: capitalize; }
+.check-issue small { color: #83909a; }
 .checks-empty { color: #87939c; font-size: 11px; }
 .manufacturing-dialog > footer { border-top: 1px solid #2c343c; color: #849099; font: 10px var(--mono); }
 @keyframes pulse { to { opacity: .35; } }

@@ -238,13 +238,13 @@ function createServer(service: ProjectService): McpServer {
 
   server.registerTool("check_manufacturability", {
     title: "Check manufacturing readiness",
-    description: "Run the manufacturing completeness preflight against the latest successful Circuit JSON build. This does not perform ERC/DRC or fabricator-specific validation.",
+    description: "Run manufacturing completeness checks, supported tscircuit Circuit JSON design checks, and selected fabricator profile checks against the latest build.",
     inputSchema: z.object({ projectId }),
   }, async ({ projectId }) => safeTool(async () => {
     const [project, preview] = await Promise.all([service.get(projectId), service.preview(projectId)])
     return {
       revision: preview.revision,
-      ...checkManufacturability(
+      ...await checkManufacturability(
         preview.circuitJson,
         project.lastBuild ?? { status: "idle", revision: "" },
         preview.revision,
