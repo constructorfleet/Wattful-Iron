@@ -1,6 +1,7 @@
 import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Editor from '@monaco-editor/react'
 import { configureMonaco } from './configureMonaco'
+import { hasPcbPreviewData } from './previewAvailability'
 import { getInspectedComponents } from './componentInspector'
 import {
   compareProjectRevisions,
@@ -15,6 +16,7 @@ import {
   getProjectFiles,
   getProjectHistory,
   getProjectReferencePdfUrl,
+  generatePcbDraft,
   getSimulation,
   importPdfReference,
   importSchematics,
@@ -368,6 +370,26 @@ export default function App() {
     }
   }
 
+  const createPcbDraft = async () => {
+    if (!project || dirty || !revision) return
+    setError('')
+    try {
+      const result = await generatePcbDraft(project.id, revision)
+      const [updatedProject, updatedFile] = await Promise.all([getProject(project.id), getProjectFile(project.id, filePath)])
+      setProject(updatedProject)
+      setProjects((items) => items.map((item) => item.id === updatedProject.id ? updatedProject : item))
+      setRevision(result.revision)
+      revisionRef.current = result.revision
+      setSource(updatedFile.content)
+      sourceRef.current = updatedFile.content
+      setBuild({ status: 'ready', revision: result.revision })
+      setView('pcb')
+      await refreshPreview(project.id, 'pcb')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to generate PCB draft')
+    }
+  }
+
   const restoreRevision = async () => {
     if (!project || !revisionToRestore || !revision) return
     restoringHistoryRef.current = true
@@ -426,6 +448,7 @@ export default function App() {
   }
 
   const statusText = build.status === 'idle' ? 'Idle' : build.step || build.status[0].toUpperCase() + build.status.slice(1)
+  const hasPcbPreview = hasPcbPreviewData(preview)
 
   useEffect(() => {
     if (project && view === 'simulation') getSimulation(project.id).then(setSimulation).catch(() => setSimulation(null))
@@ -445,6 +468,7 @@ export default function App() {
           <button className="build-button history-button" disabled={!project} onClick={() => setHistoryDialogOpen(true)}>History</button>
           <button className="build-button" disabled={!project?.referencePdfs?.length} onClick={() => setReferencePdfOpen(true)}>PDF reference</button>
           <button className="build-button manufacturing-button" disabled={!project} onClick={() => setManufacturingDialogOpen(true)}>Rule checks · Manufacturing</button>
+          {source.includes('ImportedBoard') && projectFiles.some((file) => /^imports\/[^/]+\.json$/i.test(file)) && <button className="build-button" disabled={!project || dirty} onClick={() => void createPcbDraft()}>Refresh component names</button>}
           <button className="build-button" disabled={!project || build.status === 'compiling'} onClick={runBuild}><span>▶</span> Build</button>
         </div>
       </header>
@@ -459,9 +483,9 @@ export default function App() {
             <select id="project-template" value={projectTemplate} disabled={schematicFiles.length > 0 || !!referencePdf || !!referencePdfUrl.trim()} onChange={(event) => setProjectTemplate(event.target.value)}>
               {projectTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
             </select>
-            <label htmlFor="schematic-files">Import KiCad schematics</label>
-            <input id="schematic-files" type="file" accept=".kicad_sch" multiple onChange={(event) => { setSchematicFiles(Array.from(event.target.files ?? [])); setReferencePdf(null); setReferencePdfUrl('') }} />
-            <small className="template-description">Modern .kicad_sch files only. Imported designs are converted to editable tscircuit source; review converter notes and verify the resulting build.</small>
+            <label htmlFor="schematic-files">Import schematics (KiCad or EasyEDA)</label>
+            <input id="schematic-files" type="file" accept=".kicad_sch,.json,application/json" multiple onChange={(event) => { setSchematicFiles(Array.from(event.target.files ?? [])); setReferencePdf(null); setReferencePdfUrl('') }} />
+            <small className="template-description">Supports modern KiCad .kicad_sch and EasyEDA Standard schematic .json files. EasyEDA import requires KiCad 10 on the server. Imported designs are converted to editable tscircuit source; review converter notes and verify the resulting build.</small>
             <label htmlFor="schematic-pdf">Import PDF as a visual reference</label>
             <input id="schematic-pdf" type="file" accept="application/pdf,.pdf" onChange={(event) => { setReferencePdf(event.target.files?.[0] ?? null); setReferencePdfUrl(''); setSchematicFiles([]) }} />
             <label htmlFor="schematic-pdf-url">Or import from a public PDF URL</label>
@@ -515,7 +539,12 @@ export default function App() {
           </div>
           <div className="preview-content">
             {build.status === 'failed' && view !== 'simulation' && <div className="build-errors" role="alert"><div className="error-title"><span>!</span> Build failed</div>{build.diagnostics?.length ? build.diagnostics.map((diagnostic, index) => { const path = diagnostic.path || diagnostic.file; return <div className="diagnostic" key={`${path}-${diagnostic.line}-${index}`}><strong>{path}{diagnostic.line ? `:${diagnostic.line}` : ''}</strong><span>{diagnostic.message}</span></div> }) : <p>Check the source and build output for details.</p>}</div>}
-            {view === 'simulation' ? <SimulationPanel simulation={simulation} build={build} canRun={Boolean(project)} onRun={() => { setSimulation(null); void runBuild() }} /> : preview ? view === 'pcb' ? <Suspense fallback={<div className="preview-loading">Loading PCB preview…</div>}><PcbPreview circuitJson={preview as PcbCircuitJson} /></Suspense> : <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview className="circuit-preview" key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={view === '3d' ? 'cad' : view} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : <div className="preview-placeholder">
+            {view === 'simulation' ? <SimulationPanel simulation={simulation} build={build} canRun={Boolean(project)} onRun={() => { setSimulation(null); void runBuild() }} /> : preview && (view === 'schematic' || hasPcbPreview) ? view === 'pcb' ? <Suspense fallback={<div className="preview-loading">Loading PCB preview…</div>}><PcbPreview circuitJson={preview as PcbCircuitJson} /></Suspense> : <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview className="circuit-preview" key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={view === '3d' ? 'cad' : view} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : preview ? <div className="preview-placeholder">
+              <div className="placeholder-board"><span className="board-edge edge-a" /><span className="board-edge edge-b" /><span className="board-chip chip-a" /><span className="board-chip chip-b" /><span className="board-pad pad-a" /><span className="board-pad pad-b" /><span className="board-route route-a" /><span className="board-route route-b" /></div>
+              <h2>{view === 'pcb' ? 'No PCB layout in this project' : 'No PCB data for 3D preview'}</h2>
+              <p>This schematic has no PCB placements. Generate a draft layout, then review footprints, component models, pin mappings, and routing before fabrication.</p>
+              {view === 'pcb' && source.includes('ImportedSchematic') && <button className="outline-button" disabled={!project || dirty || build.status === 'compiling'} onClick={() => void createPcbDraft()}>Generate PCB draft</button>}
+            </div> : <div className="preview-placeholder">
               <div className="placeholder-board"><span className="board-edge edge-a" /><span className="board-edge edge-b" /><span className="board-chip chip-a" /><span className="board-chip chip-b" /><span className="board-pad pad-a" /><span className="board-pad pad-b" /><span className="board-route route-a" /><span className="board-route route-b" /></div>
               <h2>{project ? build.status === 'failed' ? 'Last good preview is unavailable' : 'Waiting for first build' : 'Your design workspace'}</h2>
               <p>{project ? build.status === 'failed' ? 'Fix the source and build again to update this view.' : 'Build the project to generate a schematic, PCB layout, and 3D preview.' : 'Create a project to see your design take shape.'}</p>

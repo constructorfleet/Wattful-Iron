@@ -120,6 +120,10 @@ export const startBuild = (id: string, fetcher?: Fetcher) => request<{ buildId: 
   method: 'POST',
 }, fetcher)
 
+export const generatePcbDraft = (id: string, revision: string, fetcher?: Fetcher) => request<{ revision: string; placements: number }>(`/api/projects/${encodeURIComponent(id)}/generate-pcb`, {
+  method: 'POST', headers: { 'If-Match': revision },
+}, fetcher)
+
 export const getPreview = (id: string, kind: PreviewKind, fetcher?: Fetcher) => request<Preview>(
   `/api/projects/${encodeURIComponent(id)}/preview?kind=${encodeURIComponent(kind)}`,
   undefined,

@@ -39,6 +39,21 @@ This import preserves the PDF as a visual reference. It does not create
 components, pin assignments, net labels, or electrical connections. Add the
 corresponding circuit in the TSX editor and use the PDF to compare the drawing.
 
+## Import an EasyEDA Standard schematic
+
+Choose **New project**, enter a project name, and select the EasyEDA Standard
+schematic `.json` file under **Import schematics (KiCad or EasyEDA)**. Wattful-Iron
+converts the file to KiCad schematic text and uses the same Circuit JSON and
+editable-source flow as KiCad imports. The server needs KiCad 10 with
+`kicad-cli` on `PATH` (or `KICAD_CLI_PATH` set to the executable) to upgrade the
+converted schematic. The uploaded JSON is retained in the project's `imports/`
+folder. Multi-sheet files currently import their first sheet; the original
+file remains available for reference.
+
+The initial preview comes from the converted Circuit JSON; generated
+tscircuit source remains best-effort and should be reviewed and built before
+further editing.
+
 ## Compare footprints and board mechanics
 
 Create a **Footprint comparison** project to compare 0402, 0603, and 0805 resistor

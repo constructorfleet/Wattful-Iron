@@ -25,7 +25,7 @@ export function getInspectedComponents(circuitJson: unknown): InspectedComponent
     )
     return {
       id,
-      name: typeof component.name === 'string' && component.name ? component.name : id,
+      name: [component.name, component.display_name].filter((value): value is string => typeof value === 'string' && value.length > 0).join(' · ') || id,
       properties,
       placement: records.find((item) => item.type === 'pcb_component' && item.source_component_id === id),
       pins: ports.map((port) => {

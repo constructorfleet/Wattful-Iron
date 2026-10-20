@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   restoreProjectRevision: vi.fn(),
   saveProjectFile: vi.fn(),
   startBuild: vi.fn(),
+  generatePcbDraft: vi.fn(),
   getPreview: vi.fn(),
   getSimulation: vi.fn(),
   getManufacturingProfiles: vi.fn(),
@@ -114,6 +115,29 @@ describe('workbench', () => {
     expect(screen.getByRole('tab', { name: 'Schematic' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'PCB' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '3D' })).toBeInTheDocument()
+  })
+
+  it('explains when the selected project has schematic data but no PCB layout', async () => {
+    api.getProjectFile.mockResolvedValueOnce({ path: 'index.tsx', content: 'const ImportedSchematic = () => null', revision: 'rev-1' })
+    api.getPreview.mockResolvedValue({ kind: 'pcb', revision: 'rev-1', circuitJson: [{ type: 'schematic_component' }] })
+    api.generatePcbDraft.mockResolvedValue({ revision: 'rev-2', placements: 3 })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'PCB' }))
+    expect(await screen.findByText(/This schematic has no PCB placements/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Generate PCB draft' }))
+    await waitFor(() => expect(api.generatePcbDraft).toHaveBeenCalledWith('led-1', 'rev-1'))
+  })
+
+  it('lets existing EasyEDA PCB drafts refresh component names from the retained source', async () => {
+    api.getProjectFiles.mockResolvedValue(['index.circuit.tsx', 'imports/SCH_Hunter.json', 'package.json'])
+    api.getProjectFile.mockResolvedValueOnce({ path: 'index.circuit.tsx', content: 'export const ImportedBoard = () => <board />', revision: 'rev-1' })
+    api.generatePcbDraft.mockResolvedValue({ revision: 'rev-2', placements: 27 })
+    api.getProjectFile.mockResolvedValue({ path: 'index.circuit.tsx', content: 'export const ImportedBoard = () => <board />', revision: 'rev-2' })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Refresh component names' }))
+    await waitFor(() => expect(api.generatePcbDraft).toHaveBeenCalledWith('led-1', 'rev-1'))
   })
 
   it('duplicates a project into a separate editable project', async () => {
