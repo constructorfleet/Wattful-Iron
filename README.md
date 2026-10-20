@@ -46,12 +46,14 @@ source editor, tscircuit builds, retained Circuit JSON preview data, live SSE
 updates, diagnostics, schematic/PCB/3D previews, and a waveform panel for
 transient results included in the successful build. Add tscircuit analog
 simulation elements and probes to the circuit source to configure a simulation.
-Results are not re-run on demand, and the panel only displays transient graph
-data emitted by tscircuit. Treat all views as development previews rather than
-engineering approval.
+Use **Run simulation** to rebuild the current source on demand. The panel only
+displays transient graph data emitted by tscircuit. Treat all views as
+development previews rather than engineering approval.
 
-ACP agent interfaces, user-level authentication, and dedicated ERC/DRC are not
-implemented in this slice. Project code runs in disposable build containers;
+ACP agent interfaces, user-level authentication, and full KiCad-equivalent
+ERC/DRC are not implemented in this slice. Manufacturing preflight runs the
+supported tscircuit Circuit JSON checks and a limited set of fabricator rules.
+Project code runs in disposable build containers;
 see the [security model](docs/security.md) for the runtime boundary and limits.
 An optional shared-token MCP endpoint, manufacturing preflight, and
 preflight-gated Gerber/drill/BOM/pick-and-place ZIP export are available. These

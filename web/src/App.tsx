@@ -607,7 +607,7 @@ export default function App() {
 function ManufacturingCheckRow({ check }: { check: ManufacturingCheck }) {
   const label = check.status === 'pass' ? 'Pass' : check.status === 'fail' ? 'Blocked' : check.status === 'not-evaluated' ? 'Not evaluated' : 'Review'
   const className = check.status === 'not-evaluated' ? 'warning' : check.status
-  return <div className={`manufacturing-check ${className}`}><span className="check-status">{label}</span><span>{check.message}</span></div>
+  return <div className={`manufacturing-check ${className}`}><span className="check-status">{label}</span><div><span>{check.message}</span>{check.issues?.map((issue, index) => <p className={`check-issue ${issue.severity}`} key={`${issue.type}-${index}`}><strong>{issue.category}</strong> · {issue.message}{issue.affectedIds.length > 0 ? <small> ({issue.affectedIds.join(', ')})</small> : null}</p>)}</div></div>
 }
 
 function formatBytes(bytes: number) {

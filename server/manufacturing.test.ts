@@ -16,8 +16,8 @@ const elements = [
   { type: "pcb_component", source_component_id: "source_component_1", width: 1, height: 1 },
 ]
 
-test("manufacturing preflight accepts the current successful board and reports limits", () => {
-  const result = checkManufacturability(elements, { status: "ready", revision: "rev-1" }, "rev-1")
+test("manufacturing preflight accepts the current successful board and reports limits", async () => {
+  const result = await checkManufacturability(elements, { status: "ready", revision: "rev-1" }, "rev-1")
   assert.equal(result.ready, true)
   assert.equal(result.profile.id, "board-default")
   assert.equal(result.checks.find(({ id }) => id === "bom-data")?.status, "warning")
@@ -26,8 +26,8 @@ test("manufacturing preflight accepts the current successful board and reports l
   assert.equal(result.checks.find(({ id }) => id === "trace-width")?.status, "warning")
 })
 
-test("BOM preflight identifies source components missing values or supplier part numbers", () => {
-  const result = checkManufacturability([
+test("BOM preflight identifies source components missing values or supplier part numbers", async () => {
+  const result = await checkManufacturability([
     ...elements,
     { type: "source_component", source_component_id: "source_component_2", name: "C1", value: "100nF" },
   ], { status: "ready", revision: "rev-1" }, "rev-1")
@@ -37,8 +37,8 @@ test("BOM preflight identifies source components missing values or supplier part
   assert.match(result.checks.find(({ id }) => id === "bom-data")?.message ?? "", /C1.*manufacturer part number/)
 })
 
-test("BOM preflight passes when source components have values and supplier part numbers", () => {
-  const result = checkManufacturability([
+test("BOM preflight passes when source components have values and supplier part numbers", async () => {
+  const result = await checkManufacturability([
     { ...elements[0] },
     { ...elements[1], value: "10k", manufacturer_part_number: "RC0402FR-0710KL" },
     elements[2]!,
@@ -47,8 +47,8 @@ test("BOM preflight passes when source components have values and supplier part 
   assert.equal(result.checks.find(({ id }) => id === "bom-data")?.status, "pass")
 })
 
-test("fabricator profile blocks traces and non-plated holes below its published minima", () => {
-  const result = checkManufacturability([
+test("fabricator profile blocks traces and non-plated holes below its published minima", async () => {
+  const result = await checkManufacturability([
     ...elements,
     { type: "pcb_trace", pcb_trace_id: "trace-1", route: [{ route_type: "wire", x: 0, y: 0, width: 0.08, layer: "top" }] },
     { type: "pcb_hole", pcb_hole_id: "hole-1", hole_shape: "circle", x: 0, y: 0, hole_diameter: 0.4 },
@@ -58,8 +58,8 @@ test("fabricator profile blocks traces and non-plated holes below its published 
   assert.equal(result.checks.find(({ id }) => id === "hole-size")?.status, "fail")
 })
 
-test("preflight reports Circuit JSON validation errors and warnings", () => {
-  const result = checkManufacturability([
+test("preflight reports Circuit JSON validation errors and warnings", async () => {
+  const result = await checkManufacturability([
     ...elements,
     { type: "pcb_port_not_connected_error", message: "U1 pin 2 is not connected" },
     { type: "source_pin_missing_trace_warning", message: "R1 pin 1 has no trace" },
@@ -69,8 +69,8 @@ test("preflight reports Circuit JSON validation errors and warnings", () => {
   assert.equal(result.checks.find(({ id }) => id === "circuit-warnings")?.status, "warning")
 })
 
-test("Circuit JSON validation records do not imply that missing check categories passed", () => {
-  const result = checkManufacturability([
+test("Circuit JSON validation records do not imply that missing check categories passed", async () => {
+  const result = await checkManufacturability([
     ...elements,
     { type: "pcb_port_not_connected_error", message: "U1 pin 2 is not connected" },
   ], { status: "ready", revision: "rev-1" }, "rev-1")
@@ -78,8 +78,23 @@ test("Circuit JSON validation records do not imply that missing check categories
   assert.equal(result.checks.find(({ id }) => id === "circuit-warnings")?.status, "not-evaluated")
 })
 
-test("manufacturing preflight blocks source connections without a routed PCB trace", () => {
-  const result = checkManufacturability([
+test("manufacturing preflight runs supported design checks and exposes blocking findings", async () => {
+  const result = await checkManufacturability([
+    ...elements,
+    { type: "source_component", source_component_id: "source_component_power", name: "J1" },
+    { type: "source_port", source_component_id: "source_component_power", source_port_id: "vin", name: "VIN", must_be_connected: true },
+  ], { status: "ready", revision: "rev-1" }, "rev-1")
+
+  const designRules = result.checks.find(({ id }) => id === "design-rules")
+  assert.equal(designRules?.status, "fail")
+  const floatingPin = designRules?.issues?.find(({ type }) => type === "source_pin_must_be_connected_error")
+  assert.ok(floatingPin)
+  assert.match(floatingPin.message, /VIN.*floating/)
+  assert.equal(result.ready, false)
+})
+
+test("manufacturing preflight blocks source connections without a routed PCB trace", async () => {
+  const result = await checkManufacturability([
     ...elements,
     { type: "source_trace", source_trace_id: "source_trace_1" },
     { type: "pcb_trace", pcb_trace_id: "pcb_trace_1", source_trace_id: "source_trace_1", route: [] },
@@ -91,13 +106,13 @@ test("manufacturing preflight blocks source connections without a routed PCB tra
   assert.match(result.checks.find(({ id }) => id === "routed-connections")?.message ?? "", /source_trace_1.*source_trace_2/)
 })
 
-test("routing preflight warns when Circuit JSON has no logical connections to verify", () => {
-  const result = checkManufacturability(elements, { status: "ready", revision: "rev-1" }, "rev-1")
+test("routing preflight warns when Circuit JSON has no logical connections to verify", async () => {
+  const result = await checkManufacturability(elements, { status: "ready", revision: "rev-1" }, "rev-1")
   assert.equal(result.checks.find(({ id }) => id === "routed-connections")?.status, "warning")
 })
 
-test("routing preflight passes when every logical source trace has PCB route geometry", () => {
-  const result = checkManufacturability([
+test("routing preflight passes when every logical source trace has PCB route geometry", async () => {
+  const result = await checkManufacturability([
     ...elements,
     { type: "source_trace", source_trace_id: "source_trace_1" },
     { type: "pcb_trace", pcb_trace_id: "pcb_trace_1", source_trace_id: "source_trace_1", route: [{ route_type: "wire", x: 0, y: 0, width: 0.2 }] },
@@ -106,32 +121,32 @@ test("routing preflight passes when every logical source trace has PCB route geo
   assert.equal(result.checks.find(({ id }) => id === "routed-connections")?.status, "pass")
 })
 
-test("fabricator profile checks copper clearance to a rectangular board edge", () => {
-  const result = checkManufacturability([
+test("fabricator profile checks copper clearance to a rectangular board edge", async () => {
+  const result = await checkManufacturability([
     ...elements,
     { type: "pcb_trace", pcb_trace_id: "trace-1", route: [{ route_type: "wire", x: 9.9, y: 0, width: 0.1, layer: "top" }] },
   ], { status: "ready", revision: "rev-1" }, "rev-1", "rev-1", "jlcpcb-2layer-1oz")
   assert.equal(result.checks.find(({ id }) => id === "board-edge-clearance")?.status, "fail")
 })
 
-test("fabricator profile blocks a declared layer-count or material mismatch", () => {
-  const result = checkManufacturability([
+test("fabricator profile blocks a declared layer-count or material mismatch", async () => {
+  const result = await checkManufacturability([
     { ...elements[0], num_layers: 4, material: "fr4" },
     ...elements.slice(1),
   ], { status: "ready", revision: "rev-1" }, "rev-1", "rev-1", "jlcpcb-2layer-1oz")
   assert.equal(result.checks.find(({ id }) => id === "board-stackup")?.status, "fail")
 })
 
-test("manufacturing preflight blocks stale or unsuccessful builds", () => {
-  const result = checkManufacturability(elements, { status: "failed", revision: "rev-1" }, "rev-1")
+test("manufacturing preflight blocks stale or unsuccessful builds", async () => {
+  const result = await checkManufacturability(elements, { status: "failed", revision: "rev-1" }, "rev-1")
   assert.equal(result.ready, false)
   assert.equal(result.checks.find(({ id }) => id === "build")?.status, "fail")
-  const stale = checkManufacturability(elements, { status: "ready", revision: "rev-1" }, "rev-1", "rev-2")
+  const stale = await checkManufacturability(elements, { status: "ready", revision: "rev-1" }, "rev-1", "rev-2")
   assert.equal(stale.ready, false)
 })
 
-test("manufacturing preflight blocks a board without footprints or references", () => {
-  const result = checkManufacturability([
+test("manufacturing preflight blocks a board without footprints or references", async () => {
+  const result = await checkManufacturability([
     { type: "pcb_board" },
     { type: "source_component", source_component_id: "source_component_2", name: "", footprint: "" },
   ], { status: "ready", revision: "rev-1" }, "rev-1")
@@ -140,8 +155,8 @@ test("manufacturing preflight blocks a board without footprints or references", 
   assert.equal(result.checks.find(({ id }) => id === "footprints")?.status, "fail")
 })
 
-test("manufacturing preflight blocks Circuit JSON without a PCB board", () => {
-  const result = checkManufacturability([], { status: "ready", revision: "rev-1" }, "rev-1")
+test("manufacturing preflight blocks Circuit JSON without a PCB board", async () => {
+  const result = await checkManufacturability([], { status: "ready", revision: "rev-1" }, "rev-1")
   assert.equal(result.ready, false)
   assert.equal(result.checks.find(({ id }) => id === "board")?.status, "fail")
 })

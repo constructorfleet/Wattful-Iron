@@ -56,10 +56,14 @@ project and reports any transient results present in Circuit JSON. The
 workbench does not implement a separate solver or expose every analysis type.
 
 `check_manufacturability` reports whether the latest build passes the current
-board, reference, footprint, and revision checks. The browser can download a
+board, reference, footprint, revision, supported tscircuit design, and selected
+fabricator-profile checks. It includes supported design-check findings and
+affected Circuit JSON element IDs. This is not full KiCad-equivalent ERC/DRC.
+The browser can download a
 preflight-approved manufacturing ZIP from
 `/api/projects/{projectId}/manufacturing.zip`; it contains Gerber/drill files,
-BOM, and pick-and-place data. The checks do not replace ERC/DRC or vendor rules.
+BOM, and pick-and-place data. The checks do not replace complete vendor rules
+or manufacturing review.
 
 Projects can define engineering constraints in `requirements.json`. The
 requirements MCP tools expose the document and compare board dimensions and

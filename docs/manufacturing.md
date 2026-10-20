@@ -27,6 +27,15 @@ so the preflight can still permit export; they are not evidence that a supplier
 stocks a part or that an assembly house accepts it. Confirm the generated BOM
 with the fabricator and assembler.
 
+Preflight also runs the supported `@tscircuit/checks` Circuit JSON checks for
+netlist, pin specification, schematic layout, PCB placement, and routing. It
+shows each returned finding with its category, message, and affected element
+IDs; error findings block export and warnings remain review items. When the
+build contains no supported source, schematic, or PCB elements, this check is
+reported as not evaluated. These checks cover the library's implemented rules
+for the supplied Circuit JSON and are not a complete ERC/DRC equivalent to
+KiCad or a fabricator's own rule engine.
+
 Preflight also matches each `source_trace` to a `pcb_trace` with a non-empty
 route. A logical source trace without routed PCB geometry blocks export and is
 identified by its source trace ID. If the Circuit JSON contains no logical
@@ -45,7 +54,7 @@ does not checksum itself; its `checksum_scope` states this explicitly. The
 export uses the Circuit JSON snapshot from the successful build, and the server
 rejects a project revision change during export.
 
-These checks cover a limited subset of the published profile rules; the
+Fabricator checks cover a limited subset of the published profile rules; the
 routing check confirms that route geometry exists for each logical source
 trace but does not prove electrical connectivity or validate every route
 segment. Preflight does not check every copper clearance, plated-hole

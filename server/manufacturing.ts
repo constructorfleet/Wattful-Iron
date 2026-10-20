@@ -7,9 +7,10 @@ import { unzipSync, zipSync } from "fflate"
 import { createHash } from "node:crypto"
 import { writeFile } from "node:fs/promises"
 import { getSimulationResults } from "./simulation.js"
+import { runCircuitDesignChecks, type CircuitDesignIssue } from "./circuit-design-checks.js"
 
 export type BuildState = { status: string; revision: string; diagnostics?: unknown[] }
-export type ManufacturingCheck = { id: string; status: "pass" | "fail" | "warning" | "not-evaluated"; message: string }
+export type ManufacturingCheck = { id: string; status: "pass" | "fail" | "warning" | "not-evaluated"; message: string; issues?: CircuitDesignIssue[] }
 export type ManufacturingPreflight = { ready: boolean; profile: Pick<ManufacturingRuleProfile, "id" | "label">; checks: ManufacturingCheck[] }
 export type ManufacturingRuleProfile = {
   id: string
@@ -35,7 +36,7 @@ const records = (json: unknown) => Array.isArray(json) ? json.filter(isRecord) :
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null
 
 /** Conservative checks based on build state and the Circuit JSON elements present. */
-export function checkManufacturability(circuitJson: unknown, build: BuildState, previewRevision: string, projectRevision = previewRevision, profileId = "board-default"): ManufacturingPreflight {
+export async function checkManufacturability(circuitJson: unknown, build: BuildState, previewRevision: string, projectRevision = previewRevision, profileId = "board-default"): Promise<ManufacturingPreflight> {
   const items = records(circuitJson)
   const boards = items.filter((item) => item.type === "pcb_board")
   const pcbComponents = items.filter((item) => item.type === "pcb_component")
@@ -43,6 +44,7 @@ export function checkManufacturability(circuitJson: unknown, build: BuildState, 
   const profile = manufacturingRuleProfiles.find(({ id }) => id === profileId) ?? manufacturingRuleProfiles[0]!
   const ruleChecks = checkProfileRules(items, profile)
   const validationChecks = checkCircuitValidation(items)
+  const designCheck = await runCircuitDesignChecks(items)
   const routingCheck = checkRoutedConnections(items)
   const checks: ManufacturingCheck[] = [
     build.status === "ready" && build.revision === previewRevision && previewRevision === projectRevision
@@ -61,6 +63,11 @@ export function checkManufacturability(circuitJson: unknown, build: BuildState, 
       ? { id: "footprints", status: "pass", message: "Source components have placed PCB footprint geometry." }
       : { id: "footprints", status: "fail", message: "One or more source components lack placed PCB footprint geometry." },
     ...validationChecks,
+    { id: "design-rules", status: designCheck.status, message: designCheck.status === "not-evaluated"
+      ? "No supported tscircuit design elements were found to check."
+      : designCheck.issues.length > 0
+        ? `${designCheck.issues.length} tscircuit design check finding${designCheck.issues.length === 1 ? "" : "s"}.`
+        : "Supported tscircuit netlist, pin, schematic, placement, and routing checks passed.", issues: designCheck.issues },
     routingCheck,
     ...ruleChecks,
     checkBomData(sources),
@@ -113,7 +120,7 @@ export function mountManufacturingRoutes(app: Express, service: ManufacturingSer
       const project = await service.get(request.params.id!)
       const preview = await service.preview(request.params.id!)
       response.json({ projectRevision: project.revision, previewRevision: preview.revision,
-        preflight: checkManufacturability(preview.circuitJson, project.lastBuild ?? { status: "idle", revision: "" }, preview.revision, project.revision, profileId) })
+        preflight: await checkManufacturability(preview.circuitJson, project.lastBuild ?? { status: "idle", revision: "" }, preview.revision, project.revision, profileId) })
     } catch (error) { next(error) }
   })
   app.get("/api/projects/:id/manufacturing.zip", async (request, response, next) => {
@@ -123,7 +130,7 @@ export function mountManufacturingRoutes(app: Express, service: ManufacturingSer
       if (!profileId) return
       const project = await service.get(request.params.id!)
       const preview = await service.preview(request.params.id!)
-      const preflight = checkManufacturability(preview.circuitJson, project.lastBuild ?? { status: "idle", revision: "" }, preview.revision, project.revision, profileId)
+      const preflight = await checkManufacturability(preview.circuitJson, project.lastBuild ?? { status: "idle", revision: "" }, preview.revision, project.revision, profileId)
       if (!preflight.ready) return response.status(422).json({ error: "Manufacturing preflight failed", projectRevision: project.revision, preflight })
       archive = await service.exportGerbers(request.params.id!)
       const sourceFiles = await service.getSnapshotFiles(request.params.id!)
