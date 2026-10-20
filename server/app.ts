@@ -1,9 +1,13 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto"
-import { access, lstat, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises"
+import { access, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises"
+import { execFile as execFileCallback } from "node:child_process"
+import { promisify } from "node:util"
+import { tmpdir } from "node:os"
 import path from "node:path"
 import express, { type Express, type Request, type Response } from "express"
 import chokidar, { type FSWatcher } from "chokidar"
 import { KicadToCircuitJsonConverter } from "kicad-to-circuit-json"
+import { convertSchematicV6 } from "easyeda2kicad6"
 import { convertCircuitJsonToTscircuit } from "circuit-json-to-tscircuit"
 import { mountMcp } from "./mcp.js"
 import { createGerberArchive, mountManufacturingRoutes } from "./manufacturing.js"
@@ -20,7 +24,9 @@ type ProjectState = { project: ProjectData; preview?: unknown }
 type ProjectSnapshot = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes: number; files: Record<string, string> }
 type ServerEvent = "project" | "file" | "build.status" | "build.ready" | "build.failed"
 type BuildFn = (projectDir: string, entrypoint: string) => Promise<unknown>
-type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; buildExecutionMode?: "isolated" | "trusted-local"; buildRunner?: { url: string; token: string }; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string; workbenchAuthToken?: string }
+type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; buildExecutionMode?: "isolated" | "trusted-local"; buildRunner?: { url: string; token: string }; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string; workbenchAuthToken?: string; kicadCliPath?: string }
+
+const execFile = promisify(execFileCallback)
 
 const templates = [
   { id: "blank-board", name: "Blank starter", description: "An empty board ready for your circuit." },
@@ -52,6 +58,7 @@ class ProjectService {
   readonly ownFileHashes = new Map<string, string>()
   readonly ownFileDeletes = new Set<string>()
   readonly closeHandlers: Array<() => Promise<void>> = []
+  readonly kicadCliPath: string
   readonly ready: Promise<void>
   readonly appNodeModules: string
 
@@ -65,6 +72,7 @@ class ProjectService {
     if (!["isolated", "trusted-local"].includes(this.buildExecutionMode)) throw new Error("BUILD_EXECUTION_MODE must be isolated or trusted-local")
     if (this.buildExecutionMode === "trusted-local" && process.env.NODE_ENV === "production") throw new Error("trusted-local project builds are disabled in production")
     this.watchFiles = options.watchFiles ?? true
+    this.kicadCliPath = options.kicadCliPath ?? process.env.KICAD_CLI_PATH ?? "kicad-cli"
     this.appNodeModules = path.resolve(process.cwd(), "node_modules")
     this.ready = this.initialize()
   }
@@ -187,9 +195,43 @@ class ProjectService {
 
   async importSchematics(name: string, files: Array<{ name: string; content: string }>) {
     const converter = new KicadToCircuitJsonConverter()
-    for (const file of files) converter.addFile(file.name, file.content)
-    try { converter.runUntilFinished() } catch (error) {
-      throw badRequest(`Unable to convert KiCad schematic: ${error instanceof Error ? error.message : "invalid schematic"}`)
+    const importWarnings: string[] = []
+    let conversionDir: string | undefined
+    try {
+      for (const file of files) {
+        if (!file.name.toLowerCase().endsWith(".json")) {
+          converter.addFile(file.name, file.content)
+          continue
+        }
+        let document: { docType?: unknown; schematics?: unknown }
+        try { document = JSON.parse(file.content) as typeof document } catch {
+          throw badRequest(`File ${file.name} must contain valid EasyEDA Standard JSON`)
+        }
+        if (document.docType !== "5" || !Array.isArray(document.schematics) || document.schematics.length === 0 || !document.schematics[0] || typeof document.schematics[0] !== "object") {
+          throw badRequest(`File ${file.name} is not an EasyEDA Standard schematic document (expected docType 5 with at least one sheet)`)
+        }
+        try {
+          const [converted] = convertSchematicV6(document as never, 1, path.basename(file.name, path.extname(file.name)))
+          if (!converted?.trim()) throw new Error("converter returned an empty schematic")
+          if (!conversionDir) conversionDir = await mkdtemp(path.join(tmpdir(), "wattful-easyeda-"))
+          const outputPath = path.join(conversionDir, `${path.basename(file.name, path.extname(file.name))}.kicad_sch`)
+          await writeFile(outputPath, converted)
+          await execFile(this.kicadCliPath, ["sch", "upgrade", "--force", outputPath], { timeout: 60_000, maxBuffer: 2 * 1024 * 1024 })
+          const currentKicad = await readFile(outputPath, "utf8")
+          converter.addFile(path.basename(outputPath), currentKicad.replace(/\s+\((?:show_name|do_not_autoplace)\s+(?:yes|no)\)/g, ""))
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : "conversion failed"
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") throw badRequest("EasyEDA import requires KiCad 10 kicad-cli. Install KiCad 10 or set KICAD_CLI_PATH to its executable.")
+          throw badRequest(`Unable to convert EasyEDA schematic ${file.name}: ${detail}`)
+        }
+        if (document.schematics.length > 1) importWarnings.push(`${file.name}: the importer currently brings in sheet 1 of ${document.schematics.length}; other sheets remain in the retained original JSON.`)
+      }
+      converter.runUntilFinished()
+    } catch (error) {
+      if ((error as { status?: number })?.status === 400) throw error
+      throw badRequest(`Unable to convert schematic: ${error instanceof Error ? error.message : "invalid schematic"}`)
+    } finally {
+      if (conversionDir) await rm(conversionDir, { recursive: true, force: true })
     }
     const circuitJson = converter.getOutput()
     const sourceComponents = circuitJson.filter((item) => item.type === "source_component").length
@@ -229,7 +271,7 @@ class ProjectService {
     return {
       project,
       sourceComponents,
-      warnings: [...converter.getWarnings(), "The imported Circuit JSON is the faithful preview; generated tscircuit source is best-effort. Editing the source switches future builds to normal tscircuit compilation."],
+      warnings: [...importWarnings, ...converter.getWarnings(), "The imported Circuit JSON is the faithful preview; generated tscircuit source is best-effort. Editing the source switches future builds to normal tscircuit compilation."],
     }
   }
 
@@ -761,13 +803,13 @@ export function createApp(options: AppOptions = {}): Express {
       const name = typeof request.body?.name === "string" ? request.body.name.trim() : ""
       const files = request.body?.files
       if (!name || name.length > 100) throw badRequest("Project name must contain 1 to 100 characters")
-      if (!Array.isArray(files) || files.length < 1 || files.length > 10) throw badRequest("Choose between 1 and 10 KiCad schematic files")
+      if (!Array.isArray(files) || files.length < 1 || files.length > 10) throw badRequest("Choose between 1 and 10 KiCad or EasyEDA Standard schematic files")
       let totalBytes = 0
       const normalized = files.map((file: unknown) => {
         const candidate = file as { name?: unknown; content?: unknown }
         if (typeof candidate.name !== "string" || typeof candidate.content !== "string") throw badRequest("Each schematic must include a filename and text content")
         const filename = path.basename(candidate.name)
-        if (filename !== candidate.name || !/\.kicad_sch$/i.test(filename)) throw badRequest("Only modern KiCad .kicad_sch files are supported")
+        if (filename !== candidate.name || !/\.(kicad_sch|json)$/i.test(filename)) throw badRequest("Only KiCad .kicad_sch and EasyEDA Standard .json schematic files are supported")
         totalBytes += Buffer.byteLength(candidate.content)
         return { name: filename, content: candidate.content }
       })

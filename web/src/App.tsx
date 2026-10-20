@@ -459,9 +459,9 @@ export default function App() {
             <select id="project-template" value={projectTemplate} disabled={schematicFiles.length > 0 || !!referencePdf || !!referencePdfUrl.trim()} onChange={(event) => setProjectTemplate(event.target.value)}>
               {projectTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
             </select>
-            <label htmlFor="schematic-files">Import KiCad schematics</label>
-            <input id="schematic-files" type="file" accept=".kicad_sch" multiple onChange={(event) => { setSchematicFiles(Array.from(event.target.files ?? [])); setReferencePdf(null); setReferencePdfUrl('') }} />
-            <small className="template-description">Modern .kicad_sch files only. Imported designs are converted to editable tscircuit source; review converter notes and verify the resulting build.</small>
+            <label htmlFor="schematic-files">Import schematics (KiCad or EasyEDA)</label>
+            <input id="schematic-files" type="file" accept=".kicad_sch,.json,application/json" multiple onChange={(event) => { setSchematicFiles(Array.from(event.target.files ?? [])); setReferencePdf(null); setReferencePdfUrl('') }} />
+            <small className="template-description">Supports modern KiCad .kicad_sch and EasyEDA Standard schematic .json files. EasyEDA import requires KiCad 10 on the server. Imported designs are converted to editable tscircuit source; review converter notes and verify the resulting build.</small>
             <label htmlFor="schematic-pdf">Import PDF as a visual reference</label>
             <input id="schematic-pdf" type="file" accept="application/pdf,.pdf" onChange={(event) => { setReferencePdf(event.target.files?.[0] ?? null); setReferencePdfUrl(''); setSchematicFiles([]) }} />
             <label htmlFor="schematic-pdf-url">Or import from a public PDF URL</label>
