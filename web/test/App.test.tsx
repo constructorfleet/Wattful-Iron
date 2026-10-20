@@ -140,7 +140,7 @@ describe('workbench', () => {
 
   it('downloads a public PDF URL in the browser and imports it as a reference', async () => {
     const originalFetch = globalThis.fetch
-    globalThis.fetch = vi.fn().mockResolvedValue(new Response(new Blob(['%PDF-1.4']), { status: 200 }))
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(new Uint8Array([37, 80, 68, 70, 45, 49, 46, 52]), { status: 200 }))
     try {
       render(<App />)
       fireEvent.click(await screen.findByRole('button', { name: 'New project' }))
@@ -154,7 +154,6 @@ describe('workbench', () => {
 
   it('opens a project in the TSX editor and preview workspace', async () => {
     render(<App />)
-
     fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
 
     expect(await screen.findByLabelText('TSX source editor')).toHaveValue('export default () => <board />')
@@ -405,7 +404,7 @@ describe('workbench', () => {
 
   it('shows selected-profile preflight checks before manufacturing export', async () => {
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board\s*TSX project/ }))
     fireEvent.click(await screen.findByRole('button', { name: /Rule checks/ }))
 
     expect(await screen.findByRole('dialog', { name: 'Manufacturing preflight' })).toBeInTheDocument()
