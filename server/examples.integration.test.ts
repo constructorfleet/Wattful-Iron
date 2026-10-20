@@ -10,29 +10,32 @@ test("example circuits build with their expected PCB geometry and electrical rou
   const projectsDir = await mkdtemp(path.join(tmpdir(), "circuits-examples-http-"))
   const app = createApp({ projectsDir, watchFiles: false, buildExecutionMode: "trusted-local" })
   try {
-    for (const example of ["blank-board", "manufacturing-board", "footprint-comparison", "mounting-pattern", "led-indicator", "voltage-divider"]) {
-      const { body: project } = await request(app).post("/api/projects")
-        .send({ name: example, templateId: example }).expect(201)
-      const built = await waitForBuild(app, project.id, project.revision)
-      const circuit = await request(app).get(`/api/projects/${project.id}/preview`).query({ kind: "pcb" }).expect(200)
-      const elements = circuit.body.circuitJson as Array<{ type: string }>
-      assert.ok(elements.some((element) => element.type === "pcb_board"), `${example} has no PCB board`)
-      const minComponents = example === "blank-board" ? 0 : example === "manufacturing-board" ? 2 : 3
-      assert.ok(elements.filter((element) => element.type === "pcb_component").length >= minComponents, `${example} has too few placed components`)
-      assert.equal(built.status, "ready")
-      if (example === "led-indicator" || example === "voltage-divider") {
-        const components = elements.filter((element) => element.type === "source_component") as Array<{ name?: string }>
-        const expectedComponents = example === "led-indicator" ? ["J1", "R1", "D1"] : ["J1", "R1", "R2", "C1"]
-        const logicalTraces = elements.filter((element) => element.type === "source_trace") as Array<{ name?: string; connected_source_port_ids?: string[]; source_trace_id?: string }>
-        const pcbTraces = elements.filter((element) => element.type === "pcb_trace") as Array<{ source_trace_id?: string; route?: unknown[] }>
-        for (const name of expectedComponents) assert.ok(components.some((component) => component.name === name), `${example} should include ${name}`)
-        const expectedNets = example === "led-indicator" ? ["VCC", "LED_CURRENT", "GND"] : ["VCC", "SENSE", "GND"]
-        for (const name of expectedNets) assert.ok(logicalTraces.some((trace) => trace.name === name), `${example} should expose a ${name} net`)
-        assert.ok(logicalTraces.length >= 3, `${example} should define multiple logical connections`)
-        assert.ok(logicalTraces.every((trace) => (trace.connected_source_port_ids?.length ?? 0) >= 2), `${example} traces should join component ports`)
-        assert.ok(pcbTraces.length >= 3, `${example} should produce visible routed PCB traces`)
-        assert.ok(pcbTraces.every((trace) => trace.route && trace.route.length >= 2 && logicalTraces.some((source) => source.source_trace_id === trace.source_trace_id)), `${example} PCB routes should map to named logical traces`)
-      }
+    const examples = ["blank-board", "manufacturing-board", "footprint-comparison", "mounting-pattern", "led-indicator", "voltage-divider"]
+    for (let offset = 0; offset < examples.length; offset += 3) {
+      await Promise.all(examples.slice(offset, offset + 3).map(async (example) => {
+        const { body: project } = await request(app).post("/api/projects")
+          .send({ name: example, templateId: example }).expect(201)
+        const built = await waitForBuild(app, project.id, project.revision)
+        const circuit = await request(app).get(`/api/projects/${project.id}/preview`).query({ kind: "pcb" }).expect(200)
+        const elements = circuit.body.circuitJson as Array<{ type: string }>
+        assert.ok(elements.some((element) => element.type === "pcb_board"), `${example} has no PCB board`)
+        const minComponents = example === "blank-board" ? 0 : example === "manufacturing-board" ? 2 : 3
+        assert.ok(elements.filter((element) => element.type === "pcb_component").length >= minComponents, `${example} has too few placed components`)
+        assert.equal(built.status, "ready")
+        if (example === "led-indicator" || example === "voltage-divider") {
+          const components = elements.filter((element) => element.type === "source_component") as Array<{ name?: string }>
+          const expectedComponents = example === "led-indicator" ? ["J1", "R1", "D1"] : ["J1", "R1", "R2", "C1"]
+          const logicalTraces = elements.filter((element) => element.type === "source_trace") as Array<{ name?: string; connected_source_port_ids?: string[]; source_trace_id?: string }>
+          const pcbTraces = elements.filter((element) => element.type === "pcb_trace") as Array<{ source_trace_id?: string; route?: unknown[] }>
+          for (const name of expectedComponents) assert.ok(components.some((component) => component.name === name), `${example} should include ${name}`)
+          const expectedNets = example === "led-indicator" ? ["VCC", "LED_CURRENT", "GND"] : ["VCC", "SENSE", "GND"]
+          for (const name of expectedNets) assert.ok(logicalTraces.some((trace) => trace.name === name), `${example} should expose a ${name} net`)
+          assert.ok(logicalTraces.length >= 3, `${example} should define multiple logical connections`)
+          assert.ok(logicalTraces.every((trace) => (trace.connected_source_port_ids?.length ?? 0) >= 2), `${example} traces should join component ports`)
+          assert.ok(pcbTraces.length >= 3, `${example} should produce visible routed PCB traces`)
+          assert.ok(pcbTraces.every((trace) => trace.route && trace.route.length >= 2 && logicalTraces.some((source) => source.source_trace_id === trace.source_trace_id)), `${example} PCB routes should map to named logical traces`)
+        }
+      }))
     }
   } finally {
     await (app.locals.projectService as { close(): Promise<void> }).close()
