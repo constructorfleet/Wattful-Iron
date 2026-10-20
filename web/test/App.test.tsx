@@ -195,6 +195,31 @@ describe('workbench', () => {
     expect(await screen.findByTestId('pcb-viewer')).toHaveAttribute('data-circuit-types', 'pcb_board,pcb_component')
   })
 
+  it('imports an SVG board edge and saves it into the editable circuit source', async () => {
+    api.saveProjectFile.mockResolvedValue({ path: 'index.tsx', content: 'updated source', revision: 'rev-2' })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'PCB' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Board outline' }))
+    const file = new File(['<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="20mm" viewBox="0 0 400 200"><polygon points="0,0 400,0 300,200 0,200"/></svg>'], 'case.svg', { type: 'image/svg+xml' })
+    fireEvent.change(screen.getByLabelText('Import outline SVG'), { target: { files: [file] } })
+    await waitFor(() => expect(screen.getByLabelText('Outline point 1 x')).toHaveValue(-20))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply outline' }))
+    await waitFor(() => expect((screen.getByLabelText('TSX source editor') as HTMLTextAreaElement).value).toContain('outline={[{"x":-20,"y":10}'))
+    await waitFor(() => expect(api.saveProjectFile).toHaveBeenCalledWith('led-1', 'index.tsx', expect.stringContaining('outline={'), 'rev-1'))
+  })
+
+  it('adds board boundary points by clicking the canvas', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'PCB' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Board outline' }))
+    const canvas = screen.getByRole('application', { name: 'Draw board outline' })
+    fireEvent.click(canvas, { clientX: 0, clientY: 0 })
+    expect(screen.getByLabelText('Outline point 5 x')).toHaveValue(-40)
+    expect(screen.getByText('5 points · millimeters')).toBeInTheDocument()
+  })
+
   it('inspects component properties, stable ID, PCB placement, and connected nets from the build', async () => {
     api.getPreview.mockResolvedValue({ kind: 'schematic', revision: 'rev-1', circuitJson: [
       { type: 'source_component', source_component_id: 'sc-r1', name: 'R1', ftype: 'simple_resistor', resistance: 1000 },

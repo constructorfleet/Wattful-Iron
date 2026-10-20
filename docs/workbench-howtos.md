@@ -98,6 +98,24 @@ tracing does not yet highlight wires or copper.
 
 ![PCB preview showing the manufacturing example board and components](images/workbench-pcb.png)
 
+## Draw or import a custom board outline
+
+Open the **PCB** view and choose **Board outline**. Click the canvas to place
+boundary points, edit their X/Y coordinates in millimeters, or remove and add
+points. The editor starts with the board's current rectangular dimensions or a
+literal outline already declared in the source. Choose **Apply outline** to
+write the polygon to the active `<board>` element; the normal save and build
+flow updates the PCB and 3D views and manufacturing exports.
+
+To import a boundary, choose an SVG containing exactly one `<polygon>` or
+`<polyline>`, with a `viewBox`, and explicit `width` and `height` in mm, cm,
+inches, or px. Curved SVG paths, transforms, and multiple shapes are not
+converted. The imported points are scaled to the SVG's physical dimensions and
+centered on the board origin. The editor rejects outlines with fewer than three
+points, zero area, or self-intersections. For profiles that depend on
+rectangular board dimensions, manufacturing preflight asks for manual edge
+clearance review on a polygon outline.
+
 ## Download manufacturing files
 
 1. Build the latest source and wait until the top bar says **Ready**.
