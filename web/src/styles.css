@@ -148,6 +148,15 @@ button { color: inherit; cursor: pointer; }
 .waveform-grid { fill: none; stroke: #303943; stroke-width: 1; }
 .waveform-line { fill: none; stroke: #72d4af; stroke-width: 1.6; vector-effect: non-scaling-stroke; }
 .waveform-axis { margin: 7px 0 0; }
+.waveform-controls { display: flex; align-items: center; gap: 6px; margin: 0 0 7px; color: #9ba7b0; font: 10px var(--mono); }
+.waveform-controls label { display: flex; align-items: center; gap: 4px; margin-right: auto; }
+.waveform-controls input { accent-color: #72d4af; }
+.waveform-controls button { min-width: 26px; padding: 3px 6px; border: 1px solid #39434d; border-radius: 3px; background: #20262d; color: #c4d0d8; font: inherit; cursor: pointer; }
+.waveform-controls button:disabled { opacity: .4; cursor: default; }
+.waveform-range { min-width: 95px; text-align: right; }
+.waveform svg[role="img"] { cursor: crosshair; }
+.waveform-cursor { fill: none; stroke: #f0c674; stroke-dasharray: 4 3; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+.waveform-measurement { display: block; margin-top: 5px; color: #f0c674; font: 10px var(--mono); }
 .preview-placeholder { display: flex; height: 100%; flex-direction: column; align-items: center; justify-content: center; padding: 22px; text-align: center; }
 .placeholder-board { position: relative; width: 176px; height: 127px; margin-bottom: 26px; transform: rotate(-8deg); border: 1px solid #386953; border-radius: 8px; background: linear-gradient(145deg,#20362d,#192a23); box-shadow: 9px 13px 25px #080b0d88, inset 0 0 25px #72d4af0c; }
 .placeholder-board::before { position: absolute; inset: 10px; border: 1px dashed #3e725d88; border-radius: 4px; content: ''; }

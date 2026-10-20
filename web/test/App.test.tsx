@@ -300,6 +300,8 @@ describe('workbench', () => {
     projectEvent?.({ type: 'build.ready', buildId: 'build-2', revision: 'rev-2' })
     expect(await screen.findByText('Transient')).toBeInTheDocument()
     expect(await screen.findByText('Net net-1 · V')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'OUT waveform' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Zoom in OUT' })).toBeEnabled()
   })
 
   it('shows tscircuit build diagnostics when a simulation rebuild fails', async () => {
