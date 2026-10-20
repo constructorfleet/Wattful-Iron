@@ -17,6 +17,7 @@ import { runCommand } from "./build-process.js"
 import { executeRemoteBuild, type IsolatedBuildResult } from "./build-client.js"
 import { withGeneratedPcbDraft } from "./pcb-draft.js"
 import { convertEasyedaFileToCircuit, enrichEasyedaComponentMetadata } from "./easyeda-component-metadata.js"
+import { createProjectArchive, parseProjectArchive } from "./project-archive.js"
 
 export type Diagnostic = { severity: "error" | "warning" | "info"; message: string; path?: string; line?: number; column?: number }
 type BuildStatus = "idle" | "compiling" | "ready" | "failed"
@@ -118,6 +119,44 @@ class ProjectService {
     this.emit(id, "project", { project })
     this.scheduleBuild(id, 0)
     return project
+  }
+
+  async importArchive(name: string, entrypoint: string, files: Array<{ path: string; content: string }>) {
+    const safeEntrypoint = cleanRelative(entrypoint)
+    if (!files.some((file) => cleanRelative(file.path) === safeEntrypoint)) throw badRequest("Archive entrypoint is missing")
+    const id = randomUUID()
+    const dir = this.projectDir(id)
+    try {
+      await mkdir(path.join(dir, ".workbench"), { recursive: true })
+      for (const file of files) {
+        const relative = cleanRelative(file.path)
+        const target = path.join(dir, relative)
+        await mkdir(path.dirname(target), { recursive: true })
+        await writeFile(target, file.content, "utf8")
+        this.ownFileHashes.set(target, digest(file.content))
+      }
+      const project: ProjectData = { id, name: name.trim(), entrypoint: safeEntrypoint, revision: newRevision() }
+      const state: ProjectState = { project }
+      this.states.set(id, state)
+      await this.persist(state)
+      await this.storeSnapshot(id, project.revision, files.map((file) => file.path))
+      this.watch(id)
+      this.emit(id, "project", { project })
+      this.scheduleBuild(id, 0)
+      return project
+    } catch (error) {
+      this.states.delete(id)
+      for (const filename of this.ownFileHashes.keys()) if (filename.startsWith(dir + path.sep)) this.ownFileHashes.delete(filename)
+      await rm(dir, { recursive: true, force: true })
+      throw error
+    }
+  }
+
+  async exportArchive(id: string) {
+    const project = this.state(id).project
+    const files = await this.getSnapshotFiles(id)
+    if (files.some(({ path: file }) => file === "_wattful_project.json")) throw badRequest("Project uses a reserved archive filename")
+    return createProjectArchive({ version: 1, name: project.name, entrypoint: project.entrypoint }, files)
   }
 
   async duplicateProject(id: string, name: string, expectedRevision: string) {
@@ -861,6 +900,31 @@ export function createApp(options: AppOptions = {}): Express {
       response.status(201).json(await service.importSchematics(name, normalized))
     } catch (error) { next(error) }
   })
+  app.get("/api/projects/:id/export", async (request, response, next) => {
+    try {
+      const archive = await service.exportArchive(request.params.id!)
+      response.type("application/zip").set({
+        "Content-Disposition": 'attachment; filename="project.zip"',
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, no-store",
+      }).send(Buffer.from(archive))
+    } catch (error) { next(error) }
+  })
+  app.post("/api/projects/import-archive", express.raw({ type: "application/zip", limit: "20mb" }), async (request, response, next) => {
+    try {
+      if (!Buffer.isBuffer(request.body)) throw badRequest("Send the project archive as application/zip bytes")
+      let parsed: ReturnType<typeof parseProjectArchive>
+      try { parsed = parseProjectArchive(request.body) } catch (error) { throw badRequest(error instanceof Error ? error.message : "Invalid project archive") }
+      const requestedName = typeof request.query.name === "string" ? request.query.name.trim() : ""
+      const name = requestedName || parsed.manifest.name
+      if (!name || name.length > 100) throw badRequest("Project name must contain 1 to 100 characters")
+      try {
+        for (const file of parsed.files) cleanRelative(file.path)
+        cleanRelative(parsed.manifest.entrypoint)
+      } catch (error) { throw badRequest(error instanceof Error ? error.message : "Archive contains an invalid project path") }
+      response.status(201).json(await service.importArchive(name, parsed.manifest.entrypoint, parsed.files))
+    } catch (error) { next(error) }
+  })
   app.post("/api/projects/import-pdf", express.raw({ type: "application/pdf", limit: "20mb" }), async (request, response, next) => {
     try {
       const name = typeof request.query.name === "string" ? request.query.name.trim() : ""
@@ -1083,9 +1147,9 @@ function isIsolatedBuildResult(value: unknown): value is IsolatedBuildResult {
 }
 
 function cleanRelative(input: string) {
-  if (typeof input !== "string" || !input || input.includes("\\") || input.startsWith("/") || /^[a-zA-Z]:/.test(input)) throw badRequest("Invalid project file path")
+  if (typeof input !== "string" || !input || /[\u0000-\u001f\u007f]/.test(input) || input.includes("\\") || input.startsWith("/") || /^[a-zA-Z]:/.test(input)) throw badRequest("Invalid project file path")
   const pieces = input.split("/")
-  if (pieces.some((part) => !part || part === "." || part === "..")) throw badRequest("Invalid project file path")
+  if (pieces.some((part) => !part || part === "." || part === ".." || part.startsWith("."))) throw badRequest("Invalid project file path")
   if ([".workbench", "node_modules", "dist", ".tscircuit", ".git"].includes(pieces[0]!)) throw badRequest("This project path is reserved by the server")
   return pieces.join("/")
 }

@@ -1,5 +1,34 @@
 # Workbench how-tos
 
+## Project archive REST API
+
+Export a project's visible source files as a ZIP archive:
+
+```sh
+curl -f http://127.0.0.1:3000/api/projects/PROJECT_ID/export -o project.zip
+```
+
+Import the ZIP as a new project. The optional `name` query parameter overrides
+the archived project name:
+
+```sh
+curl -f -X POST 'http://127.0.0.1:3000/api/projects/import-archive?name=My%20copy' \
+  -H 'Content-Type: application/zip' --data-binary @project.zip
+```
+
+`GET /api/projects/:id/export` responds with `application/zip`. The archive
+contains UTF-8 project files and `_wattful_project.json` with `version: 1`,
+`name`, and `entrypoint`. `POST /api/projects/import-archive` accepts raw
+`application/zip` bytes and responds `201` with the newly created project
+metadata. If `name` is omitted, the manifest name is used. Invalid archives
+respond `400`; unknown export project IDs respond `404`.
+
+Archives are limited to 20 MB compressed, 50 MB expanded, 500 entries, and
+10 MB per file. Import rejects traversal, hidden or server-reserved paths,
+symbolic links, duplicate filenames, encrypted/ZIP64 archives, non-UTF-8 file
+contents, and archives without a manifest and existing entrypoint. Export
+omits hidden server data and packages project text files only.
+
 These steps assume the app is running and you have opened a project. If this is
 your first visit, follow the [quickstart](quickstart.md).
 

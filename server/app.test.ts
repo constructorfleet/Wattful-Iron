@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
 import request from "supertest"
+import { unzipSync, zipSync } from "fflate"
 import { createApp } from "./app.js"
 
 const circuit = [{ type: "source_component", name: "demo" }]
@@ -32,6 +33,65 @@ test("project creation returns an editable tscircuit starter and project listing
   } finally {
     await f.cleanup()
   }
+})
+
+test("projects export and import a source archive with a safe versioned manifest", async () => {
+  const f = await fixture(async () => circuit)
+  try {
+    const { body: original } = await request(f.app).post("/api/projects").send({ name: "Archive source" }).expect(201)
+    const archive = await request(f.app).get(`/api/projects/${original.id}/export`).buffer().parse((response, callback) => {
+      const chunks: Buffer[] = []
+      response.on("data", (chunk: Buffer) => chunks.push(chunk))
+      response.on("end", () => callback(null, Buffer.concat(chunks)))
+    }).expect(200)
+    assert.match(archive.headers["content-type"] ?? "", /application\/zip/)
+    const entries = unzipSync(new Uint8Array(archive.body))
+    const manifest = JSON.parse(Buffer.from(entries["_wattful_project.json"]!).toString("utf8"))
+    assert.deepEqual(manifest, { version: 1, name: "Archive source", entrypoint: "index.circuit.tsx" })
+    assert.match(Buffer.from(entries["index.circuit.tsx"]!).toString("utf8"), /<board/)
+    assert.ok(entries["package.json"])
+
+    const imported = await request(f.app).post("/api/projects/import-archive?name=Imported+board")
+      .set("Content-Type", "application/zip").send(Buffer.from(archive.body)).expect(201)
+    assert.equal(imported.body.name, "Imported board")
+    assert.equal(imported.body.entrypoint, original.entrypoint)
+    assert.notEqual(imported.body.id, original.id)
+    const source = await request(f.app).get(`/api/projects/${imported.body.id}/files`).query({ path: original.entrypoint }).expect(200)
+    assert.match(source.body.content, /<board/)
+    assert.ok(imported.body.revision)
+  } finally { await f.cleanup() }
+})
+
+test("project archive import rejects traversal and symbolic-link entries before creating a project", async () => {
+  const f = await fixture(async () => circuit)
+  try {
+    const manifest = JSON.stringify({ version: 1, name: "Unsafe", entrypoint: "index.circuit.tsx" })
+    const traversal = zipSync({ "_wattful_project.json": Buffer.from(manifest), "../outside.ts": Buffer.from("bad"), "index.circuit.tsx": Buffer.from("export default () => null") })
+    await request(f.app).post("/api/projects/import-archive").set("Content-Type", "application/zip").send(Buffer.from(traversal)).expect(400)
+
+    const symlink = Buffer.from(zipSync({ "_wattful_project.json": Buffer.from(manifest), "index.circuit.tsx": Buffer.from("export default () => null") }))
+    const central = symlink.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]))
+    symlink.writeUInt16LE(3 << 8, central + 4)
+    symlink.writeUInt32LE(((0xa000 | 0o777) << 16) >>> 0, central + 38)
+    await request(f.app).post("/api/projects/import-archive").set("Content-Type", "application/zip").send(Buffer.from(symlink)).expect(400)
+    assert.deepEqual(await request(f.app).get("/api/projects").then((response) => response.body), [])
+    await assert.rejects(readFile(path.join(f.root, "outside.ts")))
+  } finally { await f.cleanup() }
+})
+
+test("project archive import rejects entry-count and expanded-size limits", async () => {
+  const f = await fixture(async () => circuit)
+  try {
+    const manifest = Buffer.from(JSON.stringify({ version: 1, name: "Limits", entrypoint: "index.circuit.tsx" }))
+    const manyFiles: Record<string, Buffer> = { "_wattful_project.json": manifest, "index.circuit.tsx": Buffer.from("export default () => null") }
+    for (let index = 0; index < 500; index++) manyFiles[`src/file-${index}.ts`] = Buffer.from("export {}")
+    const tooMany = zipSync(manyFiles)
+    await request(f.app).post("/api/projects/import-archive").set("Content-Type", "application/zip").send(Buffer.from(tooMany)).expect(400)
+
+    const tooLarge = zipSync({ "_wattful_project.json": manifest, "index.circuit.tsx": Buffer.alloc(10 * 1024 * 1024 + 1, 97) })
+    await request(f.app).post("/api/projects/import-archive").set("Content-Type", "application/zip").send(Buffer.from(tooLarge)).expect(400)
+    assert.deepEqual(await request(f.app).get("/api/projects").then((response) => response.body), [])
+  } finally { await f.cleanup() }
 })
 
 test("built-in examples are listed and copied into independent editable projects", async () => {
