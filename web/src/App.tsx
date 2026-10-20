@@ -16,6 +16,7 @@ import {
   getProjectFiles,
   getProjectHistory,
   getProjectReferencePdfUrl,
+  generatePcbDraft,
   getSimulation,
   importPdfReference,
   importSchematics,
@@ -369,6 +370,26 @@ export default function App() {
     }
   }
 
+  const createPcbDraft = async () => {
+    if (!project || dirty || !revision) return
+    setError('')
+    try {
+      const result = await generatePcbDraft(project.id, revision)
+      const [updatedProject, updatedFile] = await Promise.all([getProject(project.id), getProjectFile(project.id, filePath)])
+      setProject(updatedProject)
+      setProjects((items) => items.map((item) => item.id === updatedProject.id ? updatedProject : item))
+      setRevision(result.revision)
+      revisionRef.current = result.revision
+      setSource(updatedFile.content)
+      sourceRef.current = updatedFile.content
+      setBuild({ status: 'ready', revision: result.revision })
+      setView('pcb')
+      await refreshPreview(project.id, 'pcb')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to generate PCB draft')
+    }
+  }
+
   const restoreRevision = async () => {
     if (!project || !revisionToRestore || !revision) return
     restoringHistoryRef.current = true
@@ -520,7 +541,8 @@ export default function App() {
             {view === 'simulation' ? <SimulationPanel simulation={simulation} build={build} canRun={Boolean(project)} onRun={() => { setSimulation(null); void runBuild() }} /> : preview && (view === 'schematic' || hasPcbPreview) ? view === 'pcb' ? <Suspense fallback={<div className="preview-loading">Loading PCB preview…</div>}><PcbPreview circuitJson={preview as PcbCircuitJson} /></Suspense> : <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview className="circuit-preview" key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={view === '3d' ? 'cad' : view} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : preview ? <div className="preview-placeholder">
               <div className="placeholder-board"><span className="board-edge edge-a" /><span className="board-edge edge-b" /><span className="board-chip chip-a" /><span className="board-chip chip-b" /><span className="board-pad pad-a" /><span className="board-pad pad-b" /><span className="board-route route-a" /><span className="board-route route-b" /></div>
               <h2>{view === 'pcb' ? 'No PCB layout in this project' : 'No PCB data for 3D preview'}</h2>
-              <p>This EasyEDA import contains a schematic only. Import a matching EasyEDA PCB layout or add PCB placements and footprints to the project source.</p>
+              <p>This schematic has no PCB placements. Generate a draft layout, then review footprints, component models, pin mappings, and routing before fabrication.</p>
+              {view === 'pcb' && source.includes('ImportedSchematic') && <button className="outline-button" disabled={!project || dirty || build.status === 'compiling'} onClick={() => void createPcbDraft()}>Generate PCB draft</button>}
             </div> : <div className="preview-placeholder">
               <div className="placeholder-board"><span className="board-edge edge-a" /><span className="board-edge edge-b" /><span className="board-chip chip-a" /><span className="board-chip chip-b" /><span className="board-pad pad-a" /><span className="board-pad pad-b" /><span className="board-route route-a" /><span className="board-route route-b" /></div>
               <h2>{project ? build.status === 'failed' ? 'Last good preview is unavailable' : 'Waiting for first build' : 'Your design workspace'}</h2>

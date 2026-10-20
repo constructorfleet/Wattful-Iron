@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   restoreProjectRevision: vi.fn(),
   saveProjectFile: vi.fn(),
   startBuild: vi.fn(),
+  generatePcbDraft: vi.fn(),
   getPreview: vi.fn(),
   getSimulation: vi.fn(),
   getManufacturingProfiles: vi.fn(),
@@ -117,11 +118,15 @@ describe('workbench', () => {
   })
 
   it('explains when the selected project has schematic data but no PCB layout', async () => {
+    api.getProjectFile.mockResolvedValueOnce({ path: 'index.tsx', content: 'const ImportedSchematic = () => null', revision: 'rev-1' })
     api.getPreview.mockResolvedValue({ kind: 'pcb', revision: 'rev-1', circuitJson: [{ type: 'schematic_component' }] })
+    api.generatePcbDraft.mockResolvedValue({ revision: 'rev-2', placements: 3 })
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
     fireEvent.click(await screen.findByRole('tab', { name: 'PCB' }))
-    expect(await screen.findByText('This EasyEDA import contains a schematic only. Import a matching EasyEDA PCB layout or add PCB placements and footprints to the project source.')).toBeInTheDocument()
+    expect(await screen.findByText(/This schematic has no PCB placements/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Generate PCB draft' }))
+    await waitFor(() => expect(api.generatePcbDraft).toHaveBeenCalledWith('led-1', 'rev-1'))
   })
 
   it('duplicates a project into a separate editable project', async () => {

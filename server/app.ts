@@ -15,6 +15,7 @@ import { getSimulationResults } from "./simulation.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
 import { runCommand } from "./build-process.js"
 import { executeRemoteBuild, type IsolatedBuildResult } from "./build-client.js"
+import { withGeneratedPcbDraft } from "./pcb-draft.js"
 
 export type Diagnostic = { severity: "error" | "warning" | "info"; message: string; path?: string; line?: number; column?: number }
 type BuildStatus = "idle" | "compiling" | "ready" | "failed"
@@ -344,6 +345,38 @@ class ProjectService {
     const absolute = await this.safeFile(id, relativePath, false)
     const content = await readFile(absolute, "utf8")
     return { path: cleanRelative(relativePath), content, revision: this.state(id).project.revision }
+  }
+
+  async generatePcbDraft(id: string, expectedRevision: string) {
+    return this.withWriteLock(id, async () => {
+      const state = this.state(id)
+      this.assertRevision(state.project, expectedRevision)
+      let original: unknown
+      try { original = JSON.parse(await readFile(path.join(this.projectDir(id), ".workbench", "imported-circuit.json"), "utf8")) }
+      catch { throw badRequest("PCB draft generation is available for imported schematics") }
+      let draft: ReturnType<typeof withGeneratedPcbDraft>
+      try { draft = withGeneratedPcbDraft(original) }
+      catch (error) { throw badRequest(error instanceof Error ? error.message : "Unable to generate PCB draft") }
+      let source: string
+      try { source = convertCircuitJsonToTscircuit(draft.circuitJson as never, { componentName: "ImportedBoard" }) }
+      catch (error) { throw badRequest(`Unable to generate PCB layout: ${error instanceof Error ? error.message : "conversion failed"}`) }
+      const revision = newRevision()
+      const entryPath = path.join(this.projectDir(id), state.project.entrypoint)
+      const circuitPath = path.join(this.projectDir(id), ".workbench", "imported-circuit.json")
+      await writeFile(entryPath + ".tmp", source, "utf8")
+      await writeFile(circuitPath + ".tmp", JSON.stringify(draft.circuitJson), "utf8")
+      await rename(entryPath + ".tmp", entryPath)
+      await rename(circuitPath + ".tmp", circuitPath)
+      this.ownFileHashes.set(entryPath, digest(source))
+      state.project.revision = revision
+      state.project.previewRevision = revision
+      state.project.lastBuild = { buildId: randomUUID(), revision, status: "ready", diagnostics: [{ severity: "warning", message: "Generated PCB placements and generic pads are a draft. Verify footprints, pin mapping, component body models, and routing before fabrication." }], updatedAt: new Date().toISOString() }
+      state.preview = draft.circuitJson
+      await this.storeSnapshot(id, revision, [state.project.entrypoint, ".workbench/imported-circuit.json"])
+      await this.persist(state)
+      this.emit(id, "project", { project: state.project })
+      return { revision, placements: draft.placements }
+    })
   }
 
   async writeFile(id: string, relativePath: string, content: string, expectedRevision: string) {
@@ -870,6 +903,13 @@ export function createApp(options: AppOptions = {}): Express {
       const match = request.get("If-Match")?.replace(/^"|"$/g, "")
       if (!match || request.body.revision !== match) throw badRequest("If-Match and body revision must match")
       response.json(await service.writeFile(request.params.id!, request.query.path, request.body.content, match))
+    } catch (error) { next(error) }
+  })
+  app.post("/api/projects/:id/generate-pcb", async (request, response, next) => {
+    try {
+      const match = request.get("If-Match")?.replace(/^"|"$/g, "")
+      if (!match) throw badRequest("If-Match is required to generate PCB placements")
+      response.json(await service.generatePcbDraft(request.params.id!, match))
     } catch (error) { next(error) }
   })
   app.get("/api/projects/:id/file-list", async (request, response, next) => {
