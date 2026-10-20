@@ -22,7 +22,9 @@ against one project volume.
 - tscircuit build execution and build diagnostics.
 - Generated Circuit JSON retained for preview.
 - A read-only component inspector that joins source components to PCB placements,
-  source ports, and connected source traces by Circuit JSON IDs.
+  source ports, and connected source traces by Circuit JSON IDs; selecting a
+  component focuses its PCB footprint, and the PCB context menu opens the
+  matching component details from its schematic action.
 - Live SSE updates.
 - Schematic, PCB, and 3D preview panels.
 - A simulation panel and `/api/projects/:id/simulation` results endpoint that
@@ -58,12 +60,13 @@ manufacturing sign-off.
 
 The following capabilities in the project vision are not available in this
 slice: ACP servers, per-user authentication and authorization, full
-KiCad-equivalent ERC/DRC, interactive cross-view connectivity tracing, simultaneous resizable
-views, component datasheets and supplier/availability/cost enrichment, complete
+KiCad-equivalent ERC/DRC, interactive cross-view connectivity tracing,
+simultaneous resizable views, component datasheets and supplier/availability/cost enrichment, complete
 fabricator rule coverage, Git-backed revision history, approval states, and
-purchasing or fabrication integrations. The component inspector only displays
-data present in Circuit JSON; it does not highlight the selected component in
-preview canvases or edit its source properties. Optional workbench
+purchasing or fabrication integrations. Component cross-probing currently
+focuses PCB footprints and opens matching schematic component details; it does
+not highlight schematic/3D geometry, trace nets, vias, or simulation signals,
+or edit source properties. Optional workbench
 authentication uses a shared token for the browser and REST API; MCP has its own
 shared bearer token. There is no per-user identity or access control.
 Requirements validation only

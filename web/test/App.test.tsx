@@ -24,6 +24,7 @@ const api = vi.hoisted(() => ({
   getManufacturingPreflight: vi.fn(),
   subscribeToProject: vi.fn((_id: string, _onEvent: (event: unknown) => void) => () => {}),
 }))
+const pcbViewer = vi.hoisted(() => ({ focusPcbComponent: vi.fn() }))
 
 let projectEvent: ((event: unknown) => void) | undefined
 
@@ -37,7 +38,8 @@ vi.mock('@tscircuit/runframe', () => ({
   CircuitJsonPreview: ({ className }: { className?: string }) => <div className={className} data-testid="circuit-preview">Circuit JSON preview</div>,
 }))
 vi.mock('@tscircuit/pcb-viewer', () => ({
-  PCBViewer: ({ circuitJson }: { circuitJson: Array<{ type: string }> }) => <div data-testid="pcb-viewer" data-circuit-types={circuitJson.map((item) => item.type).join(',')} />,
+  usePcbViewerController: () => ({ controller: { focusRequest: null, onFocusRequestHandled: vi.fn() }, focusPcbComponent: pcbViewer.focusPcbComponent }),
+  PCBViewer: ({ circuitJson, onViewSchematicComponent }: { circuitJson: Array<{ type: string }>; onViewSchematicComponent?: (event: { source_component_id: string; pcb_component_id: string; refdes: string }) => void }) => <><div data-testid="pcb-viewer" data-circuit-types={circuitJson.map((item) => item.type).join(',')} />{onViewSchematicComponent && <button onClick={() => onViewSchematicComponent({ source_component_id: 'sc-r1', pcb_component_id: 'pcb-r1', refdes: 'R1' })}>View R1 on Schematic</button>}</>,
 }))
 
 const existingProject = { id: 'led-1', name: 'LED Board', entrypoint: 'index.tsx', revision: 'rev-1' }
@@ -198,7 +200,7 @@ describe('workbench', () => {
       { type: 'source_component', source_component_id: 'sc-r1', name: 'R1', ftype: 'simple_resistor', resistance: 1000 },
       { type: 'source_port', source_port_id: 'sp-r1-1', source_component_id: 'sc-r1', name: 'pin1', pin_number: 1 },
       { type: 'source_trace', source_trace_id: 'st-vcc', name: 'VCC', connected_source_port_ids: ['sp-r1-1'] },
-      { type: 'pcb_component', source_component_id: 'sc-r1', center: { x: 2, y: 3 }, rotation: 90, layer: 'top' },
+      { type: 'pcb_component', pcb_component_id: 'pcb-r1', source_component_id: 'sc-r1', center: { x: 2, y: 3 }, rotation: 90, layer: 'top' },
     ] })
 
     render(<App />)
@@ -210,7 +212,27 @@ describe('workbench', () => {
     expect(screen.getByText('simple_resistor')).toBeInTheDocument()
     expect(screen.getByText('VCC')).toBeInTheDocument()
     expect(screen.getByText('{"x":2,"y":3}')).toBeInTheDocument()
-    expect(screen.getByText(/Canvas highlighting is not available in the current viewer/)).toBeInTheDocument()
+    expect(screen.getByText(/Selecting a component focuses its PCB footprint/)).toBeInTheDocument()
+  })
+
+  it('focuses the selected PCB footprint and opens component details from the PCB cross-probe action', async () => {
+    api.getPreview.mockResolvedValue({ kind: 'pcb', revision: 'rev-1', circuitJson: [
+      { type: 'source_component', source_component_id: 'sc-r1', name: 'R1' },
+      { type: 'pcb_component', pcb_component_id: 'pcb-r1', source_component_id: 'sc-r1' },
+    ] })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(screen.getByRole('tab', { name: 'PCB' }))
+    await screen.findByTestId('pcb-viewer')
+    fireEvent.click(screen.getByRole('button', { name: /Components 1/ }))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Select component' }), { target: { value: 'sc-r1' } })
+    await waitFor(() => expect(pcbViewer.focusPcbComponent).toHaveBeenCalledWith('pcb-r1'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'View R1 on Schematic' }))
+    expect(screen.getByRole('tab', { name: 'Schematic' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('complementary', { name: 'Component inspector' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Select component' })).toHaveValue('sc-r1')
   })
 
   it('runs simulation by rebuilding current source and shows emitted waveform results', async () => {
