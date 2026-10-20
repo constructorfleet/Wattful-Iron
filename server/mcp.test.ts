@@ -129,7 +129,7 @@ test("MCP reads and validates versioned project requirements", async () => {
   const fixture = await makeFixture(async () => [
     { type: "pcb_board", width: 50, height: 35, num_layers: 4 },
     { type: "source_component", name: "U1" },
-    { type: "source_trace", name: "GND" },
+    { type: "source_trace", name: "GND", connected_source_port_ids: ["port-1", "port-2"] },
   ])
   const server = createServer(fixture.app)
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))

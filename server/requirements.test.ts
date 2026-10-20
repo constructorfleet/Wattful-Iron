@@ -50,12 +50,29 @@ test("validates explicit required component references and named nets", () => {
   } }))
   const result = validateRequirements(requirements, [
     { type: "source_component", name: "U1" },
-    { type: "source_trace", name: "GND" },
+    { type: "source_trace", name: "GND", connected_source_port_ids: ["port-1", "port-2"] },
   ])
   assert.deepEqual(result.checks.map(({ id, status }) => [id, status]), [
     ["component-U1", "pass"], ["component-R7", "fail"], ["net-GND", "pass"], ["net-SDA", "fail"],
   ])
   assert.deepEqual([result.passed, result.failed], [2, 2])
+})
+
+test("requires named nets to connect at least two source ports", () => {
+  const requirements = parseRequirements(JSON.stringify({ version: 1, requirements: { nets: ["GND", "VCC", "UNKNOWN"] } }))
+  const result = validateRequirements(requirements, [
+    { type: "source_trace", name: "GND", connected_source_port_ids: ["port-1"] },
+    { type: "source_trace", name: "VCC", connected_source_port_ids: ["port-2", "port-3"] },
+    { type: "source_trace", name: "UNKNOWN" },
+  ])
+
+  assert.deepEqual(result.checks.map(({ id, status }) => [id, status]), [
+    ["net-GND", "fail"],
+    ["net-VCC", "pass"],
+    ["net-UNKNOWN", "not-evaluated"],
+  ])
+  assert.match(result.checks[0]?.message ?? "", /only 1 connected source port/)
+  assert.match(result.checks[2]?.message ?? "", /does not report connected source ports/)
 })
 
 test("does not pass required references when Circuit JSON evidence is absent", () => {
