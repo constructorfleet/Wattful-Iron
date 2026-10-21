@@ -128,24 +128,6 @@ test("MCP exposes read-only inspection of components, nets, pins, routes, and bo
     assert.equal(vccTrace.net.routing, "partially-routed")
     const missingNet = await client.callTool({ name: "get_net_trace", arguments: { projectId: project.id, net: "SPI_MISO" } })
     assert.equal(missingNet.isError, true)
-    const moduleList = readResult<{ modules: Array<{ id: string; component: string; notes: string[] }> }>(
-      await client.callTool({ name: "list_circuit_modules", arguments: {} }))
-    assert.ok(moduleList.modules.length >= 5)
-    assert.ok(moduleList.modules.every(({ notes }) => notes.length > 0), "every module must carry its notes")
-    const projectForModule = readResult<{ revision: string }>(await client.callTool({ name: "get_project", arguments: { projectId: project.id } }))
-    const addedModule = readResult<{ path: string; importLine: string; usage: string; revision: string }>(await client.callTool({
-      name: "add_circuit_module", arguments: { projectId: project.id, module: "rc-low-pass", revision: projectForModule.revision },
-    }))
-    assert.equal(addedModule.path, "modules/rc-low-pass.tsx")
-    assert.equal(addedModule.importLine, 'import { RcLowPass } from "./modules/rc-low-pass"')
-    const moduleFile = readResult<{ content: string }>(await client.callTool({
-      name: "read_project_file", arguments: { projectId: project.id, path: "modules/rc-low-pass.tsx" },
-    }))
-    assert.match(moduleFile.content, /export const RcLowPass/)
-    const unknownModule = await client.callTool({ name: "add_circuit_module", arguments: { projectId: project.id, module: "buck-converter", revision: addedModule.revision } })
-    assert.equal(unknownModule.isError, true)
-    await waitForToolStatus(client, project.id, "ready")
-
     const revisions = readResult<{ gitBacked: boolean; revisions: Array<{ revision: string; commit?: string; retainedSnapshot: boolean; hasDesignSummary: boolean }> }>(
       await client.callTool({ name: "list_project_revisions", arguments: { projectId: project.id } }))
     assert.ok(revisions.revisions.length >= 1)
@@ -600,6 +582,78 @@ test("MCP reports component sourcing as unconfigured instead of guessing prices"
       await client.callTool({ name: "estimate_manufacturing_cost", arguments: { projectId: project.id } }))
     assert.equal(estimate.configured, false)
     assert.match(estimate.message, /COMPONENT_SOURCING_URL/)
+  } finally {
+    await client.close()
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    await fixture.cleanup()
+  }
+})
+
+test("MCP records project knowledge, reports dependencies, and adds circuit modules", async () => {
+  const circuitJson = [
+    { type: "source_component", source_component_id: "source_component_1", name: "R1", ftype: "simple_resistor", resistance: 1000 },
+  ]
+  const fixture = await makeFixture(async () => circuitJson)
+  const server = createServer(fixture.app)
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address()
+  assert.ok(address && typeof address !== "string")
+  const client = new Client({ name: "circuits-workbench-test", version: "1.0.0" })
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`), {
+    requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+  })
+  try {
+    await client.connect(transport)
+    const project = readResult<{ id: string }>(await client.callTool({ name: "create_project", arguments: { name: "Context board" } }))
+    await waitForToolStatus(client, project.id, "ready")
+
+    const noKnowledge = readResult<{ configured: boolean; message: string }>(
+      await client.callTool({ name: "get_project_knowledge", arguments: { projectId: project.id } }))
+    assert.equal(noKnowledge.configured, false)
+    const projectForKnowledge = readResult<{ revision: string }>(await client.callTool({ name: "get_project", arguments: { projectId: project.id } }))
+    const recorded = readResult<{ configured: boolean; populatedSections: string[]; knownIssues: number; limitations: string[] }>(await client.callTool({
+      name: "update_project_knowledge",
+      arguments: {
+        projectId: project.id,
+        revision: projectForKnowledge.revision,
+        knowledge: { known_issues: [{ issue: "The autorouted vias are below the fabricator minimum.", severity: "high" }] },
+      },
+    }))
+    assert.equal(recorded.configured, true)
+    assert.deepEqual(recorded.populatedSections, ["known_issues"])
+    assert.equal(recorded.knownIssues, 1)
+    assert.ok(recorded.limitations.length > 0)
+    const badKnowledge = await client.callTool({
+      name: "update_project_knowledge", arguments: { projectId: project.id, revision: projectForKnowledge.revision, knowledge: { nope: true } },
+    })
+    assert.equal(badKnowledge.isError, true)
+    await waitForToolStatus(client, project.id, "ready")
+
+    const dependencies = readResult<{ declaredVersionsApply: boolean; effective: Array<{ name: string; source: string }>; notes: string[] }>(
+      await client.callTool({ name: "get_project_dependencies", arguments: { projectId: project.id } }))
+    assert.equal(dependencies.declaredVersionsApply, false)
+    assert.equal(dependencies.effective.find(({ name }) => name === "tscircuit")?.source, "workbench runtime")
+    assert.ok(dependencies.notes.some((note) => note.includes("upgrade the workbench image")))
+
+
+    const moduleList = readResult<{ modules: Array<{ id: string; component: string; notes: string[] }> }>(
+      await client.callTool({ name: "list_circuit_modules", arguments: {} }))
+    assert.ok(moduleList.modules.length >= 5)
+    assert.ok(moduleList.modules.every(({ notes }) => notes.length > 0), "every module must carry its notes")
+    const projectForModule = readResult<{ revision: string }>(await client.callTool({ name: "get_project", arguments: { projectId: project.id } }))
+    const addedModule = readResult<{ path: string; importLine: string; usage: string; revision: string }>(await client.callTool({
+      name: "add_circuit_module", arguments: { projectId: project.id, module: "rc-low-pass", revision: projectForModule.revision },
+    }))
+    assert.equal(addedModule.path, "modules/rc-low-pass.tsx")
+    assert.equal(addedModule.importLine, 'import { RcLowPass } from "./modules/rc-low-pass"')
+    const moduleFile = readResult<{ content: string }>(await client.callTool({
+      name: "read_project_file", arguments: { projectId: project.id, path: "modules/rc-low-pass.tsx" },
+    }))
+    assert.match(moduleFile.content, /export const RcLowPass/)
+    const unknownModule = await client.callTool({ name: "add_circuit_module", arguments: { projectId: project.id, module: "buck-converter", revision: addedModule.revision } })
+    assert.equal(unknownModule.isError, true)
+    await waitForToolStatus(client, project.id, "ready")
+
   } finally {
     await client.close()
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))

@@ -17,6 +17,8 @@ import { analyzePower } from "./power-analysis.js"
 import { createSourcingClient, estimateBomCost, listDesignParts, normalizeLcscPartNumber, type SourcingClient } from "./component-sourcing.js"
 import { createProjectGit, type ProjectGit } from "./project-git.js"
 import { listCircuitModules, moduleImportLine, readCircuitModule } from "./circuit-modules.js"
+import { describeProjectKnowledge, parseProjectKnowledge } from "./project-knowledge.js"
+import { readProjectDependencies } from "./project-dependencies.js"
 import { designDiffUnavailable, diffDesignSummaries, summarizeDesign, type DesignSummary } from "./design-summary.js"
 import { runCircuitDesignChecks } from "./circuit-design-checks.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
@@ -687,7 +689,8 @@ class ProjectService {
     }
   }
 
-  private projectDir(id: string) {
+  /** The directory a project's files live in. Public so dependency reporting can read its package.json. */
+  projectDir(id: string) {
     if (!isId(id)) {
       const error = new Error("Project not found")
       Object.assign(error, { status: 404 })
@@ -1471,6 +1474,32 @@ export function createApp(options: AppOptions = {}): Express {
       const note = request.body?.note
       if (note !== undefined && (typeof note !== "string" || note.length > 2000)) throw badRequest("note must be a string of at most 2000 characters")
       response.json(await setReviewState(request.params.id!, target, match, "browser", typeof note === "string" ? note : undefined, getActor(request)?.user))
+    } catch (error) { next(error) }
+  })
+  app.get("/api/projects/:id/knowledge", async (request, response, next) => {
+    try {
+      const files = await service.getFileList(request.params.id!)
+      const project = await service.get(request.params.id!)
+      if (!files.includes("knowledge.json")) return response.json({ configured: false, revision: project.revision, knowledge: null })
+      const file = await service.readFile(request.params.id!, "knowledge.json")
+      const document = parseProjectKnowledge(file.content)
+      response.json({ configured: true, ...file, ...document, ...describeProjectKnowledge(document) })
+    } catch (error) { next(error) }
+  })
+  app.put("/api/projects/:id/knowledge", async (request, response, next) => {
+    try {
+      const match = request.get("If-Match")?.replace(/^"|"$/g, "")
+      if (!match || request.body?.revision !== match) throw badRequest("If-Match and body revision must match")
+      const content = JSON.stringify({ version: 1, knowledge: request.body?.knowledge }, null, 2) + "\n"
+      const document = parseProjectKnowledge(content)
+      const saved = await service.writeFile(request.params.id!, "knowledge.json", JSON.stringify(document, null, 2) + "\n", match)
+      response.json({ configured: true, path: saved.path, revision: saved.revision, ...document, ...describeProjectKnowledge(document) })
+    } catch (error) { next(error) }
+  })
+  app.get("/api/projects/:id/dependencies", async (request, response, next) => {
+    try {
+      const project = await service.get(request.params.id!)
+      response.json({ revision: project.revision, ...await readProjectDependencies(service.projectDir(request.params.id!), service.appNodeModules) })
     } catch (error) { next(error) }
   })
   app.get("/api/projects/:id/assertions", async (request, response, next) => {

@@ -106,6 +106,7 @@ Engine and worker image. `GET /healthz` is the container health endpoint.
 - [Project source history, compare, restore, and retention](docs/source-history.md)
 - [User accounts, roles, and sessions](docs/accounts.md)
 - [Reusable circuit modules](docs/modules.md)
+- [Project knowledge and dependencies](docs/knowledge.md)
 - [Design review states and approval](docs/review.md)
 - [Project regression assertions](docs/assertions.md)
 - [Manufacturing preflight and exports](docs/manufacturing.md)

@@ -519,6 +519,46 @@ test("configured sourcing prices the BOM and flags short stock in preflight", as
   } finally { await f.cleanup() }
 })
 
+test("knowledge and dependency endpoints record context and report what builds use", async () => {
+  const f = await fixture(async () => circuit)
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Knowledge" }).expect(201)
+    await waitForBuild(f.app, project.id, "ready")
+
+    const absent = await request(f.app).get(`/api/projects/${project.id}/knowledge`).expect(200)
+    assert.equal(absent.body.configured, false)
+
+    const current = await request(f.app).get(`/api/projects/${project.id}`).expect(200)
+    const knowledge = {
+      summary: "A divider for the bench supply.",
+      electrical_assumptions: ["The source impedance stays below 1 kOhm."],
+      design_decisions: [{ decision: "22k over 10k", rationale: "Keeps the divider load under 250 uA." }],
+      pending_decisions: [{ question: "Add reverse-polarity protection?" }],
+    }
+    const saved = await request(f.app).put(`/api/projects/${project.id}/knowledge`)
+      .set("If-Match", current.body.revision).send({ revision: current.body.revision, knowledge }).expect(200)
+    assert.deepEqual(saved.body.populatedSections, ["summary", "electrical_assumptions", "design_decisions", "pending_decisions"])
+    assert.equal(saved.body.openQuestions, 1)
+    assert.ok(saved.body.limitations.some((note: string) => note.includes("not derived from the design")))
+
+    await request(f.app).put(`/api/projects/${project.id}/knowledge`)
+      .set("If-Match", saved.body.revision).send({ revision: saved.body.revision, knowledge: { unknown_section: ["x"] } }).expect(400)
+
+    const read = await request(f.app).get(`/api/projects/${project.id}/knowledge`).expect(200)
+    assert.equal(read.body.configured, true)
+    assert.equal(read.body.knowledge.design_decisions[0].rationale, "Keeps the divider load under 250 uA.")
+
+    // Dependencies report the declared pin and what a build actually resolves.
+    const dependencies = await request(f.app).get(`/api/projects/${project.id}/dependencies`).expect(200)
+    assert.equal(dependencies.body.declared.tscircuit, "0.0.2930")
+    assert.equal(dependencies.body.declaredVersionsApply, false)
+    const effective = dependencies.body.effective.find((item: { name: string }) => item.name === "tscircuit")
+    assert.equal(effective.source, "workbench runtime")
+    assert.match(effective.version, /^\d+\.\d+\.\d+/)
+    assert.ok(dependencies.body.notes.some((note: string) => note.includes("do not change what a build resolves")))
+  } finally { await f.cleanup() }
+})
+
 test("circuit modules are listed, read, and added to a project", async () => {
   const f = await fixture(async () => circuit)
   try {

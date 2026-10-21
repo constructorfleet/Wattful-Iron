@@ -50,6 +50,9 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `get_board_properties` | Return the emitted `pcb_board` elements, including dimensions, material, stackup, and design-rule properties. |
 | `check_connectivity` | Summarize source-port links emitted in Circuit JSON, including ports with no emitted trace and trace references to missing ports. |
 | `get_project_requirements` | Read a project's revisioned `requirements.json` document, when configured. |
+| `get_project_knowledge` | Read the project's `knowledge.json` context, with which sections are empty and the caveat that none of it is checked against the design. |
+| `update_project_knowledge` | Replace `knowledge.json`, passing the current revision. For assumptions, decisions, known issues, and open questions. |
+| `get_project_dependencies` | Report the versions a project declares and the versions a build resolves, and that declared versions do not change a build. |
 | `get_review_state` | Read the current revision's design review state, history, the evidence transitions are judged against, and which states can be set. |
 | `set_review_state` | Record `validated` or `reviewed` for the current revision. Approving for manufacturing and reopening an approved revision are refused. |
 | `check_project_assertions` | Evaluate the project's `assertions.json` regression assertions against the latest successful build, reporting each as pass, fail, or not evaluated. |
@@ -219,6 +222,15 @@ point, total current demand, component dissipation, and trace loading are also
 reported as not evaluated rather than estimated. The same analysis is available
 over REST at `GET /api/projects/:id/power`, which accepts the same
 `temperatureRiseC` and `copperOunces` query parameters.
+
+`get_project_knowledge` and `update_project_knowledge` expose the project's
+engineering context: assumptions, decisions with rationale, known issues, and
+pending decisions. It is prose rather than derived data, so nothing in it is
+checked against the design, and manufacturing preferences recorded there do not
+affect builds or exports. `get_project_dependencies` reports what a project
+declares alongside what a build actually resolves; builds use the workbench's
+own pinned tscircuit, so declared versions are reference only. See
+[project knowledge and dependencies](knowledge.md).
 
 `list_circuit_modules` and `add_circuit_module` expose the module library. A
 module is a starting point rather than a verified design: values are defaults,
