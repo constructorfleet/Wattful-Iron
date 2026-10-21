@@ -10,6 +10,7 @@ import { getSimulationResults } from "./simulation.js"
 import { runCircuitDesignChecks, type CircuitDesignIssue } from "./circuit-design-checks.js"
 import { checkComponentAvailability, type SourcingClient } from "./component-sourcing.js"
 import type { AssertionReport } from "./assertions.js"
+import { buildNetTraceIndex } from "./net-trace.js"
 
 export type BuildState = { status: string; revision: string; diagnostics?: unknown[] }
 export type ManufacturingCheck = { id: string; status: "pass" | "fail" | "warning" | "not-evaluated"; message: string; issues?: CircuitDesignIssue[] }
@@ -179,24 +180,59 @@ function checkBomData(sources: Record<string, unknown>[]): ManufacturingCheck {
     : { id: "bom-data", status: "pass", message: `All ${sources.length} source component${sources.length === 1 ? " has" : "s have"} a value and manufacturer part number in Circuit JSON.` }
 }
 
+/**
+ * Check routed connectivity per net rather than per logical trace. Two traces declaring the
+ * same connection belong to one net, and copper that routes the net routes both, so judging
+ * each `source_trace` separately reported a routed net as unrouted.
+ */
 function checkRoutedConnections(items: Record<string, unknown>[]): ManufacturingCheck {
-  const sourceTraces = items.filter((item) => item.type === "source_trace")
-  if (sourceTraces.length === 0) {
-    return { id: "routed-connections", status: "warning", message: "No logical source traces were found; routed connectivity could not be verified." }
+  const nets = buildNetTraceIndex(items).nets.filter((net) => net.pins.length >= 2)
+  if (nets.length === 0) {
+    return { id: "routed-connections", status: "warning", message: "No net connects two or more component pins, so routed connectivity could not be verified." }
   }
 
-  const pcbTraces = items.filter((item) => item.type === "pcb_trace")
-  const routedSourceTraceIds = new Set(pcbTraces.flatMap((trace) =>
-    typeof trace.source_trace_id === "string" && Array.isArray(trace.route) && trace.route.length > 0
-      ? [trace.source_trace_id]
-      : []))
-  const unrouted = sourceTraces.filter((trace) =>
-    typeof trace.source_trace_id !== "string" || !routedSourceTraceIds.has(trace.source_trace_id))
+  const unrouted = nets.filter((net) => net.copperTraces.length === 0)
   if (unrouted.length > 0) {
-    const ids = unrouted.map((trace) => typeof trace.source_trace_id === "string" ? trace.source_trace_id : "(missing source trace ID)")
-    return { id: "routed-connections", status: "fail", message: `${unrouted.length} logical source trace${unrouted.length === 1 ? "" : "s"} lack a routed PCB trace with route geometry: ${ids.join(", ")}.` }
+    return {
+      id: "routed-connections",
+      status: "fail",
+      message: `${unrouted.length} net${unrouted.length === 1 ? " carries" : "s carry"} no copper: ${unrouted.map((net) => net.name).join(", ")}.`,
+    }
   }
-  return { id: "routed-connections", status: "pass", message: `All ${sourceTraces.length} logical source trace${sourceTraces.length === 1 ? " has" : "s have"} routed PCB trace geometry.` }
+
+  const placedPinsOf = (net: (typeof nets)[number]) => net.pins.filter((pin) => pin.pcbPortId)
+  // Copper whose route names no endpoint ports cannot be matched to pins. tscircuit's own
+  // checks usually annotate those endpoints before this runs, so this is a fallback: report
+  // it as unverifiable rather than failing a net whose copper simply cannot be traced.
+  const unverifiable = nets.filter((net) => placedPinsOf(net).length > 0 && placedPinsOf(net).every((pin) => !pin.routed))
+  const partial = nets.filter((net) => !unverifiable.includes(net) && placedPinsOf(net).some((pin) => !pin.routed))
+  if (partial.length > 0) {
+    const detail = partial.map((net) => `${net.name} (${net.pins.filter((pin) => pin.pcbPortId && !pin.routed).map((pin) => `${pin.componentName ?? "?"}.${pin.pinName}`).join(", ")})`)
+    return {
+      id: "routed-connections",
+      status: "fail",
+      message: `${partial.length} net${partial.length === 1 ? " has a pin" : "s have pins"} that copper does not reach: ${detail.join("; ")}.`,
+    }
+  }
+
+  const unplaced = nets.filter((net) => net.pins.some((pin) => !pin.pcbPortId))
+  if (unverifiable.length > 0 || unplaced.length > 0) {
+    return {
+      id: "routed-connections",
+      status: "warning",
+      message: [
+        `All ${nets.length} net${nets.length === 1 ? "" : "s"} carry copper.`,
+        unverifiable.length ? `${unverifiable.length} net${unverifiable.length === 1 ? "'s" : "s'"} copper names no endpoint ports, so pin-level routing could not be confirmed: ${unverifiable.map((net) => net.name).join(", ")}.` : "",
+        unplaced.length ? `${unplaced.length} net${unplaced.length === 1 ? " has a pin" : "s have pins"} with no PCB port to reach: ${unplaced.map((net) => net.name).join(", ")}.` : "",
+      ].filter(Boolean).join(" "),
+    }
+  }
+
+  return {
+    id: "routed-connections",
+    status: "pass",
+    message: `Copper reaches every pin on all ${nets.length} connected net${nets.length === 1 ? "" : "s"}.`,
+  }
 }
 
 export function mountManufacturingRoutes(app: Express, service: ManufacturingService, sourcing?: SourcingClient, assertions?: (id: string) => Promise<AssertionReport | undefined>) {

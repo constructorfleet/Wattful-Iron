@@ -16,7 +16,14 @@ test("example circuits build with their expected PCB geometry and electrical rou
         const { body: project } = await request(app).post("/api/projects")
           .send({ name: example, templateId: example }).expect(201)
         const built = await waitForBuild(app, project.id, project.revision)
-        const circuit = await request(app).get(`/api/projects/${project.id}/preview`).query({ kind: "pcb" }).expect(200)
+        assert.equal(built.status, "ready", `${example} build: ${JSON.stringify(built)}`)
+        const circuit = await request(app).get(`/api/projects/${project.id}/preview`).query({ kind: "pcb" })
+        // Report the build and project state when the preview is missing: a bare 404 here
+        // has been hard to diagnose when this test fails under load.
+        if (circuit.status !== 200) {
+          const { body: state } = await request(app).get(`/api/projects/${project.id}`)
+          assert.fail(`${example} preview returned ${circuit.status} after a ready build: build=${JSON.stringify(built)} project=${JSON.stringify(state)} body=${JSON.stringify(circuit.body)}`)
+        }
         const elements = circuit.body.circuitJson as Array<{ type: string }>
         assert.ok(elements.some((element) => element.type === "pcb_board"), `${example} has no PCB board`)
         const minComponents = example === "blank-board" ? 0 : example === "manufacturing-board" ? 2 : 3

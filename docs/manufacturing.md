@@ -63,6 +63,14 @@ passing preflight and a downloadable package do not certify electrical safety,
 manufacturability, or compatibility with a particular vendor. Review all files
 with the selected fabricator and assembler before ordering.
 
+## Routed connectivity
+
+The `routed-connections` check judges each **net**, not each logical trace: two traces that
+declare the same connection belong to one net, and copper that routes the net routes both.
+A net with no copper fails, a net whose copper does not reach one of its pins fails and
+names that pin, and a net whose pin has no PCB port to reach warns rather than failing,
+because the footprints check already covers placement.
+
 ## Via geometry
 
 The JLCPCB two-layer profile checks each via's drilled hole (0.3 mm minimum),

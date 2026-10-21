@@ -126,17 +126,45 @@ test("manufacturing preflight runs supported design checks and exposes blocking 
   assert.equal(result.ready, false)
 })
 
-test("manufacturing preflight blocks source connections without a routed PCB trace", async () => {
-  const result = await checkManufacturability([
-    ...elements,
-    { type: "source_trace", source_trace_id: "source_trace_1" },
-    { type: "pcb_trace", pcb_trace_id: "pcb_trace_1", source_trace_id: "source_trace_1", route: [] },
-    { type: "source_trace", source_trace_id: "source_trace_2" },
-  ], { status: "ready", revision: "rev-1" }, "rev-1")
+/** A two-component net with ports, PCB ports, and optional copper between them. */
+const netElements = (options: { copper?: boolean; reachBothPins?: boolean; extraTrace?: boolean } = {}) => [
+  { type: "source_component", source_component_id: "sc-a", name: "R9", ftype: "simple_resistor", resistance: 1000, value: "1k", manufacturer_part_number: "0603WAF1001" },
+  { type: "source_component", source_component_id: "sc-b", name: "R10", ftype: "simple_resistor", resistance: 1000, value: "1k", manufacturer_part_number: "0603WAF1001" },
+  { type: "pcb_component", pcb_component_id: "pc-a", source_component_id: "sc-a", center: { x: -2, y: 0 }, width: 1.6, height: 0.8, rotation: 0, layer: "top" },
+  { type: "pcb_component", pcb_component_id: "pc-b", source_component_id: "sc-b", center: { x: 2, y: 0 }, width: 1.6, height: 0.8, rotation: 0, layer: "top" },
+  { type: "source_port", source_port_id: "sp-a", source_component_id: "sc-a", name: "pin2", subcircuit_connectivity_map_key: "net9" },
+  { type: "source_port", source_port_id: "sp-b", source_component_id: "sc-b", name: "pin1", subcircuit_connectivity_map_key: "net9" },
+  { type: "pcb_port", pcb_port_id: "pp-a", source_port_id: "sp-a", layers: ["top"], x: -1, y: 0 },
+  { type: "pcb_port", pcb_port_id: "pp-b", source_port_id: "sp-b", layers: ["top"], x: 1, y: 0 },
+  { type: "source_trace", source_trace_id: "st-sense", name: "SENSE", connected_source_port_ids: ["sp-a", "sp-b"], connected_source_net_ids: [], subcircuit_connectivity_map_key: "net9" },
+  // A second trace declaring the same connection: one net, which the autorouter routes once.
+  ...(options.extraTrace ? [{ type: "source_trace", source_trace_id: "st-sense-2", name: "SENSE", connected_source_port_ids: ["sp-b", "sp-a"], connected_source_net_ids: [], subcircuit_connectivity_map_key: "net9" }] : []),
+  ...(options.copper ? [{
+    type: "pcb_trace",
+    pcb_trace_id: "pt-sense",
+    connection_name: "st-sense",
+    connectsTo: options.reachBothPins === false ? ["pp-a"] : ["pp-a", "pp-b"],
+    route: [
+      { route_type: "wire", x: -1, y: 0, width: 0.2, layer: "top", start_pcb_port_id: "pp-a" },
+      ...(options.reachBothPins === false ? [] : [{ route_type: "wire", x: 1, y: 0, width: 0.2, layer: "top", end_pcb_port_id: "pp-b" }]),
+    ],
+  }] : []),
+]
 
+test("manufacturing preflight blocks a net that carries no copper", async () => {
+  const result = await checkManufacturability(netElements(), { status: "ready", revision: "rev-1" }, "rev-1")
   assert.equal(result.ready, false)
-  assert.equal(result.checks.find(({ id }) => id === "routed-connections")?.status, "fail")
-  assert.match(result.checks.find(({ id }) => id === "routed-connections")?.message ?? "", /source_trace_1.*source_trace_2/)
+  const check = result.checks.find(({ id }) => id === "routed-connections")
+  assert.equal(check?.status, "fail")
+  assert.match(check?.message ?? "", /1 net carries no copper: SENSE/)
+})
+
+test("manufacturing preflight blocks a net whose copper does not reach a pin", async () => {
+  const result = await checkManufacturability(netElements({ copper: true, reachBothPins: false }), { status: "ready", revision: "rev-1" }, "rev-1")
+  assert.equal(result.ready, false)
+  const check = result.checks.find(({ id }) => id === "routed-connections")
+  assert.equal(check?.status, "fail")
+  assert.match(check?.message ?? "", /SENSE \(R10\.pin1\)/)
 })
 
 test("routing preflight warns when Circuit JSON has no logical connections to verify", async () => {
@@ -144,14 +172,32 @@ test("routing preflight warns when Circuit JSON has no logical connections to ve
   assert.equal(result.checks.find(({ id }) => id === "routed-connections")?.status, "warning")
 })
 
-test("routing preflight passes when every logical source trace has PCB route geometry", async () => {
-  const result = await checkManufacturability([
-    ...elements,
-    { type: "source_trace", source_trace_id: "source_trace_1" },
-    { type: "pcb_trace", pcb_trace_id: "pcb_trace_1", source_trace_id: "source_trace_1", route: [{ route_type: "wire", x: 0, y: 0, width: 0.2 }] },
-  ], { status: "ready", revision: "rev-1" }, "rev-1")
+test("routing preflight passes when copper reaches every pin on every net", async () => {
+  const result = await checkManufacturability(netElements({ copper: true }), { status: "ready", revision: "rev-1" }, "rev-1")
+  const check = result.checks.find(({ id }) => id === "routed-connections")
+  assert.equal(check?.status, "pass")
+  assert.match(check?.message ?? "", /Copper reaches every pin on all 1 connected net/)
+})
 
-  assert.equal(result.checks.find(({ id }) => id === "routed-connections")?.status, "pass")
+test("two traces declaring one connection count as a single routed net", async () => {
+  // The per-trace check reported the redundant trace as unrouted even though copper
+  // already routed the net it belongs to.
+  const result = await checkManufacturability(netElements({ copper: true, extraTrace: true }), { status: "ready", revision: "rev-1" }, "rev-1")
+  const check = result.checks.find(({ id }) => id === "routed-connections")
+  assert.equal(check?.status, "pass")
+  assert.match(check?.message ?? "", /all 1 connected net/)
+})
+
+test("routing preflight warns, rather than failing, when a net's pin has no PCB port", async () => {
+  // An unplaced component leaves its pin with nowhere for copper to land. The footprints
+  // check covers the placement itself, so routing reports this without blocking.
+  const result = await checkManufacturability([
+    ...netElements({ copper: true }).filter((element) => element.pcb_port_id !== "pp-b"),
+  ], { status: "ready", revision: "rev-1" }, "rev-1")
+  const check = result.checks.find(({ id }) => id === "routed-connections")
+  assert.equal(check?.status, "warning")
+  assert.match(check?.message ?? "", /no PCB port to reach: SENSE/)
+  assert.notEqual(check?.status, "fail")
 })
 
 test("fabricator profile checks copper clearance to a rectangular board edge", async () => {

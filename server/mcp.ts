@@ -12,6 +12,7 @@ import { parseRequirements, validateRequirements } from "./requirements.js"
 import type { AssertionReport } from "./assertions.js"
 import { isReviewState, type ReviewState } from "./review-state.js"
 import { moduleImportLine, type CircuitModule } from "./circuit-modules.js"
+import { describeProjectKnowledge, parseProjectKnowledge } from "./project-knowledge.js"
 import { addComponent, connectComponents, listSourceComponents, removeComponent, setBoardDimensions, setComponentProperties } from "./circuit-source.js"
 import { checkRouting, runDesignRuleCheck, runElectricalRuleCheck } from "./rule-checks.js"
 import { analyzePower } from "./power-analysis.js"
@@ -31,6 +32,8 @@ type ProjectService = {
   duplicateProject(id: string, name: string, expectedRevision: string): Promise<Project>
   get(id: string): Promise<Project>
   getFileList(id: string): Promise<string[]>
+  projectDir(id: string): string
+  readonly appNodeModules: string
   readFile(id: string, relativePath: string): Promise<{ path: string; content: string; revision: string }>
   writeFile(id: string, relativePath: string, content: string, revision: string): Promise<{ path: string; revision: string }>
   requestBuild(id: string): { buildId: string; status: string }
@@ -349,6 +352,38 @@ function createServer(service: ProjectService, sourcing?: SourcingClient, assert
     const [file, preview] = await Promise.all([service.readFile(projectId, "requirements.json"), service.preview(projectId)])
     if (file.revision !== project.revision || preview.revision !== project.revision) return { configured: true, stale: true, revision: project.revision, previewRevision: preview.revision, checks: [], message: "The latest successful build or requirements file is for an older project revision; rebuild before validating requirements." }
     return { configured: true, stale: false, revision: project.revision, previewRevision: preview.revision, ...validateRequirements(parseRequirements(file.content), preview.circuitJson) }
+  }))
+
+  server.registerTool("get_project_knowledge", {
+    title: "Read the project's engineering knowledge",
+    description: "Read the project's knowledge.json: its summary, functional requirements, electrical assumptions, design decisions with rationale, mechanical constraints, manufacturing preferences, known issues, and pending decisions. Also reports which sections are empty, and that nothing in the document is checked against the design.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => {
+    const files = await service.getFileList(projectId)
+    if (!files.includes("knowledge.json")) return { configured: false, message: "This project has no knowledge.json document." }
+    const file = await service.readFile(projectId, "knowledge.json")
+    const document = parseProjectKnowledge(file.content)
+    return { configured: true, revision: file.revision, ...document, ...describeProjectKnowledge(document) }
+  }))
+
+  server.registerTool("update_project_knowledge", {
+    title: "Record project engineering knowledge",
+    description: "Replace the project's knowledge.json with a new document, passing the current revision for concurrency. Record assumptions, decisions and their rationale, known issues, and open questions. Requirements that should be checked belong in requirements.json and regressions in assertions.json; nothing here is validated against the design.",
+    inputSchema: z.object({ projectId, revision, knowledge: z.record(z.string(), z.unknown()) }),
+  }, async ({ projectId, revision: expected, knowledge }) => safeTool(async () => {
+    const document = parseProjectKnowledge(JSON.stringify({ version: 1, knowledge }))
+    const saved = await service.writeFile(projectId, "knowledge.json", JSON.stringify(document, null, 2) + "\n", expected)
+    return { configured: true, path: saved.path, revision: saved.revision, ...document, ...describeProjectKnowledge(document) }
+  }))
+
+  server.registerTool("get_project_dependencies", {
+    title: "Get the versions a project builds against",
+    description: "Report the dependency versions the project's package.json declares and the versions a build actually resolves. Builds use the workbench's own pinned tscircuit rather than a per-project install, so declared versions are reference only; the response says so and explains how to change what a build uses.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => {
+    const { readProjectDependencies } = await import("./project-dependencies.js")
+    const project = await service.get(projectId)
+    return { revision: project.revision, ...await readProjectDependencies(service.projectDir(projectId), service.appNodeModules) }
   }))
 
   server.registerTool("get_review_state", {

@@ -103,6 +103,15 @@ against one project volume.
   builds it with the real tscircuit CLI. Modules that need registry-resolved
   parts — USB-C input, ESP32 support, buck converters, level shifters — are not
   included, because build containers have no network to resolve them.
+- A versioned `knowledge.json` document for project context — summary,
+  functional requirements, electrical assumptions, design decisions with
+  rationale, mechanical constraints, manufacturing preferences, known issues,
+  and pending decisions — readable and writable over REST and MCP. It is prose:
+  nothing in it is checked against the design, and manufacturing preferences
+  recorded there do not affect builds, preflight, or exports.
+- Dependency reporting that names both the versions a project declares and the
+  versions a build resolves. Builds use the workbench's own pinned tscircuit,
+  so declared versions are reference only and there is no editing endpoint.
 - Versioned `assertions.json` regression assertions with REST and MCP evaluation:
   named nets stay connected, required components exist, supply current and
   calculated dissipation stay within limits, supported design-check findings do
