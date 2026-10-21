@@ -21,8 +21,15 @@ services:
       COMPONENT_SOURCING_URL: ${COMPONENT_SOURCING_URL:-}
       COMPONENT_SOURCING_TIMEOUT_MS: ${COMPONENT_SOURCING_TIMEOUT_MS:-}
       GIT_HISTORY: ${GIT_HISTORY:-true}
+      AUTH_MODE: ${AUTH_MODE:-}
+      AUTH_DIR: ${AUTH_DIR:-/data/auth}
+      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:-}
+      INITIAL_OWNER_EMAIL: ${INITIAL_OWNER_EMAIL:-}
+      INITIAL_OWNER_PASSWORD: ${INITIAL_OWNER_PASSWORD:-}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
     volumes:
       - projects:/data/projects
+      - auth:/data/auth
     secrets:
       - build_runner_token
     networks:
@@ -109,6 +116,8 @@ services:
 volumes:
   projects:
     name: circuits-projects
+  auth:
+    name: circuits-auth
 
 networks:
   backend:

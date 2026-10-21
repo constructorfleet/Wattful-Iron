@@ -102,10 +102,19 @@ responses larger than 512 KB, and caches results in memory for ten minutes. A
 supplier outage degrades the affected features to "not evaluated" rather than
 failing a build or a preflight.
 
-## Review states are not an authorization boundary
+## Review states and who may change them
 
 An approved revision is read-only, and MCP agents cannot approve a revision or reopen an
-approved one. That constrains agents, not people: with no per-user identity in this slice,
-anyone holding the shared workbench token can record or reopen any state, and the review log
-records which interface recorded an entry rather than who did. Treat it as an audit trail
-and a guard against accidental edits, not as access control.
+approved one.
+
+With `AUTH_MODE=users`, roles make that an authorization boundary: only owners may approve a
+revision, manage accounts, or delete a project, and review entries record the account that
+made them. See [accounts](accounts.md) for the credential handling, session cookies, CSRF
+protection, and the limits — no SSO or MFA, no per-project permissions, and no password
+reset flow.
+
+Without accounts the workbench is open, or gated by the shared `WORKBENCH_AUTH_TOKEN`, and
+anyone holding that token can record or reopen any state. A shared token configured
+alongside accounts also keeps full access, including approval, so remove it once accounts
+are in use. In that configuration treat review states as an audit trail and a guard against
+accidental edits rather than access control.

@@ -161,6 +161,16 @@ button { color: inherit; cursor: pointer; }
 .design-diff dd { margin: 0; color: #d5dee2; font: 10px var(--mono); }
 .design-added { color: #72d4af; }
 .design-removed { color: #e58b7b; }
+.sign-in-page { display: grid; place-items: center; min-height: 100vh; }
+.sign-in-card { display: flex; width: min(340px, 90vw); flex-direction: column; gap: 12px; padding: 26px 24px; border: 1px solid #2c363c; border-radius: 8px; background: #161d21; }
+.sign-in-card .brand-logo { width: 38px; height: 38px; }
+.sign-in-card h1 { margin: 0; color: #e1e9e5; font-size: 18px; }
+.sign-in-card p { margin: 0; color: #93a0a8; font-size: 11px; }
+.sign-in-card label { display: flex; flex-direction: column; gap: 4px; color: #93a0a8; font-size: 10px; }
+.sign-in-card input { padding: 8px 9px; color: #d9e2e6; border: 1px solid #39454a; border-radius: 4px; background: #121a1e; font-size: 12px; }
+.sign-in-error { color: #e58b7b; }
+.account-chip { display: flex; align-items: center; gap: 7px; padding: 0 8px; color: #c6d2d8; font-size: 10px; }
+.account-chip small { color: #72d4af; font: 9px var(--mono); }
 .review-button.validated { color: #a8dcc5; border-color: #3c5e4c; }
 .review-button.reviewed { color: #a9c9e0; border-color: #3a566b; }
 .review-button.manufacturing_approved { color: #72d4af; border-color: #4c6e5a; background: #16241d; }

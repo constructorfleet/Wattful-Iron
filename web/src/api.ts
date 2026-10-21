@@ -182,8 +182,41 @@ function responseErrorMessage(detail: string, fallback: string) {
   return detail || fallback
 }
 
+export type Capability = 'read' | 'write' | 'approve' | 'manage_users' | 'delete_project'
+export type SessionUser = { id: string; email: string; displayName: string; role: 'owner' | 'engineer' | 'viewer'; disabled: boolean; createdAt: string; updatedAt: string }
+export type SessionView = {
+  accountsEnabled: boolean
+  sharedTokenConfigured: boolean
+  authenticated: boolean
+  kind: 'user' | 'shared-token' | 'mcp' | 'anonymous'
+  user?: SessionUser
+  capabilities: Capability[]
+}
+
+const CSRF_COOKIE = 'wattful_csrf'
+
+/** The CSRF cookie is readable by design: the server compares it with this header. */
+function csrfToken() {
+  if (typeof document === 'undefined') return undefined
+  for (const part of document.cookie.split(';')) {
+    const separator = part.indexOf('=')
+    if (separator < 0) continue
+    if (part.slice(0, separator).trim() !== CSRF_COOKIE) continue
+    try { return decodeURIComponent(part.slice(separator + 1).trim()) } catch { return part.slice(separator + 1).trim() }
+  }
+  return undefined
+}
+
+function withCsrf(init: RequestInit): RequestInit {
+  const method = (init.method ?? 'GET').toUpperCase()
+  if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return init
+  const token = csrfToken()
+  if (!token) return init
+  return { ...init, headers: { ...(init.headers as Record<string, string> | undefined), 'X-CSRF-Token': token } }
+}
+
 async function request<T>(url: string, init: RequestInit = {}, fetcher: Fetcher = fetch): Promise<T> {
-  const response = await fetcher(url, init)
+  const response = await fetcher(url, withCsrf(init))
   if (response.status === 409 || response.status === 412) {
     const payload = await response.json().catch(() => ({})) as { error?: string }
     throw new Error(payload.error || 'The project changed while this action was in progress. Reload it and try again.')
@@ -195,6 +228,16 @@ async function request<T>(url: string, init: RequestInit = {}, fetcher: Fetcher 
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
 }
+
+export const getSession = (fetcher?: Fetcher) => request<SessionView>('/api/auth/session', undefined, fetcher)
+
+export const login = (email: string, password: string, fetcher?: Fetcher) => request<{ user: SessionUser; capabilities: Capability[]; expiresAt: string }>('/api/auth/login', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ email, password }),
+}, fetcher)
+
+export const logout = (fetcher?: Fetcher) => request<void>('/api/auth/logout', { method: 'POST' }, fetcher)
 
 export const listProjects = (fetcher?: Fetcher) => request<Project[]>('/api/projects', undefined, fetcher)
 export const listProjectTemplates = (fetcher?: Fetcher) => request<ProjectTemplate[]>('/api/examples', undefined, fetcher)

@@ -13,6 +13,9 @@ import {
   getManufacturingArchive,
   getManufacturingPreflight,
   getAssertionCheck,
+  getSession,
+  login as loginApi,
+  logout as logoutApi,
   getReviewState,
   setReviewState,
   getBomCost,
@@ -41,6 +44,8 @@ import {
   type ManufacturingCheck,
   type ManufacturingPreflight,
   type AssertionCheck,
+  type Capability,
+  type SessionView,
   type ReviewState as ReviewStateName,
   type ReviewView,
   type BomCost,
@@ -105,6 +110,11 @@ async function fetchPdfUrl(value: string): Promise<File> {
 }
 
 export default function App() {
+  const [session, setSession] = useState<SessionView | null>(null)
+  const [signingIn, setSigningIn] = useState(false)
+  const [loginEmail, setLoginEmail] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
+  const [loginError, setLoginError] = useState('')
   const [projects, setProjects] = useState<Project[]>([])
   const [project, setProject] = useState<Project | null>(null)
   const [filePath, setFilePath] = useState('')
@@ -177,6 +187,38 @@ export default function App() {
   const selectedNet = tracedNets.find(({ id }) => id === selectedNetId) ?? tracedNets[0]
   const selectedComponent = inspectedComponents.find(({ id }) => id === selectedComponentId) ?? inspectedComponents[0]
   const selectedComponentLcscPart = lcscPartNumberOf(selectedComponent?.properties)
+
+  const can = useCallback((capability: Capability) => session?.capabilities.includes(capability) ?? false, [session])
+  const readOnlyAccount = Boolean(session?.accountsEnabled) && session?.authenticated === true && !can('write')
+
+  const refreshSession = useCallback(async () => {
+    try { setSession(await getSession()) } catch { setSession(null) }
+  }, [])
+
+  useEffect(() => { void refreshSession() }, [refreshSession])
+
+  const signIn = async () => {
+    setSigningIn(true)
+    setLoginError('')
+    try {
+      await loginApi(loginEmail.trim(), loginPassword)
+      setLoginPassword('')
+      await refreshSession()
+    } catch (cause) {
+      setLoginError(cause instanceof Error ? cause.message : 'Sign-in failed')
+    } finally {
+      setSigningIn(false)
+    }
+  }
+
+  const signOut = async () => {
+    try { await logoutApi() } finally {
+      setProject(null)
+      setProjects([])
+      setSource('')
+      await refreshSession()
+    }
+  }
 
   useEffect(() => { sourceRef.current = source }, [source])
   useEffect(() => { revisionRef.current = revision }, [revision])
@@ -662,6 +704,22 @@ export default function App() {
     if (project && view === 'simulation') getSimulation(project.id).then(setSimulation).catch(() => setSimulation(null))
   }, [project, view, build.status, build.revision])
 
+  if (session?.accountsEnabled && !session.authenticated) {
+    return (
+      <main className="workbench sign-in-page">
+        <form className="sign-in-card" aria-label="Sign in" onSubmit={(event) => { event.preventDefault(); void signIn() }}>
+          <img className="brand-logo" src="/Wattful-Iron.png" alt="" />
+          <h1>Wattful-Iron</h1>
+          <p>Sign in to open this workbench.</p>
+          <label>Email<input type="email" autoComplete="username" required value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} /></label>
+          <label>Password<input type="password" autoComplete="current-password" required value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} /></label>
+          {loginError && <p className="sign-in-error" role="alert">{loginError}</p>}
+          <button type="submit" className="build-button" disabled={signingIn || !loginEmail.trim() || !loginPassword}>{signingIn ? 'Signing in…' : 'Sign in'}</button>
+        </form>
+      </main>
+    )
+  }
+
   return (
     <main className="workbench">
       <header className="topbar">
@@ -673,6 +731,11 @@ export default function App() {
         </div>
         <div className="top-actions">
           <div className={`build-state ${build.status}`} aria-live="polite"><span className="status-dot" />{statusText}</div>
+          {session?.user && <div className="account-chip">
+            <span>{session.user.displayName}</span>
+            <small>{session.user.role}</small>
+            <button type="button" className="quiet-button" onClick={() => void signOut()}>Sign out</button>
+          </div>}
           {review && <button type="button" className={`build-button review-button ${review.state}`} disabled={!project} onClick={() => setReviewDialogOpen(true)}>{reviewStateLabels[review.state]}{review.locked ? ' 🔒' : ''}</button>}
           <button type="button" className="build-button history-button" disabled={!project} onClick={() => setHistoryDialogOpen(true)}>History</button>
           <button type="button" className="build-button" disabled={!project || exportingArchive} onClick={() => void downloadProjectArchive()}>{exportingArchive ? 'Exporting…' : 'Export project ZIP'}</button>
@@ -729,6 +792,7 @@ export default function App() {
         </aside>
 
         <section className="editor-panel" aria-label="Source editor panel">
+          {readOnlyAccount && <output className="approved-banner">Your account has read-only access, so the editor cannot save changes.</output>}
           {review?.locked && <output className="approved-banner">This revision is approved for manufacturing and is read-only. Reopen it as a draft to edit.</output>}
           <div className="panel-toolbar editor-toolbar">
             <div className="file-tab"><span className="tsx-icon">TS</span>{filePath || 'No file open'}{dirty && <span className="unsaved-dot" title="Unsaved changes" />}</div>
@@ -742,7 +806,7 @@ export default function App() {
             theme="vs-dark"
             value={source}
             onChange={(value) => { setSource(value ?? ''); setDirty(true) }}
-            options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, tabSize: 2, wordWrap: 'on', padding: { top: 14 }, readOnly: review?.locked ?? false }}
+            options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, tabSize: 2, wordWrap: 'on', padding: { top: 14 }, readOnly: (review?.locked ?? false) || readOnlyAccount }}
           /> : <div className="empty-editor"><span className="empty-glyph">{'</>'}</span><h2>Your circuit starts here</h2><p>Create or open a project to edit its tscircuit source.</p><button type="button" className="small-primary" onClick={() => setCreating(true)}>Create project</button></div>}
         </section>
 

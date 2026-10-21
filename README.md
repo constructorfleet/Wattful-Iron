@@ -50,8 +50,10 @@ Use **Run simulation** to rebuild the current source on demand. The panel only
 displays transient graph data emitted by tscircuit. Treat all views as
 development previews rather than engineering approval.
 
-ACP agent interfaces, user-level authentication, and full KiCad-equivalent
-ERC/DRC are not implemented in this slice. Revisions carry design review states,
+ACP agent interfaces and full KiCad-equivalent ERC/DRC are not implemented in
+this slice. Per-user accounts with viewer, engineer, and owner roles are
+available behind `AUTH_MODE=users`; external identity providers, SSO, and MFA
+are not. Revisions carry design review states,
 and an approved revision is read-only to the browser, the REST API, and MCP. MCP agents can run the supported
 electrical, board, and routing rule checks and read IPC-2221 trace current
 capacity; every report names the checks it does not evaluate. Manufacturing preflight runs the
@@ -102,6 +104,7 @@ Engine and worker image. `GET /healthz` is the container health endpoint.
 - [Workbench how-tos: edit, preview, simulate, export, and connect MCP](docs/workbench-howtos.md)
 - [Architecture and feature status](docs/architecture.md)
 - [Project source history, compare, restore, and retention](docs/source-history.md)
+- [User accounts, roles, and sessions](docs/accounts.md)
 - [Design review states and approval](docs/review.md)
 - [Project regression assertions](docs/assertions.md)
 - [Manufacturing preflight and exports](docs/manufacturing.md)
