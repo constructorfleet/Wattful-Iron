@@ -367,6 +367,70 @@ test("MCP exposes electrical, board, routing, and power reports for a build", as
   }
 })
 
+test("MCP clients can build a circuit structurally and have each edit rejected when stale", async () => {
+  const fixture = await makeFixture()
+  const server = createServer(fixture.app)
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address()
+  assert.ok(address && typeof address !== "string")
+  const client = new Client({ name: "circuits-workbench-test", version: "1.0.0" })
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`), {
+    requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+  })
+  try {
+    await client.connect(transport)
+    const project = readResult<{ id: string; revision: string }>(await client.callTool({ name: "create_project", arguments: { name: "Structural edits" } }))
+    const edit = async (name: string, args: Record<string, unknown>) => {
+      const current = readResult<{ revision: string }>(await client.callTool({ name: "get_project", arguments: { projectId: project.id } }))
+      return readResult<{ revision: string; changed: boolean }>(
+        await client.callTool({ name, arguments: { projectId: project.id, revision: current.revision, ...args } }))
+    }
+
+    await edit("set_board_dimensions", { width: "30mm", height: "18mm", layers: 2 })
+    await edit("add_component", { element: "resistor", name: "R1", props: { resistance: "1k", footprint: "0603", pcbX: -3 } })
+    await edit("add_component", { element: "led", name: "D1", props: { color: "green", footprint: "led0603", pcbX: 3 } })
+    await edit("connect_components", { from: ".R1 > .pin2", to: ".D1 > .pin1", name: "LED_CURRENT" })
+    await edit("set_component_properties", { name: "R1", props: { resistance: "2.2k", footprint: null } })
+
+    const source = readResult<{ content: string }>(await client.callTool({
+      name: "read_project_file",
+      arguments: { projectId: project.id, path: "index.circuit.tsx" },
+    }))
+    assert.match(source.content, /<board width="30mm" height="18mm" routingDisabled layers=\{2\}>/)
+    assert.match(source.content, /<resistor name="R1" resistance="2.2k" pcbX=\{-3\} \/>/)
+    assert.match(source.content, /<trace from=".R1 > .pin2" to=".D1 > .pin1" name="LED_CURRENT" \/>/)
+
+    const components = readResult<{ components: Array<{ element: string; name: string }> }>(
+      await client.callTool({ name: "list_source_components", arguments: { projectId: project.id } }))
+    assert.deepEqual(components.components, [{ element: "resistor", name: "R1" }, { element: "led", name: "D1" }])
+
+    const removed = await edit("remove_component", { name: "D1" })
+    assert.equal(removed.changed, true)
+    const afterRemoval = readResult<{ content: string }>(await client.callTool({
+      name: "read_project_file",
+      arguments: { projectId: project.id, path: "index.circuit.tsx" },
+    }))
+    assert.equal(afterRemoval.content.includes("<trace"), false)
+    assert.equal(afterRemoval.content.includes('name="D1"'), false)
+
+    const stale = await client.callTool({
+      name: "add_component",
+      arguments: { projectId: project.id, revision: project.revision, element: "capacitor", name: "C1" },
+    })
+    assert.equal(stale.isError, true)
+
+    const invalid = await client.callTool({
+      name: "connect_components",
+      arguments: { projectId: project.id, revision: removed.revision, from: ".R1 > .pin1", to: ".C9 > .pin1" },
+    })
+    assert.equal(invalid.isError, true)
+  } finally {
+    await client.close()
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    await fixture.cleanup()
+  }
+})
+
 async function makeFixture(buildCircuit: (projectDir: string) => Promise<unknown> = async () => [{ type: "source_component", name: "fixture" }]) {
   const root = await mkdtemp(path.join(tmpdir(), "circuits-mcp-"))
   const app = createApp({

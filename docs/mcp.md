@@ -27,6 +27,12 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `get_project_files` | List project files. |
 | `read_project_file` | Read a file and its current project revision. |
 | `update_project_file` | Write a file when the supplied revision is current. |
+| `list_source_components` | List the component elements placed in the circuit source, as opposed to the last build output. |
+| `set_board_dimensions` | Set the board `width`, `height`, or `layers` in the source. |
+| `add_component` | Add a component element with its tscircuit properties. |
+| `remove_component` | Remove a component and every trace that references it. |
+| `set_component_properties` | Set, replace, or remove properties on a named component. |
+| `connect_components` | Add a trace between two tscircuit selectors. |
 | `build_project` | Run the CLI build and return its result or diagnostics. |
 | `get_diagnostics` | Read diagnostics from the latest build. |
 | `get_preview` | Read the last successful Circuit JSON for `schematic`, `pcb`, or `3d`. |
@@ -50,6 +56,34 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `get_manufacturing_package` | Return a `GET` path and `application/zip` content type for the preflight-gated manufacturing download route, optionally selecting a fabricator profile. |
 
 `update_project_file` requires the `revision` returned by `read_project_file`; stale writes return a tool error. `duplicate_project` also requires the current project revision and creates a fresh project history. There are no delete or component-ordering tools.
+
+## Structural source edits
+
+`set_board_dimensions`, `add_component`, `remove_component`,
+`set_component_properties`, and `connect_components` edit the project's
+entrypoint TSX as a syntax tree rather than rewriting the file, so an agent can
+change one component without reproducing the rest of the source. Each tool
+takes the current project revision, writes through the same validated path as
+`update_project_file`, and queues a build. TypeScript/TSX remains the
+authoritative source; these tools are a typed way to edit it.
+
+Each tool rejects an edit instead of producing source that will not build:
+
+- Board lengths need a unit (`30mm`), and layer counts must be whole numbers.
+- A component name must be unique within the board, and the name must exist for
+  edits and removals.
+- A trace selector must reference a component that exists, and a duplicate
+  trace between the same two selectors is refused.
+- Property values must be a string, finite number, or boolean. Strings may not
+  contain quotes, braces, opening angle brackets, or newlines, so a value
+  cannot inject markup into the source. A null value removes a property.
+- A source with no `<board>` element, or more than one, is reported as not
+  structurally editable. Use `update_project_file` for those.
+
+New components are inserted after the last existing component and before the
+traces; new traces are appended after the last trace. Removing a component also
+removes the traces that reference it, so the circuit does not keep a dangling
+connection.
 
 Circuit inspection reads the most recent successful build. These tools expose the fields present in Circuit JSON: logical nets come from `source_trace` and `connected_source_port_ids`, pin details from `source_port`, PCB placement from `pcb_component`, and board data from `pcb_board`. `get_component` accepts a component reference/name or source component ID; it returns only related placement, pins, and trace connections present in that build. `get_circuit_json` returns the complete JSON and its build revision. `trace_net` accepts a source trace name or ID and can return multiple matching traces when a name is reused. These tools do not infer missing component, pin, or board properties.
 

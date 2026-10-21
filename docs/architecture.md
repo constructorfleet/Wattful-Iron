@@ -72,7 +72,9 @@ fabricator rule coverage, Git-backed revision history, approval states, and
 purchasing or fabrication integrations. Component cross-probing currently
 focuses PCB footprints and opens matching schematic component details; it does
 not highlight schematic/3D geometry, trace nets, vias, or simulation signals,
-or edit source properties. Optional workbench
+or edit source properties. MCP agents can edit board dimensions, components,
+component properties, and traces structurally, but there is no equivalent
+browser affordance and no circuit-level undo beyond project source history. Optional workbench
 authentication uses a shared token for the browser and REST API; MCP has its own
 shared bearer token. There is no per-user identity or access control.
 Requirements validation only
