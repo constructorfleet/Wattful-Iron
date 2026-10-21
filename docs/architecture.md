@@ -35,9 +35,16 @@ against one project volume.
 - Live SSE updates.
 - Schematic, PCB, and 3D preview panels.
 - A simulation panel and `/api/projects/:id/simulation` results endpoint that
-  read transient waveform elements emitted by tscircuit builds, with voltage
-  probe to Circuit JSON net correlation. The panel can explicitly rebuild the
-  current source on demand and display the resulting waveforms or diagnostics.
+  read the simulation results emitted by tscircuit builds: transient waveforms,
+  DC operating-point node voltages and branch currents, DC sweeps, and AC
+  sweeps reported as magnitude, magnitude in dB, and phase. Probes are
+  correlated with Circuit JSON nets. Each response names the analysis modes
+  that produced no results. The panel can explicitly rebuild the current source
+  on demand and display the results or diagnostics.
+- Power analysis over REST at `/api/projects/:id/power` and through MCP: node
+  voltages, branch currents, supply current and power, component dissipation
+  from I²R or V²/R, and measured current against IPC-2221 trace capacity per
+  net, alongside the quantities that remain not evaluated.
 - An optional bearer-token protected Streamable HTTP MCP endpoint with project,
   build, preview, diagnostics, and simulation tools.
 - A `/api/projects/:id/manufacturing` preflight for current builds, supported
@@ -64,10 +71,12 @@ component model or analysis mode. Preview output is not an electrical or
 manufacturing sign-off.
 
 Electrical and board rule checks run tscircuit's own check suite and report
-findings by category, alongside the trace current capacity that is derivable
-from board geometry. Every report names the checks it does not evaluate. This
-is not KiCad-equivalent ERC/DRC, and operating-point quantities such as
-dissipation and total current demand are not evaluated at all.
+findings by category, alongside trace current capacity derived from board
+geometry. Every report names the checks it does not evaluate. This is not
+KiCad-equivalent ERC/DRC. Operating-point quantities such as component
+dissipation, supply current, and trace loading are reported only when the build
+emits a DC operating point to calculate them from; regulator loading, resistor
+power-rating headroom, and thermal rise are never evaluated.
 
 ## Not implemented
 

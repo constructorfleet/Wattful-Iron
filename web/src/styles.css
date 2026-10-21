@@ -142,6 +142,17 @@ button { color: inherit; cursor: pointer; }
 .net-routing.partially-routed { color: #e8c37a; }
 .net-routing.unrouted { color: #e58b7b; }
 .net-routing.not-applicable { color: #8c99a1; }
+.operating-point,.sweep,.power-summary,.simulation-not-evaluated { margin-top: 14px; padding-top: 12px; border-top: 1px solid #263036; }
+.operating-point h3,.sweep h3,.power-summary h3,.simulation-not-evaluated h3 { margin: 0 0 8px; color: #cfd9de; font-size: 11px; }
+.operating-point dl,.power-section dl,.simulation-not-evaluated dl { display: grid; margin: 0; gap: 4px 12px; grid-template-columns: minmax(90px, max-content) 1fr; font-size: 10px; }
+.operating-point dt,.power-section dt,.simulation-not-evaluated dt { color: #93a0a8; }
+.operating-point dd,.power-section dd,.simulation-not-evaluated dd { margin: 0; color: #d5dee2; font: 10px var(--mono); }
+.power-section { margin-top: 10px; }
+.power-totals { display: flex; margin: 0 0 6px; gap: 16px; font: 11px var(--mono); }
+.power-totals dt { color: #93a0a8; }
+.power-totals dd { margin: 0 0 0 6px; color: #72d4af; }
+.trace-load { margin: 4px 0; color: #c6d2d8; font: 10px var(--mono); }
+.trace-load.over-capacity { color: #e58b7b; }
 .net-vias { margin: 7px 0 0; color: #a9b8bc; font: 9px var(--mono); overflow-wrap: anywhere; }
 .circuit-preview [role="tablist"] { display: none; }
 .pcb-preview { min-height: 620px; height: 100%; overflow: hidden; }

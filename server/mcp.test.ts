@@ -375,6 +375,14 @@ test("MCP exposes electrical, board, routing, and power reports for a build", as
 
     const invalid = await client.callTool({ name: "analyze_power", arguments: { projectId: project.id, temperatureRiseC: 500 } })
     assert.equal(invalid.isError, true)
+
+    const signals = readResult<{ status: string; signals: Array<{ sampleCount: number }>; operatingPoints: unknown[]; sweeps: unknown[]; notEvaluated: Array<{ analysis: string }> }>(
+      await client.callTool({ name: "list_simulation_signals", arguments: { projectId: project.id } }))
+    assert.equal(signals.status, "not_configured")
+    assert.deepEqual(signals.signals, [])
+    assert.ok(signals.notEvaluated.some(({ analysis }) => analysis === "DC operating point"))
+    const missingWaveform = await client.callTool({ name: "get_waveform", arguments: { projectId: project.id, signal: "VOUT" } })
+    assert.equal(missingWaveform.isError, true)
   } finally {
     await client.close()
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))

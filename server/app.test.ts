@@ -424,6 +424,50 @@ test("simulation endpoint returns retained tscircuit waveforms with net correlat
   } finally { await f.cleanup() }
 })
 
+test("power endpoint reports operating-point loads against trace capacity", async () => {
+  const poweredCircuit = [
+    { type: "source_component", source_component_id: "sc-v1", name: "V1", ftype: "simple_voltage_source", voltage: 5 },
+    { type: "source_component", source_component_id: "sc-r1", name: "R1", ftype: "simple_resistor", resistance: 100 },
+    { type: "source_port", source_port_id: "sp1", source_component_id: "sc-r1", name: "pin1", subcircuit_connectivity_map_key: "net1" },
+    { type: "source_port", source_port_id: "sp2", source_component_id: "sc-r1", name: "pin2", subcircuit_connectivity_map_key: "net1" },
+    { type: "source_trace", source_trace_id: "st1", name: "VCC", connected_source_port_ids: ["sp1", "sp2"], connected_source_net_ids: [], subcircuit_connectivity_map_key: "net1" },
+    { type: "pcb_port", pcb_port_id: "pp1", source_port_id: "sp1", layers: ["top"], x: 0, y: 0 },
+    { type: "pcb_port", pcb_port_id: "pp2", source_port_id: "sp2", layers: ["top"], x: 2, y: 0 },
+    { type: "pcb_trace", pcb_trace_id: "pt1", connection_name: "st1", connectsTo: ["pp1", "pp2"], route: [
+      { route_type: "wire", x: 0, y: 0, width: 0.2, layer: "top", start_pcb_port_id: "pp1" },
+      { route_type: "wire", x: 2, y: 0, width: 0.2, layer: "top", end_pcb_port_id: "pp2" },
+    ] },
+    { type: "simulation_experiment", simulation_experiment_id: "e1", name: "Operating point", experiment_type: "spice_dc_operating_point" },
+    { type: "simulation_current_probe", simulation_current_probe_id: "cp1", name: "R1 branch", source_component_id: "sc-r1", positive_source_net_id: "net1" },
+    { type: "simulation_current_probe", simulation_current_probe_id: "cp2", name: "Supply", source_component_id: "sc-v1" },
+    { type: "simulation_voltage_probe", simulation_voltage_probe_id: "vp1", name: "VCC", signal_input_source_net_id: "net1" },
+    { type: "simulation_dc_operating_point_voltage", simulation_dc_operating_point_voltage_id: "opv1", simulation_experiment_id: "e1", simulation_voltage_probe_id: "vp1", voltage: 5 },
+    { type: "simulation_dc_operating_point_current", simulation_dc_operating_point_current_id: "opc1", simulation_experiment_id: "e1", simulation_current_probe_id: "cp1", current: 0.05 },
+    { type: "simulation_dc_operating_point_current", simulation_dc_operating_point_current_id: "opc2", simulation_experiment_id: "e1", simulation_current_probe_id: "cp2", current: 0.05 },
+  ]
+  const f = await fixture(async () => poweredCircuit)
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Power" }).expect(201)
+    await waitForBuild(f.app, project.id, "ready")
+    const result = await request(f.app).get(`/api/projects/${project.id}/power`).expect(200)
+    assert.equal(result.body.revision, project.revision)
+    assert.deepEqual(result.body.nodeVoltages, [{ name: "VCC", voltageV: 5, netId: "net1" }])
+    assert.equal(result.body.totalSupplyCurrentA, 0.05)
+    // R1 carries 50 mA through 100 ohms: I^2R = 0.25 W.
+    assert.equal(result.body.componentPower[0].dissipationW, 0.25)
+    assert.equal(result.body.traceLoads[0].netName, "VCC")
+    assert.equal(result.body.traceLoads[0].status, "ok")
+    assert.ok(result.body.notEvaluated.some((item: { quantity: string }) => item.quantity === "Thermal rise of components and planes"))
+
+    const simulation = await request(f.app).get(`/api/projects/${project.id}/simulation`).expect(200)
+    assert.equal(simulation.body.status, "complete")
+    assert.equal(simulation.body.operatingPoints.length, 3)
+    assert.ok(simulation.body.notEvaluated.some((item: { analysis: string }) => item.analysis === "AC analysis"))
+
+    await request(f.app).get(`/api/projects/${project.id}/power`).query({ temperatureRiseC: "not-a-number" }).expect(400)
+  } finally { await f.cleanup() }
+})
+
 test("nets endpoint traces connectivity across schematic wires, copper, and simulation", async () => {
   const tracedCircuit = [
     { type: "source_component", source_component_id: "sc1", name: "R1", ftype: "simple_resistor" },

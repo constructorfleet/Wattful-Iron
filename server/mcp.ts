@@ -323,6 +323,38 @@ function createServer(service: ProjectService): McpServer {
     return { revision: preview.revision, ...getSimulationResults(preview.circuitJson) }
   }))
 
+  server.registerTool("list_simulation_signals", {
+    title: "List simulation signals",
+    description: "List the transient waveforms, DC operating-point values, and DC/AC sweeps the latest successful build emitted, without their sample data. Also reports which analysis modes produced no results.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => {
+    const preview = await service.preview(projectId)
+    const results = getSimulationResults(preview.circuitJson)
+    return {
+      revision: preview.revision,
+      status: results.status,
+      experiments: results.experiments,
+      analyses: results.analyses,
+      signals: results.signals.map(({ id, name, unit, netId, samples }) => ({ id, name, unit, netId, kind: "transient", sampleCount: samples.length })),
+      operatingPoints: results.operatingPoints,
+      sweeps: results.sweeps.map(({ id, name, kind, unit, xLabel, netId, samples }) => ({ id, name, kind, unit, xLabel, netId, sampleCount: samples.length })),
+      notEvaluated: results.notEvaluated,
+    }
+  }))
+
+  server.registerTool("get_waveform", {
+    title: "Get one simulation waveform or sweep",
+    description: "Return the samples of one transient waveform or one DC/AC sweep from the latest successful build, matched by signal ID or probe name. AC sweeps include magnitude in dB and phase in degrees.",
+    inputSchema: z.object({ projectId, signal: z.string().trim().min(1) }),
+  }, async ({ projectId, signal }) => safeTool(async () => {
+    const preview = await service.preview(projectId)
+    const results = getSimulationResults(preview.circuitJson)
+    const waveform = results.signals.find((item) => item.id === signal || item.name === signal)
+    const sweep = results.sweeps.find((item) => item.id === signal || item.name === signal)
+    if (!waveform && !sweep) throw new Error(`No simulation signal or sweep in the latest successful build matches '${signal}'`)
+    return { revision: preview.revision, ...(waveform ? { kind: "transient", signal: waveform } : { kind: sweep!.kind, sweep }) }
+  }))
+
   server.registerTool("run_erc", {
     title: "Run electrical rule checks",
     description: "Run the supported tscircuit netlist, pin specification, and source checks against the latest successful build, and report which electrical checks are not evaluated.",
