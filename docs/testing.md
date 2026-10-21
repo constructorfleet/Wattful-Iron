@@ -11,9 +11,12 @@ npm run build         # type check and bundle
 covers the workflow this project defines as done:
 
 1. Create a project from a template and build it.
-2. Edit it into the representative acceptance circuit: a power input connector,
+2. Edit it into the representative acceptance circuit: a power input header,
    decoupling capacitor, current-limited LED, divider leg, and the three named
-   nets `VIN`, `SIGNAL`, and `GND` across a 30 x 16 mm board.
+   nets `VIN`, `SIGNAL`, and `GND` across a 30 x 16 mm board. Every part names a
+   built-in footprint, because build containers have no network and cannot fetch
+   supplier footprints, and each net is wired as a chain of distinct hops so no
+   logical trace duplicates a connection another trace already routes.
 3. Read the schematic, PCB, and 3D previews and check each one carries all five
    components, all three nets, placement, schematic, 3D, and routed-trace data.
 4. Confirm the live update arrives on the project event stream.
@@ -34,9 +37,11 @@ covers the workflow this project defines as done:
     comparison.
 13. Run manufacturing preflight and confirm the export agrees with its verdict.
 
-The circuit covers power input, passives, an LED, a connector, and multiple
-nets. It does not include a voltage regulator: no regulator part resolves
-offline from the pinned tscircuit version, so regulation is not exercised here.
+The circuit covers power input, passives, an LED, a header, and multiple nets,
+and it routes completely, so step 13 exercises a ready preflight and a real
+manufacturing ZIP rather than only a refusal. It does not include a voltage
+regulator: no regulator part resolves offline from the pinned tscircuit
+version, so regulation is not exercised here.
 
 CI runs it against the built container image once the service reports healthy.
 To run it against a local development server:

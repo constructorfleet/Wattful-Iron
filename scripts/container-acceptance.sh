@@ -87,12 +87,14 @@ file_json=$(curl --fail --silent --show-error \
   "$base_url/api/projects/$project_id/files?path=$entrypoint")
 source=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).content)' "$file_json")
 revision=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).revision)' "$file_json")
-# The representative acceptance circuit: power input connector, decoupling,
+# The representative acceptance circuit: power input header, decoupling,
 # current-limited LED, a divider leg, and three named nets across the board.
+# Every part names a built-in footprint, because build containers have no
+# network and cannot fetch supplier footprints.
 edited_source=$(node -e '
   const source = `export default () => (
   <board name="Container acceptance circuit" width="30mm" height="16mm">
-    <connector name="J1" standard="jst_ph" pinCount={2} pcbX={-12} pcbY={0} pcbRotation={90} schX={-8} schY={0} pinLabels={{ pin1: "VIN", pin2: "GND" }} />
+    <pinheader name="J1" pinCount={2} footprint="pinrow2" pinLabels={["VIN", "GND"]} pcbX={-11.5} pcbY={0} schX={-8} schY={0} />
     <capacitor name="C1" capacitance="10uF" footprint="0805" pcbX={-6} pcbY={0} schX={-5} schY={0} />
     <resistor name="R1" resistance="2k" footprint="0603" pcbX={0} pcbY={0} schX={-2} schY={0} />
     <led name="D1" footprint="0603" pcbX={6} pcbY={0} schX={2} schY={0} />
@@ -100,10 +102,10 @@ edited_source=$(node -e '
     <trace from=".J1 > .VIN" to=".C1 > .pin1" name="VIN" />
     <trace from=".C1 > .pin1" to=".R1 > .pin1" name="VIN" />
     <trace from=".R1 > .pin2" to=".D1 > .anode" name="SIGNAL" />
-    <trace from=".D1 > .cathode" to=".J1 > .GND" name="GND" />
-    <trace from=".C1 > .pin2" to=".J1 > .GND" name="GND" />
-    <trace from=".R2 > .pin1" to=".R1 > .pin2" name="SIGNAL" />
-    <trace from=".R2 > .pin2" to=".J1 > .GND" name="GND" />
+    <trace from=".D1 > .anode" to=".R2 > .pin1" name="SIGNAL" />
+    <trace from=".J1 > .GND" to=".C1 > .pin2" name="GND" />
+    <trace from=".C1 > .pin2" to=".D1 > .cathode" name="GND" />
+    <trace from=".D1 > .cathode" to=".R2 > .pin2" name="GND" />
     <schematicsheet name="Main" displayName="Main" sheetIndex={0}>
       <schematictext text="Container acceptance" schX={0} schY={6} />
     </schematicsheet>
