@@ -33,6 +33,8 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `remove_component` | Remove a component and every trace that references it. |
 | `set_component_properties` | Set, replace, or remove properties on a named component. |
 | `connect_components` | Add a trace between two tscircuit selectors. |
+| `list_project_revisions` | List the project's revision history with Git commit, timestamp, changed files, and whether a snapshot and build summary are retained. |
+| `compare_project_revisions` | Compare two revisions: changed source files with before/after content, plus the design comparison of what each build produced. |
 | `build_project` | Run the CLI build and return its result or diagnostics. |
 | `get_diagnostics` | Read diagnostics from the latest build. |
 | `get_preview` | Read the last successful Circuit JSON for `schematic`, `pcb`, or `3d`. |

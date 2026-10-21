@@ -63,11 +63,15 @@ beforeEach(() => {
   api.getProject.mockResolvedValue(existingProject)
   api.getProjectFile.mockResolvedValue({ path: 'index.tsx', content: 'export default () => <board />', revision: 'rev-1' })
   api.getProjectFiles.mockResolvedValue(['index.tsx', 'package.json', 'src/helpers.js'])
-  api.getProjectHistory.mockResolvedValue({ revisions: [
-    { revision: 'rev-1', createdAt: '2026-01-02T00:00:00.000Z', changedFiles: ['index.tsx'], sizeBytes: 120 },
-    { revision: 'rev-2', createdAt: '2026-01-01T00:00:00.000Z', changedFiles: ['index.tsx'], sizeBytes: 110 },
+  api.getProjectHistory.mockResolvedValue({ gitBacked: true, snapshotRetention: 50, revisions: [
+    { revision: 'rev-1', createdAt: '2026-01-02T00:00:00.000Z', changedFiles: ['index.tsx'], sizeBytes: 120, commit: 'abcdef1234567890', retainedSnapshot: true, hasDesignSummary: true },
+    { revision: 'rev-2', createdAt: '2026-01-01T00:00:00.000Z', changedFiles: ['index.tsx'], sizeBytes: 110, commit: 'fedcba0987654321', retainedSnapshot: true, hasDesignSummary: true },
   ] })
-  api.compareProjectRevisions.mockResolvedValue({ from: 'rev-2', to: 'rev-1', files: [{ path: 'index.tsx', before: 'old source', after: 'new source' }] })
+  api.compareProjectRevisions.mockResolvedValue({
+    from: 'rev-2', to: 'rev-1',
+    files: [{ path: 'index.tsx', before: 'old source', after: 'new source' }],
+    design: { available: false, reason: 'No retained build summary for revision rev-2. Build those revisions to compare their designs; summaries are written when a build succeeds.' },
+  })
   api.restoreProjectRevision.mockResolvedValue({ revision: 'rev-3', restoredFrom: 'rev-2', changedFiles: ['index.tsx'] })
   api.getPreview.mockResolvedValue({ kind: 'schematic', revision: 'rev-1', circuitJson: [] })
   api.getManufacturingProfiles.mockResolvedValue({ profiles: [
@@ -570,11 +574,47 @@ describe('workbench', () => {
     expect(await screen.findByRole('dialog', { name: 'Project source history' })).toBeInTheDocument()
     expect(await screen.findByText('old source')).toBeInTheDocument()
     expect(screen.getByText('new source')).toBeInTheDocument()
-    fireEvent.click(screen.getByText('rev-2').closest('button')!)
+    expect(screen.getByText(/kept in this project’s Git repository/)).toBeInTheDocument()
+    expect(screen.getByText(/No retained build summary for revision rev-2/)).toBeInTheDocument()
+    fireEvent.click(screen.getByText('fedcba09').closest('button')!)
     fireEvent.click(screen.getByRole('button', { name: 'Restore selected revision' }))
 
     await waitFor(() => expect(api.restoreProjectRevision).toHaveBeenCalledWith('led-1', 'rev-2', 'rev-1'))
     expect(await screen.findByLabelText('TSX source editor')).toHaveValue('export default () => <board />')
+  })
+
+  it('shows what changed in the design between two builds', async () => {
+    api.compareProjectRevisions.mockResolvedValue({
+      from: 'rev-2', to: 'rev-1',
+      files: [],
+      design: {
+        available: true,
+        board: [{ property: 'widthMm', before: 26, after: 30 }],
+        components: {
+          added: [{ name: 'C1', value: '100nF', pinCount: 2 }],
+          removed: [{ name: 'R3', pinCount: 2 }],
+          changed: [{ name: 'R1', changes: [{ property: 'value', before: '10kΩ', after: '22kΩ' }] }],
+        },
+        nets: { added: [], removed: [], changed: [{ name: 'SENSE', changes: [{ property: 'routing', before: 'unrouted', after: 'routed' }] }] },
+        counts: [{ metric: 'pcbTraces', before: 0, after: 3 }],
+        simulation: [{ property: 'operatingPoints', before: 0, after: 2 }],
+        limitations: ['Rendered schematic, PCB, and 3D images are not compared; this is a structural comparison of Circuit JSON.'],
+      },
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'History' }))
+
+    const design = await screen.findByRole('region', { name: 'Design changes' })
+    expect(within(design).getByText('26 → 30')).toBeInTheDocument()
+    expect(within(design).getByText('Added: C1 (100nF)')).toBeInTheDocument()
+    expect(within(design).getByText('Removed: R3')).toBeInTheDocument()
+    expect(within(design).getByText('value: 10kΩ → 22kΩ')).toBeInTheDocument()
+    expect(within(design).getByText('routing: unrouted → routed')).toBeInTheDocument()
+    expect(within(design).getByText('0 → 3')).toBeInTheDocument()
+    expect(within(design).getByText('0 → 2')).toBeInTheDocument()
+    expect(within(design).getByText(/Rendered schematic, PCB, and 3D images are not compared/)).toBeInTheDocument()
   })
 
   it('shows selected-profile preflight checks before manufacturing export', async () => {

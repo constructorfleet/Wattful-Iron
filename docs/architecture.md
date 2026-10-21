@@ -18,7 +18,22 @@ against one project volume.
 
 - Project creation, listing, opening, and file read/write.
 - Browser source editing.
-- Local source history with compare and concurrency-checked restore.
+- Git-backed project history: every revision is committed to a repository kept
+  beside the project, so history, comparison, and restore are not limited by
+  snapshot retention. Local snapshots remain as a fallback, and history reports
+  whether it is Git-backed. Comparing two revisions reports design changes
+  (board, components, nets, routing and simulation counts) from retained build
+  summaries alongside the source-file comparison. Rendered image comparison is
+  not implemented.
+- Project duplication, rename, deletion, and ZIP archive import/export with a
+  versioned manifest and traversal/symlink/size limits.
+- KiCad `.kicad_sch` and EasyEDA Standard schematic import, converted to
+  editable tscircuit source with converter notes; PDF schematics are retained
+  as a visual reference only, with no connectivity reconstructed.
+- A provisional PCB draft generator for imported schematics that have no
+  placements, and a board-outline editor that writes a polygon to the source.
+- Simultaneous resizable schematic, PCB, and 3D panels with keyboard-accessible
+  dividers, alongside the single-view tabs.
 - tscircuit build execution and build diagnostics.
 - Generated Circuit JSON retained for preview.
 - A read-only component inspector that joins source components to PCB placements,
@@ -92,8 +107,8 @@ slice: ACP servers, per-user authentication and authorization, full
 KiCad-equivalent ERC/DRC, highlighted net and component geometry inside the
 schematic, PCB, and 3D canvases, component datasheets, supplier
 keyword/parameter search, substitution recommendations, complete
-fabricator rule coverage, Git-backed revision history, approval states, and
-purchasing or fabrication integrations. Cross-probing moves a selection between the
+fabricator rule coverage, approval states, rendered schematic and PCB image
+diffs, and purchasing or fabrication integrations. Cross-probing moves a selection between the
 component inspector, the net inspector, the focused PCB footprint, and the
 waveform panel, and lists the schematic wires, copper traces, vias, and
 simulation signals on a net; it does not highlight geometry inside the
@@ -107,8 +122,7 @@ evaluates the emitted board dimensions and layer count; other requirement types
 are retained but marked not evaluated.
 Simulation execution uses tscircuit's configured SPICE support during its
 normal build; the workbench does not run a second solver or claim support for
-every component model or analysis mode. Project source history uses local
-bounded snapshots, not Git commits. Do not infer support from the architecture goals in
+every component model or analysis mode. Do not infer support from the architecture goals in
 `PROMPT.md`.
 
 See [security limitations](security.md) before exposing the prototype to a

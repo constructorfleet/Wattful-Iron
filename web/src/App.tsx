@@ -48,6 +48,7 @@ import {
   type ProjectEvent,
   type TracedNet,
   type ProjectRevision,
+  type DesignDiff,
   type RevisionComparison,
   type Simulation,
   type SimulationSweep,
@@ -127,6 +128,7 @@ export default function App() {
   const [historyDialogOpen, setHistoryDialogOpen] = useState(false)
   const [referencePdfOpen, setReferencePdfOpen] = useState(false)
   const [historyRevisions, setHistoryRevisions] = useState<ProjectRevision[]>([])
+  const [historyGitBacked, setHistoryGitBacked] = useState(false)
   const [historyFrom, setHistoryFrom] = useState('')
   const [historyTo, setHistoryTo] = useState('')
   const [revisionToRestore, setRevisionToRestore] = useState('')
@@ -412,9 +414,10 @@ export default function App() {
     if (!project || dirty || !revision) return
     let active = true
     setHistoryLoading(true)
-    getProjectHistory(project.id).then(({ revisions: items }) => {
+    getProjectHistory(project.id).then(({ revisions: items, gitBacked }) => {
       if (!active) return
       setHistoryRevisions(items)
+      setHistoryGitBacked(gitBacked)
       setHistoryFrom(items[1]?.revision ?? items[0]?.revision ?? '')
       setHistoryTo(items[0]?.revision ?? '')
       setRevisionToRestore(items[0]?.revision ?? '')
@@ -772,13 +775,14 @@ export default function App() {
       </section></div>}
       {historyDialogOpen && <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryDialogOpen(false) }}>
         <section className="history-dialog" role="dialog" aria-modal="true" aria-labelledby="history-title">
-          <header><div><h2 id="history-title">Project source history</h2><p>{historyRevisions.length} of 50 retained revisions · snapshots include project source files</p></div><button type="button" aria-label="Close project history" onClick={() => setHistoryDialogOpen(false)}>×</button></header>
+          <header><div><h2 id="history-title">Project source history</h2><p>{historyRevisions.length} revision{historyRevisions.length === 1 ? '' : 's'} · {historyGitBacked ? 'kept in this project\u2019s Git repository' : 'local snapshots only, newest 50 retained'}</p></div><button type="button" aria-label="Close project history" onClick={() => setHistoryDialogOpen(false)}>×</button></header>
           {historyLoading ? <p className="history-empty">Loading revisions…</p> : historyRevisions.length === 0 ? <p className="history-empty">No saved revisions yet.</p> : <div className="history-layout">
             <ul className="history-revision-list" aria-label="Saved revisions">{historyRevisions.map((item) => <li key={item.revision}><button type="button" className={`history-revision ${revisionToRestore === item.revision ? 'selected' : ''}`} onClick={() => setRevisionToRestore(item.revision)}>
-              <strong>{new Date(item.createdAt).toLocaleString()}</strong><small>{item.changedFiles.join(', ') || 'No changed files'} · {formatBytes(item.sizeBytes)}</small><code>{item.revision.slice(0, 8)}</code>
+              <strong>{new Date(item.createdAt).toLocaleString()}</strong><small>{item.changedFiles.join(', ') || 'No changed files'}{item.sizeBytes === undefined ? '' : ` · ${formatBytes(item.sizeBytes)}`}</small><code>{item.commit ? item.commit.slice(0, 8) : item.revision.slice(0, 8)}</code>
             </button></li>)}</ul>
             <div className="history-compare">
               <div className="history-selects"><label>Compare from<select aria-label="Compare from" value={historyFrom} onChange={(event) => setHistoryFrom(event.target.value)}>{historyRevisions.map((item) => <option key={item.revision} value={item.revision}>{new Date(item.createdAt).toLocaleString()}</option>)}</select></label><label>Compare with<select aria-label="Compare with" value={historyTo} onChange={(event) => setHistoryTo(event.target.value)}>{historyRevisions.map((item) => <option key={item.revision} value={item.revision}>{new Date(item.createdAt).toLocaleString()}</option>)}</select></label></div>
+              {revisionComparison ? <DesignDiffSummary design={revisionComparison.design} /> : null}
               {revisionComparison?.files.length ? revisionComparison.files.map((file) => <section className="history-file-diff" key={file.path}><h3>{file.path}</h3><div><section aria-label={`${file.path} before`}><pre>{file.before ?? '— file did not exist —'}</pre></section><section aria-label={`${file.path} after`}><pre>{file.after ?? '— file did not exist —'}</pre></section></div></section>) : <p className="history-empty">{historyFrom === historyTo ? 'Choose two different revisions to compare.' : 'These revisions contain no source changes.'}</p>}
             </div>
           </div>}
@@ -869,6 +873,28 @@ function BoardOutlineDialog({ points, error, onChange, onImport, onError, onAppl
       <footer><span>{points.length} points · millimeters</span><div><button type="button" className="quiet-button" onClick={onClose}>Cancel</button><button type="button" className="build-button" onClick={onApply}>Apply outline</button></div></footer>
     </section>
   </div>
+}
+
+function DesignDiffSummary({ design }: { design: DesignDiff }) {
+  if (!design.available) return <section className="design-diff" aria-label="Design changes"><h3>Design changes</h3><p>{design.reason}</p></section>
+  const unchanged = design.board.length === 0 && design.counts.length === 0 && design.simulation.length === 0
+    && design.components.added.length === 0 && design.components.removed.length === 0 && design.components.changed.length === 0
+    && design.nets.added.length === 0 && design.nets.removed.length === 0 && design.nets.changed.length === 0
+  return <section className="design-diff" aria-label="Design changes">
+    <h3>Design changes</h3>
+    {unchanged ? <p>Both builds produced the same board, components, nets, and routing counts.</p> : <>
+      {design.board.length > 0 && <dl>{design.board.map((item) => <Fragment key={item.property}><dt>{item.property}</dt><dd>{item.before ?? '—'} → {item.after ?? '—'}</dd></Fragment>)}</dl>}
+      {design.components.added.length > 0 && <p className="design-added">Added: {design.components.added.map(({ name, value }) => value ? `${name} (${value})` : name).join(', ')}</p>}
+      {design.components.removed.length > 0 && <p className="design-removed">Removed: {design.components.removed.map(({ name }) => name).join(', ')}</p>}
+      {design.components.changed.length > 0 && <dl>{design.components.changed.map((item) => <Fragment key={item.name}><dt>{item.name}</dt><dd>{item.changes.map((change) => `${change.property}: ${change.before ?? '—'} → ${change.after ?? '—'}`).join(', ')}</dd></Fragment>)}</dl>}
+      {design.nets.added.length > 0 && <p className="design-added">Nets added: {design.nets.added.map(({ name }) => name).join(', ')}</p>}
+      {design.nets.removed.length > 0 && <p className="design-removed">Nets removed: {design.nets.removed.map(({ name }) => name).join(', ')}</p>}
+      {design.nets.changed.length > 0 && <dl>{design.nets.changed.map((item) => <Fragment key={item.name}><dt>Net {item.name}</dt><dd>{item.changes.map((change) => `${change.property}: ${change.before} → ${change.after}`).join(', ')}</dd></Fragment>)}</dl>}
+      {design.counts.length > 0 && <dl>{design.counts.map((item) => <Fragment key={item.metric}><dt>{item.metric}</dt><dd>{item.before} → {item.after}</dd></Fragment>)}</dl>}
+      {design.simulation.length > 0 && <dl>{design.simulation.map((item) => <Fragment key={item.property}><dt>simulation {item.property}</dt><dd>{item.before} → {item.after}</dd></Fragment>)}</dl>}
+    </>}
+    <p className="inspector-note">{design.limitations.join(' ')}</p>
+  </section>
 }
 
 function ManufacturingCheckRow({ check }: { check: ManufacturingCheck }) {

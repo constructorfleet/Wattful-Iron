@@ -20,6 +20,7 @@ services:
       WORKBENCH_AUTH_TOKEN: ${WORKBENCH_AUTH_TOKEN:-}
       COMPONENT_SOURCING_URL: ${COMPONENT_SOURCING_URL:-}
       COMPONENT_SOURCING_TIMEOUT_MS: ${COMPONENT_SOURCING_TIMEOUT_MS:-}
+      GIT_HISTORY: ${GIT_HISTORY:-true}
     volumes:
       - projects:/data/projects
     secrets:
