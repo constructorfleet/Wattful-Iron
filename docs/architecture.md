@@ -84,6 +84,12 @@ against one project volume.
   via-placement checks come from tscircuit's suite; voltage compatibility is
   reported with the caveat that it is silent unless pins declare voltage
   attributes.
+- Optional per-user accounts (`AUTH_MODE=users`) with viewer, engineer, and
+  owner roles, scrypt-hashed passwords in a private file, HMAC-signed session
+  cookies with CSRF double-submit protection, sign-in throttling, and a
+  capability check on every request. Editing needs `write`, approving a
+  revision needs `approve`, and account management and project deletion are
+  owner-only. Review entries record the account that made them.
 - Design review states per revision (`draft → validated → reviewed →
   manufacturing_approved`) with evidence-checked transitions, a retained review
   log, and a read-only lock on an approved revision that refuses writes and
@@ -127,7 +133,8 @@ power-rating headroom, and thermal rise are never evaluated.
 ## Not implemented
 
 The following capabilities in the project vision are not available in this
-slice: ACP servers, per-user authentication and authorization, full
+slice: ACP servers, external identity providers, SSO or MFA, per-project
+permissions, password reset flows, full
 KiCad-equivalent ERC/DRC, highlighted net and component geometry inside the
 schematic, PCB, and 3D canvases, component datasheets, supplier
 keyword/parameter search, substitution recommendations, complete
@@ -138,10 +145,10 @@ waveform panel, and lists the schematic wires, copper traces, vias, and
 simulation signals on a net; it does not highlight geometry inside the
 schematic, PCB, or 3D canvases, and it does not edit source properties. MCP agents can edit board dimensions, components,
 component properties, and traces structurally, but there is no equivalent
-browser affordance and no circuit-level undo beyond project source history. Optional workbench
-authentication uses a shared token for the browser and REST API; MCP has its own
-shared bearer token. There is no per-user identity or access control, so a
-review entry records which interface recorded it rather than who did.
+browser affordance and no circuit-level undo beyond project source history. Workbench authentication is either the shared
+token or per-user accounts; MCP keeps its own shared bearer token and is never
+granted approval. A configured shared token retains full access, so remove it
+once accounts are in use. Roles apply to the whole workbench, not per project.
 Regression assertions evaluate only the
 quantities listed in [assertions](assertions.md); anything without evidence in
 the build is reported as not evaluated rather than passed. Requirements

@@ -54,8 +54,9 @@ COPY --from=build --chown=node:node /app/web/dist ./web/dist
 COPY --from=build --chown=node:node /app/examples ./examples
 
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
-    && mkdir -p /data/projects \
-    && chown -R node:node /data
+    && mkdir -p /data/projects /data/auth \
+    && chown -R node:node /data \
+    && chmod 700 /data/auth
 USER node
 
 EXPOSE 3000

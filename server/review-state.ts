@@ -6,8 +6,10 @@ export type ReviewEntry = {
   revision: string
   at: string
   note?: string
-  /** Which interface recorded the entry. There is no per-user identity in this slice. */
+  /** Which interface recorded the entry. */
   source: "browser" | "mcp"
+  /** The signed-in account that recorded it, when user accounts are enabled. */
+  actor?: { id: string; email: string; role: string }
   evidence?: ReviewEvidenceRecord
 }
 

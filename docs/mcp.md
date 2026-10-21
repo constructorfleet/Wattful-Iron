@@ -224,6 +224,11 @@ each transition needs, and `set_review_state` records `validated` or `reviewed`
 after checking that evidence. Approving a revision for manufacturing, and
 reopening an approved one, are reserved for a person and refused to agents.
 
+When user accounts are enabled, roles also gate the REST surface: only owners
+may approve a revision, manage accounts, or delete a project, and refusals name
+the role and operation. MCP keeps its own bearer token and its own limits, and is
+never granted approval. See [accounts](accounts.md).
+
 While a revision is approved for manufacturing, every file write and history
 restore is refused with HTTP 423, including through MCP — this is how the
 project's rule that agents must not modify approved manufacturing revisions is

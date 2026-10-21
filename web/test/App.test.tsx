@@ -26,6 +26,9 @@ const api = vi.hoisted(() => ({
   getPower: vi.fn(),
   getAssertionCheck: vi.fn(),
   getReviewState: vi.fn(),
+  getSession: vi.fn(),
+  login: vi.fn(),
+  logout: vi.fn(),
   setReviewState: vi.fn(),
   getBomCost: vi.fn(),
   getComponentSourcing: vi.fn(),
@@ -83,6 +86,7 @@ beforeEach(() => {
   ] })
   api.getManufacturingPreflight.mockResolvedValue({ preflight: { ready: true, profile: { id: 'board-default', label: 'Board defaults' }, checks: [{ id: 'circuit-errors', status: 'not-evaluated', message: 'Circuit JSON contains no ERC/DRC error records; no validator result confirms this check passed.' }] } })
   api.getSimulation.mockResolvedValue({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], operatingPoints: [], sweeps: [], analyses: [], diagnostics: [], notEvaluated: [] })
+  api.getSession.mockResolvedValue({ accountsEnabled: false, sharedTokenConfigured: false, authenticated: true, kind: 'anonymous', capabilities: ['read', 'write', 'approve', 'manage_users', 'delete_project'] })
   api.getReviewState.mockResolvedValue({
     state: 'draft', revision: 'rev-1', locked: false, history: [],
     evidence: { buildStatus: 'ready', buildRevision: 'rev-1', projectRevision: 'rev-1', assertionsConfigured: false, preflightReady: true },
@@ -467,6 +471,56 @@ describe('workbench', () => {
     expect(within(inspector).getByText('912,345')).toBeInTheDocument()
     expect(within(inspector).getByText('$0.002')).toBeInTheDocument()
     expect(within(inspector).getByText('Basic part')).toBeInTheDocument()
+  })
+
+  it('asks an account-protected workbench to sign in, then loads it', async () => {
+    api.getSession
+      .mockResolvedValueOnce({ accountsEnabled: true, sharedTokenConfigured: false, authenticated: false, kind: 'anonymous', capabilities: [] })
+      .mockResolvedValue({
+        accountsEnabled: true, sharedTokenConfigured: false, authenticated: true, kind: 'user',
+        user: { id: 'u1', email: 'engineer@example.com', displayName: 'Engineer', role: 'engineer', disabled: false, createdAt: '', updatedAt: '' },
+        capabilities: ['read', 'write'],
+      })
+    api.login.mockResolvedValue({ user: { id: 'u1', email: 'engineer@example.com', displayName: 'Engineer', role: 'engineer', disabled: false, createdAt: '', updatedAt: '' }, capabilities: ['read', 'write'], expiresAt: '' })
+
+    render(<App />)
+    const form = await screen.findByRole('form', { name: 'Sign in' })
+    fireEvent.change(within(form).getByLabelText('Email'), { target: { value: 'engineer@example.com' } })
+    fireEvent.change(within(form).getByLabelText('Password'), { target: { value: 'correct horse battery staple' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Sign in' }))
+
+    await waitFor(() => expect(api.login).toHaveBeenCalledWith('engineer@example.com', 'correct horse battery staple'))
+    expect(await screen.findByRole('button', { name: /LED Board TSX project/ })).toBeInTheDocument()
+    expect(screen.getByText('Engineer')).toBeInTheDocument()
+    expect(screen.getByText('engineer')).toBeInTheDocument()
+  })
+
+  it('shows the sign-in error instead of opening the workbench', async () => {
+    api.getSession.mockResolvedValue({ accountsEnabled: true, sharedTokenConfigured: false, authenticated: false, kind: 'anonymous', capabilities: [] })
+    api.login.mockRejectedValue(new Error('Incorrect email or password'))
+
+    render(<App />)
+    const form = await screen.findByRole('form', { name: 'Sign in' })
+    fireEvent.change(within(form).getByLabelText('Email'), { target: { value: 'engineer@example.com' } })
+    fireEvent.change(within(form).getByLabelText('Password'), { target: { value: 'wrong password here' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Sign in' }))
+
+    expect(await screen.findByText('Incorrect email or password')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /LED Board TSX project/ })).not.toBeInTheDocument()
+  })
+
+  it('makes the editor read-only for an account without write access', async () => {
+    api.getSession.mockResolvedValue({
+      accountsEnabled: true, sharedTokenConfigured: false, authenticated: true, kind: 'user',
+      user: { id: 'u2', email: 'viewer@example.com', displayName: 'Viewer', role: 'viewer', disabled: false, createdAt: '', updatedAt: '' },
+      capabilities: ['read'],
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+
+    expect(await screen.findByText(/read-only access, so the editor cannot save changes/)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByLabelText('TSX source editor')).toHaveAttribute('readonly'))
   })
 
   it('records a review state and explains the transitions it cannot take', async () => {

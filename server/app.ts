@@ -20,6 +20,21 @@ import { designDiffUnavailable, diffDesignSummaries, summarizeDesign, type Desig
 import { runCircuitDesignChecks } from "./circuit-design-checks.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
 import { evaluateAssertions, parseAssertions, type AssertionReport } from "./assertions.js"
+import { actorCan, refusalMessage, requiredCapability, type Actor } from "./authorization.js"
+import { capabilitiesOf, createUserStore, isRole, type PublicUser, type UserStore } from "./user-accounts.js"
+import {
+  clearedCookies,
+  createSessionCodec,
+  csrfCookie,
+  CSRF_COOKIE,
+  CSRF_HEADER,
+  newCsrfToken,
+  readCookies,
+  resolveSessionSecret,
+  sessionCookie,
+  SESSION_COOKIE,
+  type SessionCodec,
+} from "./sessions.js"
 import {
   APPROVED_WRITE_MESSAGE,
   checkReviewTransition,
@@ -44,7 +59,7 @@ type ProjectState = { project: ProjectData; preview?: unknown }
 type ProjectSnapshot = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes: number; files: Record<string, string> }
 type ServerEvent = "project" | "file" | "build.status" | "build.ready" | "build.failed"
 type BuildFn = (projectDir: string, entrypoint: string) => Promise<unknown>
-type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; buildExecutionMode?: "isolated" | "trusted-local"; buildRunner?: { url: string; token: string }; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string; workbenchAuthToken?: string; kicadCliPath?: string; componentSourcing?: SourcingClient | { baseUrl: string; provider?: string }; gitHistory?: boolean; gitPath?: string }
+type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; buildExecutionMode?: "isolated" | "trusted-local"; buildRunner?: { url: string; token: string }; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string; workbenchAuthToken?: string; kicadCliPath?: string; componentSourcing?: SourcingClient | { baseUrl: string; provider?: string }; gitHistory?: boolean; gitPath?: string; authDir?: string; userAccounts?: boolean; sessionSecret?: string; trustProxy?: boolean; authScryptCost?: number }
 
 const execFile = promisify(execFileCallback)
 
@@ -1008,30 +1023,192 @@ export function createApp(options: AppOptions = {}): Express {
   }
   const service = new ProjectService(options)
   const app = express()
-  if (workbenchToken) {
-    app.use((request, response, next) => {
-      // MCP has its own bearer-token verifier. Keep health checks available to
-      // container orchestrators; protect the browser, REST API, and assets.
-      if (request.path === "/mcp" || (request.path === "/healthz" && request.method === "GET")) return next()
-      if (!hasWorkbenchCredential(request.get("authorization"), workbenchToken)) {
-        response.set("WWW-Authenticate", 'Basic realm="Wattful-Iron", charset="UTF-8"')
-        response.status(401).json({ error: "Workbench authentication required" })
-        return
-      }
-      next()
-    })
-  }
+  const accountsEnabled = options.userAccounts ?? process.env.AUTH_MODE === "users"
+  const authDir = path.resolve(options.authDir ?? process.env.AUTH_DIR ?? path.join(service.root, "..", "auth"))
+  const accounts: UserStore | undefined = accountsEnabled
+    ? createUserStore({ dir: authDir, ...(options.authScryptCost ? { scryptCost: options.authScryptCost } : {}) })
+    : undefined
+  const trustProxy = options.trustProxy ?? process.env.TRUST_PROXY === "true"
+  let sessions: SessionCodec | undefined
+  const authReady = accounts
+    ? resolveSessionSecret(authDir, options.sessionSecret ?? process.env.AUTH_SESSION_SECRET)
+      .then(async (secret) => {
+        sessions = createSessionCodec(secret)
+        await bootstrapOwner(accounts)
+      })
+    : Promise.resolve()
+
   app.use(express.json({ limit: "2mb" }))
   app.locals.projectService = service
+  app.locals.userStore = accounts
   app.use(async (_request, _response, next) => {
-    try { await service.ready; next() } catch (error) { next(error) }
+    try {
+      await service.ready
+      await authReady
+      next()
+    } catch (error) { next(error) }
+  })
+
+  app.use(async (request, response, next) => {
+    try {
+      // MCP authenticates with its own bearer token and enforces its own limits.
+      if (request.path === "/mcp") return next()
+      const actor = await resolveActor(request.get("cookie"), request.get("authorization"))
+      setActor(request, actor)
+      const capability = requiredCapability({ method: request.method, path: request.path, body: request.body })
+      if (capability === undefined) return next()
+      if (actor.kind === "anonymous" && (accounts || workbenchToken)) {
+        if (!accounts) response.set("WWW-Authenticate", 'Basic realm="Wattful-Iron", charset="UTF-8"')
+        return response.status(401).json({ error: accounts ? "Sign in to use this workbench" : "Workbench authentication required" })
+      }
+      // A cookie session must echo the CSRF cookie, so another site cannot post as the user.
+      if (actor.kind === "user" && !["GET", "HEAD", "OPTIONS"].includes(request.method)) {
+        const cookies = readCookies(request.get("cookie"))
+        const presented = request.get(CSRF_HEADER)
+        if (!presented || !cookies[CSRF_COOKIE] || presented !== cookies[CSRF_COOKIE]) {
+          return response.status(403).json({ error: "Missing or stale CSRF token. Reload the workbench and try again." })
+        }
+      }
+      if (!actorCan(actor, capability)) return response.status(403).json({ error: refusalMessage(actor, capability) })
+      next()
+    } catch (error) { next(error) }
+  })
+
+  /** Resolve who is calling: a signed-in account, the shared token, or nobody. */
+  async function resolveActor(cookieHeader: string | undefined, authorization: string | undefined): Promise<Actor> {
+    if (accounts && sessions) {
+      const payload = sessions.verify(readCookies(cookieHeader)[SESSION_COOKIE])
+      if (payload) {
+        const user = await accounts.get(payload.userId)
+        if (user && !user.disabled && user.tokenVersion === payload.tokenVersion) {
+          const publicUser: PublicUser = {
+            id: user.id, email: user.email, displayName: user.displayName, role: user.role,
+            disabled: user.disabled, createdAt: user.createdAt, updatedAt: user.updatedAt,
+          }
+          return { kind: "user", user: publicUser, role: user.role, capabilities: capabilitiesOf(user.role) }
+        }
+      }
+    }
+    if (workbenchToken && hasWorkbenchCredential(authorization, workbenchToken)) {
+      // The shared token predates accounts and keeps its full access, including approval.
+      return { kind: "shared-token", capabilities: ["read", "write", "approve", "manage_users", "delete_project"] }
+    }
+    if (!accounts && !workbenchToken) {
+      // No authentication configured: the workbench stays open, as it was before accounts.
+      return { kind: "anonymous", capabilities: ["read", "write", "approve", "manage_users", "delete_project"] }
+    }
+    return { kind: "anonymous", capabilities: [] }
+  }
+
+  /** Create the first owner from the environment, so a fresh instance can be signed into. */
+  async function bootstrapOwner(store: UserStore) {
+    const email = process.env.INITIAL_OWNER_EMAIL
+    const password = process.env.INITIAL_OWNER_PASSWORD
+    if (!email || !password || (await store.count()) > 0) return
+    try {
+      await store.create({ email, password, role: "owner", displayName: process.env.INITIAL_OWNER_NAME ?? undefined })
+      console.log(`Created the initial owner account for ${email}`)
+    } catch (error) {
+      console.error("The initial owner account could not be created", error)
+    }
+  }
+
+  const secureCookies = () => trustProxy || process.env.NODE_ENV === "production"
+
+  app.get("/api/auth/session", async (request, response, next) => {
+    try {
+      const actor = getActor(request) ?? await resolveActor(request.get("cookie"), request.get("authorization"))
+      response.json({
+        accountsEnabled: Boolean(accounts),
+        sharedTokenConfigured: Boolean(workbenchToken),
+        authenticated: actor.kind !== "anonymous" || actor.capabilities.length > 0,
+        kind: actor.kind,
+        ...(actor.user ? { user: actor.user } : {}),
+        capabilities: actor.capabilities,
+      })
+    } catch (error) { next(error) }
+  })
+
+  app.post("/api/auth/login", async (request, response, next) => {
+    try {
+      if (!accounts || !sessions) throw badRequest("User accounts are not enabled on this workbench")
+      const email = typeof request.body?.email === "string" ? request.body.email : ""
+      const password = typeof request.body?.password === "string" ? request.body.password : ""
+      if (!email || !password) throw badRequest("email and password are required")
+      if (!allowLoginAttempt(email)) return response.status(429).json({ error: "Too many sign-in attempts. Wait a few minutes and try again." })
+      const user = await accounts.verify(email, password)
+      if (!user) return response.status(401).json({ error: "Incorrect email or password" })
+      clearLoginAttempts(email)
+      const session = sessions.sign({ userId: user.id, tokenVersion: user.tokenVersion })
+      const csrf = newCsrfToken()
+      const secure = secureCookies()
+      response.setHeader("Set-Cookie", [
+        sessionCookie(session.value, { secure, maxAgeMs: sessions.lifetimeMs }),
+        csrfCookie(csrf, { secure, maxAgeMs: sessions.lifetimeMs }),
+      ])
+      response.json({
+        user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role, disabled: user.disabled, createdAt: user.createdAt, updatedAt: user.updatedAt },
+        capabilities: capabilitiesOf(user.role),
+        expiresAt: new Date(session.expiresAt).toISOString(),
+      })
+    } catch (error) { next(error) }
+  })
+
+  app.post("/api/auth/logout", (_request, response) => {
+    response.setHeader("Set-Cookie", clearedCookies(secureCookies()))
+    response.status(204).end()
+  })
+
+  app.get("/api/auth/users", async (_request, response, next) => {
+    try {
+      if (!accounts) throw badRequest("User accounts are not enabled on this workbench")
+      response.json({ users: await accounts.list() })
+    } catch (error) { next(error) }
+  })
+
+  app.post("/api/auth/users", async (request, response, next) => {
+    try {
+      if (!accounts) throw badRequest("User accounts are not enabled on this workbench")
+      const { email, password, displayName, role } = request.body ?? {}
+      if (!isRole(role)) throw badRequest("role must be owner, engineer, or viewer")
+      response.status(201).json(await accounts.create({
+        email: typeof email === "string" ? email : "",
+        password: typeof password === "string" ? password : "",
+        role,
+        ...(typeof displayName === "string" ? { displayName } : {}),
+      }))
+    } catch (error) { next(error) }
+  })
+
+  app.patch("/api/auth/users/:id", async (request, response, next) => {
+    try {
+      if (!accounts) throw badRequest("User accounts are not enabled on this workbench")
+      const { role, displayName, disabled, password } = request.body ?? {}
+      if (role !== undefined && !isRole(role)) throw badRequest("role must be owner, engineer, or viewer")
+      response.json(await accounts.update(request.params.id!, {
+        ...(role === undefined ? {} : { role }),
+        ...(typeof displayName === "string" ? { displayName } : {}),
+        ...(typeof disabled === "boolean" ? { disabled } : {}),
+        ...(typeof password === "string" ? { password } : {}),
+      }))
+    } catch (error) { next(error) }
+  })
+
+  app.delete("/api/auth/users/:id", async (request, response, next) => {
+    try {
+      if (!accounts) throw badRequest("User accounts are not enabled on this workbench")
+      const actor = getActor(request)
+      if (actor?.user?.id === request.params.id) throw badRequest("Delete another owner's account, not your own")
+      await accounts.remove(request.params.id!)
+      response.status(204).end()
+    } catch (error) { next(error) }
   })
 
   app.get("/healthz", (_request, response) => response.json({ status: "ok" }))
   const token = options.mcpAuthToken ?? process.env.MCP_AUTH_TOKEN
   const sourcing = createConfiguredSourcing(options.componentSourcing)
   const assertionReport = async (id: string) => (await checkAssertions(id).catch(() => undefined))?.report
-  mountMcp(app, service, token, sourcing, assertionReport, { view: reviewView, set: (id, target, revision, note) => setReviewState(id, target, revision, "mcp", note) })
+  mountMcp(app, service, token, sourcing, assertionReport, { view: (id: string) => reviewView(id), set: (id, target, revision, note) => setReviewState(id, target, revision, "mcp", note) })
   mountManufacturingRoutes(app, service, sourcing, assertionReport)
   app.get("/api/components/:part", async (request, response, next) => {
     try {
@@ -1249,7 +1426,7 @@ export function createApp(options: AppOptions = {}): Express {
     } catch (error) { next(error) }
   })
   app.get("/api/projects/:id/review", async (request, response, next) => {
-    try { response.json(await reviewView(request.params.id!)) } catch (error) { next(error) }
+    try { response.json(await reviewView(request.params.id!, getActor(request))) } catch (error) { next(error) }
   })
   app.post("/api/projects/:id/review", async (request, response, next) => {
     try {
@@ -1259,7 +1436,7 @@ export function createApp(options: AppOptions = {}): Express {
       if (!isReviewState(target)) throw badRequest("state must be draft, validated, reviewed, or manufacturing_approved")
       const note = request.body?.note
       if (note !== undefined && (typeof note !== "string" || note.length > 2000)) throw badRequest("note must be a string of at most 2000 characters")
-      response.json(await setReviewState(request.params.id!, target, match, "browser", typeof note === "string" ? note : undefined))
+      response.json(await setReviewState(request.params.id!, target, match, "browser", typeof note === "string" ? note : undefined, getActor(request)?.user))
     } catch (error) { next(error) }
   })
   app.get("/api/projects/:id/assertions", async (request, response, next) => {
@@ -1348,19 +1525,28 @@ export function createApp(options: AppOptions = {}): Express {
     }
   }
 
-  /** The review status plus, for each state, whether it can be set now and why not. */
-  async function reviewView(id: string) {
+  /**
+   * The review status plus, for each state, whether it can be set now and why not. The
+   * caller's own capabilities are folded in, so the browser never offers an approval the
+   * signed-in account would be refused.
+   */
+  async function reviewView(id: string, actor?: Actor) {
     const [status, evidence] = await Promise.all([service.reviewStatus(id), reviewEvidence(id)])
     return {
       ...status,
       evidence,
+      ...(actor?.user ? { viewer: { email: actor.user.email, role: actor.user.role, capabilities: actor.capabilities } } : {}),
       transitions: status.allowedTransitions.map((target) => {
         const browser = checkReviewTransition(status, target, evidence, "browser")
         const agent = checkReviewTransition(status, target, evidence, "mcp")
+        const capability = target === "manufacturing_approved" ? "approve" as const : "write" as const
+        const permitted = actor === undefined || actorCan(actor, capability)
         return {
           state: target,
-          allowed: browser.allowed,
-          ...(browser.allowed ? {} : { reason: browser.reason }),
+          allowed: browser.allowed && permitted,
+          ...(browser.allowed
+            ? permitted ? {} : { reason: refusalMessage(actor!, capability) }
+            : { reason: browser.reason }),
           agentAllowed: agent.allowed,
         }
       }),
@@ -1368,7 +1554,7 @@ export function createApp(options: AppOptions = {}): Express {
   }
 
   /** Record a review state after checking the transition against current evidence. */
-  async function setReviewState(id: string, target: ReviewState, expectedRevision: string, source: ReviewEntry["source"], note?: string) {
+  async function setReviewState(id: string, target: ReviewState, expectedRevision: string, source: ReviewEntry["source"], note?: string, actor?: PublicUser) {
     const project = await service.get(id)
     if (project.revision !== expectedRevision) {
       throw Object.assign(new Error("The project changed before the review state was recorded. Reload it and try again."), { status: 409, revision: project.revision })
@@ -1382,6 +1568,7 @@ export function createApp(options: AppOptions = {}): Express {
       revision: project.revision,
       source,
       ...(note ? { note } : {}),
+      ...(actor ? { actor: { id: actor.id, email: actor.email, role: actor.role } } : {}),
       evidence: {
         ...(evidence.buildStatus === undefined ? {} : { buildStatus: evidence.buildStatus }),
         ...(evidence.assertions ? { assertions: evidence.assertions } : {}),
@@ -1437,6 +1624,38 @@ export function createApp(options: AppOptions = {}): Express {
     response.status(status).json({ error: error instanceof Error ? error.message : "Internal server error", ...(status === 409 ? { revision: (error as { revision?: string }).revision } : {}) })
   })
   return app
+}
+
+/** Stash the resolved actor on the request so route handlers can attribute actions to it. */
+type RequestWithActor = { wattfulActor?: Actor }
+
+function setActor(request: unknown, actor: Actor) {
+  (request as RequestWithActor).wattfulActor = actor
+}
+
+function getActor(request: unknown): Actor | undefined {
+  return (request as RequestWithActor).wattfulActor
+}
+
+/** Simple in-memory sign-in throttle, keyed by email. It resets on restart. */
+const LOGIN_WINDOW_MS = 15 * 60 * 1000
+const LOGIN_MAX_ATTEMPTS = 10
+const loginAttempts = new Map<string, { count: number; resetAt: number }>()
+
+function allowLoginAttempt(email: string) {
+  const key = email.trim().toLowerCase()
+  const now = Date.now()
+  const existing = loginAttempts.get(key)
+  if (!existing || existing.resetAt <= now) {
+    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS })
+    return true
+  }
+  existing.count += 1
+  return existing.count <= LOGIN_MAX_ATTEMPTS
+}
+
+function clearLoginAttempts(email: string) {
+  loginAttempts.delete(email.trim().toLowerCase())
 }
 
 function hasWorkbenchCredential(header: string | undefined, expected: string) {
