@@ -101,6 +101,7 @@ Engine and worker image. `GET /healthz` is the container health endpoint.
 - [Workbench how-tos: edit, preview, simulate, export, and connect MCP](docs/workbench-howtos.md)
 - [Architecture and feature status](docs/architecture.md)
 - [Project source history, compare, restore, and retention](docs/source-history.md)
+- [Project regression assertions](docs/assertions.md)
 - [Manufacturing preflight and exports](docs/manufacturing.md)
 - [Pull request and release process](docs/releasing.md)
 - [Deployment, proxy, backups, upgrades, and Swarm](docs/deployment.md)

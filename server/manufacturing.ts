@@ -9,6 +9,7 @@ import { writeFile } from "node:fs/promises"
 import { getSimulationResults } from "./simulation.js"
 import { runCircuitDesignChecks, type CircuitDesignIssue } from "./circuit-design-checks.js"
 import { checkComponentAvailability, type SourcingClient } from "./component-sourcing.js"
+import type { AssertionReport } from "./assertions.js"
 
 export type BuildState = { status: string; revision: string; diagnostics?: unknown[] }
 export type ManufacturingCheck = { id: string; status: "pass" | "fail" | "warning" | "not-evaluated"; message: string; issues?: CircuitDesignIssue[] }
@@ -37,7 +38,7 @@ const records = (json: unknown) => Array.isArray(json) ? json.filter(isRecord) :
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null
 
 /** Conservative checks based on build state and the Circuit JSON elements present. */
-export async function checkManufacturability(circuitJson: unknown, build: BuildState, previewRevision: string, projectRevision = previewRevision, profileId = "board-default", sourcing?: SourcingClient): Promise<ManufacturingPreflight> {
+export async function checkManufacturability(circuitJson: unknown, build: BuildState, previewRevision: string, projectRevision = previewRevision, profileId = "board-default", sourcing?: SourcingClient, assertions?: AssertionReport): Promise<ManufacturingPreflight> {
   const items = records(circuitJson)
   const boards = items.filter((item) => item.type === "pcb_board")
   const pcbComponents = items.filter((item) => item.type === "pcb_component")
@@ -73,8 +74,34 @@ export async function checkManufacturability(circuitJson: unknown, build: BuildS
     ...ruleChecks,
     checkBomData(sources),
     await checkAvailability(items, sourcing),
+    assertionCheck(assertions),
   ]
   return { ready: checks.every((check) => check.status !== "fail"), profile: { id: profile.id, label: profile.label }, checks }
+}
+
+/** Report the project's own regression assertions, which block an export when one fails. */
+function assertionCheck(report?: AssertionReport): ManufacturingCheck {
+  if (!report) return {
+    id: "regression-assertions",
+    status: "not-evaluated",
+    message: "This project declares no assertions.json document, so no regression assertions were evaluated.",
+  }
+  if (report.failed > 0) return {
+    id: "regression-assertions",
+    status: "fail",
+    message: `${report.failed} project assertion${report.failed === 1 ? "" : "s"} failed: ${report.results.filter(({ status }) => status === "fail").map(({ message }) => message).join(" ")}`,
+  }
+  if (report.passed === 0) return {
+    id: "regression-assertions",
+    status: "not-evaluated",
+    message: `None of this project's ${report.notEvaluated} assertion${report.notEvaluated === 1 ? "" : "s"} could be evaluated: ${report.results.map(({ message }) => message).join(" ")}`,
+  }
+  if (report.notEvaluated > 0) return {
+    id: "regression-assertions",
+    status: "warning",
+    message: `${report.passed} project assertion${report.passed === 1 ? "" : "s"} passed; ${report.notEvaluated} could not be evaluated: ${report.results.filter(({ status }) => status === "not-evaluated").map(({ message }) => message).join(" ")}`,
+  }
+  return { id: "regression-assertions", status: "pass", message: `All ${report.passed} project assertion${report.passed === 1 ? "" : "s"} passed.` }
 }
 
 /**
@@ -153,7 +180,7 @@ function checkRoutedConnections(items: Record<string, unknown>[]): Manufacturing
   return { id: "routed-connections", status: "pass", message: `All ${sourceTraces.length} logical source trace${sourceTraces.length === 1 ? " has" : "s have"} routed PCB trace geometry.` }
 }
 
-export function mountManufacturingRoutes(app: Express, service: ManufacturingService, sourcing?: SourcingClient) {
+export function mountManufacturingRoutes(app: Express, service: ManufacturingService, sourcing?: SourcingClient, assertions?: (id: string) => Promise<AssertionReport | undefined>) {
   app.get("/api/manufacturing/profiles", (_request, response) => response.json({ profiles: manufacturingRuleProfiles }))
   app.get("/api/projects/:id/manufacturing", async (request, response, next) => {
     try {
@@ -162,7 +189,7 @@ export function mountManufacturingRoutes(app: Express, service: ManufacturingSer
       const project = await service.get(request.params.id!)
       const preview = await service.preview(request.params.id!)
       response.json({ projectRevision: project.revision, previewRevision: preview.revision,
-        preflight: await checkManufacturability(preview.circuitJson, project.lastBuild ?? { status: "idle", revision: "" }, preview.revision, project.revision, profileId, sourcing) })
+        preflight: await checkManufacturability(preview.circuitJson, project.lastBuild ?? { status: "idle", revision: "" }, preview.revision, project.revision, profileId, sourcing, await assertions?.(request.params.id!)) })
     } catch (error) { next(error) }
   })
   app.get("/api/projects/:id/manufacturing.zip", async (request, response, next) => {
@@ -172,7 +199,7 @@ export function mountManufacturingRoutes(app: Express, service: ManufacturingSer
       if (!profileId) return
       const project = await service.get(request.params.id!)
       const preview = await service.preview(request.params.id!)
-      const preflight = await checkManufacturability(preview.circuitJson, project.lastBuild ?? { status: "idle", revision: "" }, preview.revision, project.revision, profileId, sourcing)
+      const preflight = await checkManufacturability(preview.circuitJson, project.lastBuild ?? { status: "idle", revision: "" }, preview.revision, project.revision, profileId, sourcing, await assertions?.(request.params.id!))
       if (!preflight.ready) return response.status(422).json({ error: "Manufacturing preflight failed", projectRevision: project.revision, preflight })
       archive = await service.exportGerbers(request.params.id!)
       const sourceFiles = await service.getSnapshotFiles(request.params.id!)

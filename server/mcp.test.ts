@@ -386,6 +386,28 @@ test("MCP exposes electrical, board, routing, and power reports for a build", as
     const invalid = await client.callTool({ name: "analyze_power", arguments: { projectId: project.id, temperatureRiseC: 500 } })
     assert.equal(invalid.isError, true)
 
+    const unconfiguredAssertions = readResult<{ configured: boolean; message: string }>(
+      await client.callTool({ name: "check_project_assertions", arguments: { projectId: project.id } }))
+    assert.equal(unconfiguredAssertions.configured, false)
+    assert.match(unconfiguredAssertions.message, /no assertions.json document/)
+
+    const projectState = readResult<{ revision: string }>(await client.callTool({ name: "get_project", arguments: { projectId: project.id } }))
+    await client.callTool({
+      name: "update_project_file",
+      arguments: {
+        projectId: project.id,
+        path: "assertions.json",
+        content: JSON.stringify({ version: 1, assertions: { components_present: ["R1", "U9"] } }, null, 2) + "\n",
+        revision: projectState.revision,
+      },
+    })
+    await waitForToolStatus(client, project.id, "ready")
+    const assertionReport = readResult<{ configured: boolean; passed: number; failed: number; results: Array<{ id: string; status: string }> }>(
+      await client.callTool({ name: "check_project_assertions", arguments: { projectId: project.id } }))
+    assert.equal(assertionReport.configured, true)
+    assert.deepEqual(assertionReport.results.map(({ id, status }) => [id, status]), [["component-present-R1", "pass"], ["component-present-U9", "fail"]])
+    assert.deepEqual([assertionReport.passed, assertionReport.failed], [1, 1])
+
     const signals = readResult<{ status: string; signals: Array<{ sampleCount: number }>; operatingPoints: unknown[]; sweeps: unknown[]; notEvaluated: Array<{ analysis: string }> }>(
       await client.callTool({ name: "list_simulation_signals", arguments: { projectId: project.id } }))
     assert.equal(signals.status, "not_configured")

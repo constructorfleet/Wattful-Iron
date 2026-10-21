@@ -76,6 +76,13 @@ against one project volume.
   tscircuit's verified Gerber/drill/BOM/pick-and-place ZIP export.
 - Board-default and JLCPCB rigid two-layer, one-ounce profiles for checking
   trace width, non-plated hole diameter, and rectangular board edge clearance.
+- Versioned `assertions.json` regression assertions with REST and MCP evaluation:
+  named nets stay connected, required components exist, supply current and
+  calculated dissipation stay within limits, supported design-check findings do
+  not increase against the previous retained build, component cost stays within
+  budget, and simulation values stay within range. Each assertion reports pass,
+  fail, or not evaluated with its reason, and a failed assertion blocks the
+  manufacturing export.
 - Versioned `requirements.json` documents with REST and MCP read/validation
   tools. Board dimensions and layer count are checked against Circuit JSON;
   power, interface counts, and assembler compatibility are marked not
@@ -117,8 +124,10 @@ component properties, and traces structurally, but there is no equivalent
 browser affordance and no circuit-level undo beyond project source history. Optional workbench
 authentication uses a shared token for the browser and REST API; MCP has its own
 shared bearer token. There is no per-user identity or access control.
-Requirements validation only
-evaluates the emitted board dimensions and layer count; other requirement types
+Regression assertions evaluate only the
+quantities listed in [assertions](assertions.md); anything without evidence in
+the build is reported as not evaluated rather than passed. Requirements
+validation only evaluates the emitted board dimensions and layer count; other requirement types
 are retained but marked not evaluated.
 Simulation execution uses tscircuit's configured SPICE support during its
 normal build; the workbench does not run a second solver or claim support for

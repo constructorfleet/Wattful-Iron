@@ -324,12 +324,71 @@ assert_history_and_design_diff() {
   ' "$comparison"
 }
 
+assert_project_assertions() {
+  current_state=$(curl --fail --silent --show-error "$base_url/api/projects/$project_id")
+  current=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).revision)' "$current_state")
+  body=$(node -e '
+    const assertions = {
+      version: 1,
+      assertions: {
+        nets_connected: ["VIN", "SIGNAL", "GND"],
+        components_present: ["J1", "R1", "D1"],
+        design_check_findings_must_not_increase: true,
+        max_component_cost_usd: 25,
+      },
+    };
+    process.stdout.write(JSON.stringify({ revision: process.argv[1], assertions }));
+  ' "$current")
+  saved_assertions=$(curl --fail --silent --show-error -X PUT \
+    -H 'Content-Type: application/json' -H "If-Match: $current" \
+    -d "$body" \
+    "$base_url/api/projects/$project_id/assertions")
+  assertion_revision=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).revision)' "$saved_assertions")
+  assertion_state=$(wait_for_build "$assertion_revision")
+  assert_ready "$assertion_state"
+
+  report=$(curl --fail --silent --show-error "$base_url/api/projects/$project_id/assertions/check")
+  node -e '
+    const result = JSON.parse(process.argv[1]);
+    if (result.configured !== true) throw new Error(`Assertions were not configured: ${JSON.stringify(result)}`);
+    const byId = Object.fromEntries(result.report.results.map((item) => [item.id, item]));
+    for (const net of ["VIN", "SIGNAL", "GND"]) {
+      const check = byId[`net-connected-${net}`];
+      if (check?.status !== "pass") throw new Error(`Net assertion for ${net} reported ${check?.status}: ${check?.message}`);
+    }
+    for (const component of ["J1", "R1", "D1"]) {
+      const check = byId[`component-present-${component}`];
+      if (check?.status !== "pass") throw new Error(`Component assertion for ${component} reported ${check?.status}: ${check?.message}`);
+    }
+    // The design-check comparison needs an earlier retained build summary, which this run has.
+    if (byId["design-check-findings"]?.status !== "pass") {
+      throw new Error(`Design check comparison reported ${byId["design-check-findings"]?.status}: ${byId["design-check-findings"]?.message}`);
+    }
+    // Component sourcing is disabled in the container, so the cost budget must not pass.
+    if (byId["max-component-cost"]?.status !== "not-evaluated") {
+      throw new Error(`Cost budget reported ${byId["max-component-cost"]?.status} without a sourcing provider`);
+    }
+    if (result.report.failed !== 0) throw new Error(`Assertions failed: ${JSON.stringify(result.report.results.filter((item) => item.status === "fail"))}`);
+  ' "$report"
+
+  preflight=$(curl --fail --silent --show-error "$base_url/api/projects/$project_id/manufacturing")
+  node -e '
+    const check = JSON.parse(process.argv[1]).preflight.checks.find((item) => item.id === "regression-assertions");
+    if (!check) throw new Error("Preflight did not report the regression-assertions check");
+    if (check.status === "fail") throw new Error(`Passing assertions were reported as a preflight failure: ${check.message}`);
+  ' "$preflight"
+  printf 'Project assertions passed and preflight reported them as %s.\n' "$(node -e '
+    process.stdout.write(JSON.parse(process.argv[1]).preflight.checks.find((item) => item.id === "regression-assertions").status)
+  ' "$preflight")"
+}
+
 assert_live_updates
 assert_simulation_status
 assert_net_tracing "$corrected_revision"
 assert_power_analysis
 assert_component_sourcing_disabled
 assert_history_and_design_diff
+assert_project_assertions
 assert_manufacturing_package
 
-printf 'Container acceptance passed for project %s through edit, live updates, diagnostics, preview retention, recovery, simulation status, net tracing, power analysis, disabled component sourcing, Git-backed history with design comparison, manufacturing preflight and export, and all preview endpoints.\n' "$project_id"
+printf 'Container acceptance passed for project %s through edit, live updates, diagnostics, preview retention, recovery, simulation status, net tracing, power analysis, disabled component sourcing, Git-backed history with design comparison, project assertions, manufacturing preflight and export, and all preview endpoints.\n' "$project_id"

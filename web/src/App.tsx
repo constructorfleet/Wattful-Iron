@@ -12,6 +12,7 @@ import {
   exportProjectArchive,
   getManufacturingArchive,
   getManufacturingPreflight,
+  getAssertionCheck,
   getBomCost,
   getComponentSourcing,
   getManufacturingProfiles,
@@ -37,6 +38,7 @@ import {
   type BuildStatus,
   type ManufacturingCheck,
   type ManufacturingPreflight,
+  type AssertionCheck,
   type BomCost,
   type ComponentSourcing,
   type ManufacturingProfile,
@@ -153,6 +155,7 @@ export default function App() {
   const [manufacturingPreflight, setManufacturingPreflight] = useState<ManufacturingPreflight | null>(null)
   const [manufacturingDialogOpen, setManufacturingDialogOpen] = useState(false)
   const [bomCost, setBomCost] = useState<BomCost | null>(null)
+  const [assertionCheck, setAssertionCheck] = useState<AssertionCheck | null>(null)
   const [boardQuantity, setBoardQuantity] = useState(1)
   const [componentSourcing, setComponentSourcing] = useState<ComponentSourcing | null>(null)
   const [loadingManufacturing, setLoadingManufacturing] = useState(false)
@@ -354,9 +357,10 @@ export default function App() {
   }, [project?.id, manufacturingProfile, build.status, build.revision])
 
   useEffect(() => {
-    if (!project || !manufacturingDialogOpen) { setBomCost(null); return }
+    if (!project || !manufacturingDialogOpen) { setBomCost(null); setAssertionCheck(null); return }
     let active = true
     getBomCost(project.id, boardQuantity).then((cost) => { if (active) setBomCost(cost) }).catch(() => { if (active) setBomCost(null) })
+    getAssertionCheck(project.id).then((result) => { if (active) setAssertionCheck(result) }).catch(() => { if (active) setAssertionCheck(null) })
     return () => { active = false }
   }, [project?.id, manufacturingDialogOpen, boardQuantity, build.revision])
 
@@ -801,6 +805,17 @@ export default function App() {
           <label className="profile-select">Fabricator rule profile<select aria-label="Fabricator rule profile" value={manufacturingProfile} onChange={(event) => setManufacturingProfile(event.target.value)}>{manufacturingProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}</select></label>
           {manufacturingProfiles.find(({ id }) => id === manufacturingProfile)?.description && <p className="profile-description">{manufacturingProfiles.find(({ id }) => id === manufacturingProfile)?.description}</p>}
           <div className="manufacturing-checks" aria-live="polite">{loadingManufacturing ? <p className="checks-empty">Checking current build…</p> : manufacturingPreflight ? manufacturingPreflight.checks.map((check) => <ManufacturingCheckRow key={check.id} check={check} />) : <p className="checks-empty">Build the project to load manufacturing checks.</p>}</div>
+          <section className="assertion-results" aria-label="Project assertions">
+            <h3>Project assertions</h3>
+            {!assertionCheck ? <p className="checks-empty">Loading project assertions…</p>
+              : !assertionCheck.configured ? <p className="checks-empty">{assertionCheck.message}</p>
+                : <>
+                  <p className="assertion-summary">{assertionCheck.report?.passed ?? 0} passed · {assertionCheck.report?.failed ?? 0} failed · {assertionCheck.report?.notEvaluated ?? 0} not evaluated{assertionCheck.report?.baselineRevision ? ` · baseline ${assertionCheck.report.baselineRevision.slice(0, 8)}` : ''}</p>
+                  {assertionCheck.report?.results.map((result) => <p className={`assertion-result ${result.status}`} key={result.id}>
+                    <strong>{result.status === 'pass' ? 'Pass' : result.status === 'fail' ? 'Fail' : 'Not evaluated'}</strong> {result.message}
+                  </p>)}
+                </>}
+          </section>
           <section className="bom-cost" aria-label="Component cost estimate">
             <div className="bom-cost-heading"><h3>Component cost</h3><label>Boards<input type="number" min="1" max="10000" aria-label="Board quantity" value={boardQuantity} onChange={(event) => setBoardQuantity(Math.max(1, Math.min(10000, Math.round(Number(event.target.value) || 1))))} /></label></div>
             {!bomCost ? <p className="checks-empty">Loading component prices…</p>
