@@ -61,6 +61,7 @@ const PcbPreview = lazy(() => import('./PcbPreview'))
 type PcbCircuitJson = import('./PcbPreview').PcbCircuitJson
 
 function Divider({ index, widths, drag, resizePanel }: { index: number; widths: number[]; drag: { current: { index: number; startX: number; width: number; lastDelta: number } | null }; resizePanel: (index: number, amount: number) => void }) {
+  // biome-ignore lint/a11y/useSemanticElements: <hr> cannot carry the focusable drag handle this divider needs
   return <div className="multiview-divider" role="separator" aria-orientation="vertical" aria-label={index === 0 ? 'Resize schematic and PCB previews' : 'Resize PCB and 3D previews'} aria-valuemin={15} aria-valuemax={85} aria-valuenow={Math.round(widths[index])} tabIndex={0}
     onKeyDown={(event) => { if (event.key === 'ArrowLeft') { event.preventDefault(); resizePanel(index, -2) } if (event.key === 'ArrowRight') { event.preventDefault(); resizePanel(index, 2) } }}
     onPointerDown={(event: ReactPointerEvent<HTMLDivElement>) => { drag.current = { index, startX: event.clientX, width: event.currentTarget.parentElement?.getBoundingClientRect().width || 1, lastDelta: 0 }; event.currentTarget.setPointerCapture(event.pointerId) }}
@@ -551,7 +552,7 @@ export default function App() {
     return next
   })
 
-  const renderPreviewCard = (kind: 'schematic' | 'pcb' | '3d') => <section className="multiview-card" role="region" aria-label={`${kind === '3d' ? '3D' : kind === 'pcb' ? 'PCB' : 'Schematic'} preview`} key={kind}>
+  const renderPreviewCard = (kind: 'schematic' | 'pcb' | '3d') => <section className="multiview-card" aria-label={`${kind === '3d' ? '3D' : kind === 'pcb' ? 'PCB' : 'Schematic'} preview`} key={kind}>
     <h2>{kind === '3d' ? '3D' : kind === 'pcb' ? 'PCB' : 'Schematic'}</h2>
     <div className="multiview-canvas">
       {preview && (kind !== 'pcb' || hasPcbPreview) ? kind === 'pcb'
@@ -568,7 +569,7 @@ export default function App() {
   return (
     <main className="workbench">
       <header className="topbar">
-        <a className="brand" href="#" aria-label="Wattful-Iron workbench home"><img className="brand-logo" src="/Wattful-Iron.png" alt="" /><span>Wattful-Iron</span></a>
+        <a className="brand" href="/" aria-label="Wattful-Iron workbench home"><img className="brand-logo" src="/Wattful-Iron.png" alt="" /><span>Wattful-Iron</span></a>
         <div className="project-heading">
           <span className="project-crumb">Projects</span>
           <span className="crumb-divider">/</span>
@@ -576,21 +577,21 @@ export default function App() {
         </div>
         <div className="top-actions">
           <div className={`build-state ${build.status}`} aria-live="polite"><span className="status-dot" />{statusText}</div>
-          <button className="build-button history-button" disabled={!project} onClick={() => setHistoryDialogOpen(true)}>History</button>
-          <button className="build-button" disabled={!project || exportingArchive} onClick={() => void downloadProjectArchive()}>{exportingArchive ? 'Exporting…' : 'Export project ZIP'}</button>
-          <button className="build-button" disabled={!project?.referencePdfs?.length} onClick={() => setReferencePdfOpen(true)}>PDF reference</button>
-          <button className="build-button manufacturing-button" disabled={!project} onClick={() => setManufacturingDialogOpen(true)}>Rule checks · Manufacturing</button>
-          {source.includes('ImportedBoard') && projectFiles.some((file) => /^imports\/[^/]+\.json$/i.test(file)) && <button className="build-button" disabled={!project || dirty} onClick={() => void createPcbDraft()}>Refresh component names</button>}
-          <button className="build-button" disabled={!project || build.status === 'compiling'} onClick={runBuild}><span>▶</span> Build</button>
+          <button type="button" className="build-button history-button" disabled={!project} onClick={() => setHistoryDialogOpen(true)}>History</button>
+          <button type="button" className="build-button" disabled={!project || exportingArchive} onClick={() => void downloadProjectArchive()}>{exportingArchive ? 'Exporting…' : 'Export project ZIP'}</button>
+          <button type="button" className="build-button" disabled={!project?.referencePdfs?.length} onClick={() => setReferencePdfOpen(true)}>PDF reference</button>
+          <button type="button" className="build-button manufacturing-button" disabled={!project} onClick={() => setManufacturingDialogOpen(true)}>Rule checks · Manufacturing</button>
+          {source.includes('ImportedBoard') && projectFiles.some((file) => /^imports\/[^/]+\.json$/i.test(file)) && <button type="button" className="build-button" disabled={!project || dirty} onClick={() => void createPcbDraft()}>Refresh component names</button>}
+          <button type="button" className="build-button" disabled={!project || build.status === 'compiling'} onClick={runBuild}><span>▶</span> Build</button>
         </div>
       </header>
 
       <div className="workspace">
         <aside className="explorer">
-          <div className="sidebar-title"><span>PROJECTS</span><button className="icon-button" aria-label="New project" title="New project" onClick={() => setCreating(true)}>＋</button></div>
+          <div className="sidebar-title"><span>PROJECTS</span><button type="button" className="icon-button" aria-label="New project" title="New project" onClick={() => setCreating(true)}>＋</button></div>
           {creating && <form className="create-form" onSubmit={handleCreate}>
             <label htmlFor="project-name">Project name</label>
-            <input id="project-name" autoFocus value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="e.g. Sensor board" />
+            <input id="project-name" ref={(node) => node?.focus()} value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="e.g. Sensor board" />
             <label htmlFor="project-template">Start from</label>
             <select id="project-template" value={projectTemplate} disabled={schematicFiles.length > 0 || !!referencePdf || !!referencePdfUrl.trim()} onChange={(event) => setProjectTemplate(event.target.value)}>
               {projectTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
@@ -606,27 +607,27 @@ export default function App() {
             {!schematicFiles.length && !referencePdf && !referencePdfUrl.trim() && projectTemplates.find((template) => template.id === projectTemplate) && <small className="template-description">{projectTemplates.find((template) => template.id === projectTemplate)?.description}</small>}
             <div className="form-actions"><button type="button" className="quiet-button" onClick={() => setCreating(false)}>Cancel</button><button className="small-primary" type="submit">{referencePdf || referencePdfUrl.trim() ? 'Import PDF reference' : schematicFiles.length ? 'Import schematics' : 'Create project'}</button></div>
           </form>}
-          <button className="new-project-link" onClick={() => setCreating(true)}><span>＋</span> New project</button>
+          <button type="button" className="new-project-link" onClick={() => setCreating(true)}><span>＋</span> New project</button>
           <form className="archive-form" onSubmit={handleArchiveImport}>
             <label htmlFor="project-archive">Import project archive (.zip)</label>
             <input id="project-archive" type="file" accept=".zip,application/zip" onChange={(event) => setArchiveFile(event.target.files?.[0] ?? null)} />
             <button className="quiet-button" type="submit" disabled={!archiveFile || importingArchive}>{importingArchive ? 'Importing…' : 'Import archive'}</button>
             <small>Imports as a separate project. Your open project stays intact; unsaved edits are protected by the normal save/discard prompt.</small>
           </form>
-          <div className="project-list" aria-label="Project list">
+          <ul className="project-list" aria-label="Project list">
             {loading ? <div className="sidebar-empty">Loading projects…</div> : projects.length === 0 ? <div className="sidebar-empty">Your projects will appear here.</div> : projects.map((item) => (
-              <div key={item.id} className="project-row">
-                <button className={`project-item ${project?.id === item.id ? 'selected' : ''}`} aria-label={`${item.name} ${item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : 'TSX project'}`} onClick={() => void openProject(item)}>
+              <li key={item.id} className="project-row">
+                <button type="button" className={`project-item ${project?.id === item.id ? 'selected' : ''}`} aria-label={`${item.name} ${item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : 'TSX project'}`} onClick={() => void openProject(item)}>
                   <span className="project-icon">▱</span><span className="project-item-copy"><strong>{item.name}</strong><small>{item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : 'TSX project'}</small></span>
                 </button>
-                <button className="project-action" aria-label={`Duplicate ${item.name}`} title="Duplicate project" disabled={duplicatingProjectId === item.id} onClick={() => void duplicateExistingProject(item)}>{duplicatingProjectId === item.id ? '…' : '⧉'}</button>
-              </div>
+                <button type="button" className="project-action" aria-label={`Duplicate ${item.name}`} title="Duplicate project" disabled={duplicatingProjectId === item.id} onClick={() => void duplicateExistingProject(item)}>{duplicatingProjectId === item.id ? '…' : '⧉'}</button>
+              </li>
             ))}
-          </div>
-          {project && <div className="file-browser" aria-label="Project files">
+          </ul>
+          {project && <nav className="file-browser" aria-label="Project files">
             <div className="file-browser-title">FILES</div>
-            {projectFiles.map((path) => <button key={path} className={`file-item ${filePath === path ? 'selected' : ''}`} aria-current={filePath === path ? 'page' : undefined} onClick={() => openFile(path)}>{path}{dirty && filePath === path && <span className="unsaved-dot" title="Unsaved changes" />}</button>)}
-          </div>}
+            {projectFiles.map((path) => <button type="button" key={path} className={`file-item ${filePath === path ? 'selected' : ''}`} aria-current={filePath === path ? 'page' : undefined} onClick={() => openFile(path)}>{path}{dirty && filePath === path && <span className="unsaved-dot" title="Unsaved changes" />}</button>)}
+          </nav>}
           <div className="sidebar-footer"><span className="connection-dot" /> Local workspace</div>
         </aside>
 
@@ -644,18 +645,18 @@ export default function App() {
             value={source}
             onChange={(value) => { setSource(value ?? ''); setDirty(true) }}
             options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, tabSize: 2, wordWrap: 'on', padding: { top: 14 } }}
-          /> : <div className="empty-editor"><span className="empty-glyph">{'</>'}</span><h2>Your circuit starts here</h2><p>Create or open a project to edit its tscircuit source.</p><button className="small-primary" onClick={() => setCreating(true)}>Create project</button></div>}
+          /> : <div className="empty-editor"><span className="empty-glyph">{'</>'}</span><h2>Your circuit starts here</h2><p>Create or open a project to edit its tscircuit source.</p><button type="button" className="small-primary" onClick={() => setCreating(true)}>Create project</button></div>}
         </section>
 
         <section className="preview-panel" aria-label="Design previews">
           <div className="preview-toolbar">
-            <button className={`outline-button multiview-toggle ${showAllViews ? 'active' : ''}`} aria-pressed={showAllViews} onClick={() => setShowAllViews((show) => !show)}>{showAllViews ? 'Single view' : 'Show all views'}</button>
+            <button type="button" className={`outline-button multiview-toggle ${showAllViews ? 'active' : ''}`} aria-pressed={showAllViews} onClick={() => setShowAllViews((show) => !show)}>{showAllViews ? 'Single view' : 'Show all views'}</button>
             <div className="view-tabs" role="tablist" aria-label="Preview type">
-              {views.map(({ kind, label }) => <button key={kind} role="tab" aria-selected={view === kind} className={`view-tab ${view === kind ? 'active' : ''}`} onClick={() => setView(kind)}>{label}</button>)}
+              {views.map(({ kind, label }) => <button type="button" key={kind} role="tab" aria-selected={view === kind} className={`view-tab ${view === kind ? 'active' : ''}`} onClick={() => setView(kind)}>{label}</button>)}
             </div>
             <span className="preview-meta">{preview ? `Revision ${build.revision || revision}` : 'Live preview'}</span>
-            {view === 'pcb' && project && <button className="outline-button" onClick={openBoardOutlineEditor}>Board outline</button>}
-            {view !== 'simulation' && inspectedComponents.length > 0 && <button className={`inspector-toggle ${componentInspectorOpen ? 'active' : ''}`} aria-expanded={componentInspectorOpen} aria-controls="component-inspector" onClick={() => setComponentInspectorOpen((open) => !open)}>Components <span>{inspectedComponents.length}</span></button>}
+            {view === 'pcb' && project && <button type="button" className="outline-button" onClick={openBoardOutlineEditor}>Board outline</button>}
+            {view !== 'simulation' && inspectedComponents.length > 0 && <button type="button" className={`inspector-toggle ${componentInspectorOpen ? 'active' : ''}`} aria-expanded={componentInspectorOpen} aria-controls="component-inspector" onClick={() => setComponentInspectorOpen((open) => !open)}>Components <span>{inspectedComponents.length}</span></button>}
           </div>
           <div className="preview-content">
             {showAllViews ? <div className="multiview-grid" style={{ gridTemplateColumns: `minmax(0, ${panelWidths[0]}fr) 10px minmax(0, ${panelWidths[1]}fr) 10px minmax(0, ${panelWidths[2]}fr)` }}>
@@ -670,16 +671,16 @@ export default function App() {
               <div className="placeholder-board"><span className="board-edge edge-a" /><span className="board-edge edge-b" /><span className="board-chip chip-a" /><span className="board-chip chip-b" /><span className="board-pad pad-a" /><span className="board-pad pad-b" /><span className="board-route route-a" /><span className="board-route route-b" /></div>
               <h2>{view === 'pcb' ? 'No PCB layout in this project' : 'No PCB data for 3D preview'}</h2>
               <p>This schematic has no PCB placements. Generate a draft layout, then review footprints, component models, pin mappings, and routing before fabrication.</p>
-              {view === 'pcb' && source.includes('ImportedSchematic') && <button className="outline-button" disabled={!project || dirty || build.status === 'compiling'} onClick={() => void createPcbDraft()}>Generate PCB draft</button>}
+              {view === 'pcb' && source.includes('ImportedSchematic') && <button type="button" className="outline-button" disabled={!project || dirty || build.status === 'compiling'} onClick={() => void createPcbDraft()}>Generate PCB draft</button>}
             </div> : <div className="preview-placeholder">
               <div className="placeholder-board"><span className="board-edge edge-a" /><span className="board-edge edge-b" /><span className="board-chip chip-a" /><span className="board-chip chip-b" /><span className="board-pad pad-a" /><span className="board-pad pad-b" /><span className="board-route route-a" /><span className="board-route route-b" /></div>
               <h2>{project ? build.status === 'failed' ? 'Last good preview is unavailable' : 'Waiting for first build' : 'Your design workspace'}</h2>
               <p>{project ? build.status === 'failed' ? 'Fix the source and build again to update this view.' : 'Build the project to generate a schematic, PCB layout, and 3D preview.' : 'Create a project to see your design take shape.'}</p>
-              {project && <button className="outline-button" onClick={runBuild}>Build project</button>}
+              {project && <button type="button" className="outline-button" onClick={runBuild}>Build project</button>}
             </div>}
             </>}
             {componentInspectorOpen && view !== 'simulation' && <aside id="component-inspector" className="component-inspector" aria-label="Component inspector">
-              <header><div><h2>Components</h2><span>{inspectedComponents.length} from build data</span></div><button aria-label="Close component inspector" onClick={() => setComponentInspectorOpen(false)}>×</button></header>
+              <header><div><h2>Components</h2><span>{inspectedComponents.length} from build data</span></div><button type="button" aria-label="Close component inspector" onClick={() => setComponentInspectorOpen(false)}>×</button></header>
               {!selectedComponent ? <p className="inspector-empty">No source components were found in this build.</p> : <>
                 <label className="inspector-select">Component<select aria-label="Select component" value={selectedComponent.id} onChange={(event) => setSelectedComponentId(event.target.value)}>{inspectedComponents.map(({ id, name }) => <option key={id} value={id}>{name}</option>)}</select></label>
                 <div className="inspector-section"><h3>Identity</h3><dl><dt>Name</dt><dd>{selectedComponent.name}</dd><dt>Source ID</dt><dd><code>{selectedComponent.id}</code></dd></dl></div>
@@ -695,40 +696,40 @@ export default function App() {
       </div>
       {unsavedDialogOpen && <div className="history-overlay" role="presentation"><section className="history-dialog unsaved-dialog" role="dialog" aria-modal="true" aria-labelledby="unsaved-title">
         <header><div><h2 id="unsaved-title">Unsaved changes</h2><p>Save your edits before opening another project file?</p></div></header>
-        <footer><button className="quiet-button" onClick={() => void finishNavigation('cancel')}>Cancel</button><button className="quiet-button" onClick={() => void finishNavigation('discard')}>Discard and open</button><button className="build-button" onClick={() => void finishNavigation('save')}>Save and open</button></footer>
+        <footer><button type="button" className="quiet-button" onClick={() => void finishNavigation('cancel')}>Cancel</button><button type="button" className="quiet-button" onClick={() => void finishNavigation('discard')}>Discard and open</button><button type="button" className="build-button" onClick={() => void finishNavigation('save')}>Save and open</button></footer>
       </section></div>}
       {historyDialogOpen && <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryDialogOpen(false) }}>
         <section className="history-dialog" role="dialog" aria-modal="true" aria-labelledby="history-title">
-          <header><div><h2 id="history-title">Project source history</h2><p>{historyRevisions.length} of 50 retained revisions · snapshots include project source files</p></div><button aria-label="Close project history" onClick={() => setHistoryDialogOpen(false)}>×</button></header>
+          <header><div><h2 id="history-title">Project source history</h2><p>{historyRevisions.length} of 50 retained revisions · snapshots include project source files</p></div><button type="button" aria-label="Close project history" onClick={() => setHistoryDialogOpen(false)}>×</button></header>
           {historyLoading ? <p className="history-empty">Loading revisions…</p> : historyRevisions.length === 0 ? <p className="history-empty">No saved revisions yet.</p> : <div className="history-layout">
-            <div className="history-revision-list" aria-label="Saved revisions">{historyRevisions.map((item) => <button key={item.revision} className={`history-revision ${revisionToRestore === item.revision ? 'selected' : ''}`} onClick={() => setRevisionToRestore(item.revision)}>
+            <ul className="history-revision-list" aria-label="Saved revisions">{historyRevisions.map((item) => <li key={item.revision}><button type="button" className={`history-revision ${revisionToRestore === item.revision ? 'selected' : ''}`} onClick={() => setRevisionToRestore(item.revision)}>
               <strong>{new Date(item.createdAt).toLocaleString()}</strong><small>{item.changedFiles.join(', ') || 'No changed files'} · {formatBytes(item.sizeBytes)}</small><code>{item.revision.slice(0, 8)}</code>
-            </button>)}</div>
+            </button></li>)}</ul>
             <div className="history-compare">
               <div className="history-selects"><label>Compare from<select aria-label="Compare from" value={historyFrom} onChange={(event) => setHistoryFrom(event.target.value)}>{historyRevisions.map((item) => <option key={item.revision} value={item.revision}>{new Date(item.createdAt).toLocaleString()}</option>)}</select></label><label>Compare with<select aria-label="Compare with" value={historyTo} onChange={(event) => setHistoryTo(event.target.value)}>{historyRevisions.map((item) => <option key={item.revision} value={item.revision}>{new Date(item.createdAt).toLocaleString()}</option>)}</select></label></div>
-              {revisionComparison?.files.length ? revisionComparison.files.map((file) => <section className="history-file-diff" key={file.path}><h3>{file.path}</h3><div><pre aria-label={`${file.path} before`}>{file.before ?? '— file did not exist —'}</pre><pre aria-label={`${file.path} after`}>{file.after ?? '— file did not exist —'}</pre></div></section>) : <p className="history-empty">{historyFrom === historyTo ? 'Choose two different revisions to compare.' : 'These revisions contain no source changes.'}</p>}
+              {revisionComparison?.files.length ? revisionComparison.files.map((file) => <section className="history-file-diff" key={file.path}><h3>{file.path}</h3><div><section aria-label={`${file.path} before`}><pre>{file.before ?? '— file did not exist —'}</pre></section><section aria-label={`${file.path} after`}><pre>{file.after ?? '— file did not exist —'}</pre></section></div></section>) : <p className="history-empty">{historyFrom === historyTo ? 'Choose two different revisions to compare.' : 'These revisions contain no source changes.'}</p>}
             </div>
           </div>}
-          <footer><span>Restore replaces the project files and queues a normal build.</span><button className="build-button" disabled={!revisionToRestore || revisionToRestore === revision || dirty || restoringHistory || historyLoading} onClick={() => void restoreRevision()}>{restoringHistory ? 'Restoring…' : 'Restore selected revision'}</button></footer>
+          <footer><span>Restore replaces the project files and queues a normal build.</span><button type="button" className="build-button" disabled={!revisionToRestore || revisionToRestore === revision || dirty || restoringHistory || historyLoading} onClick={() => void restoreRevision()}>{restoringHistory ? 'Restoring…' : 'Restore selected revision'}</button></footer>
         </section>
       </div>}
       {referencePdfOpen && project?.referencePdfs?.[0] && <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReferencePdfOpen(false) }}>
         <section className="history-dialog pdf-reference-dialog" role="dialog" aria-modal="true" aria-labelledby="pdf-reference-title">
-          <header><div><h2 id="pdf-reference-title">{project.referencePdfs[0].name}</h2><p>Visual reference only. Electrical connectivity was not imported from this PDF.</p></div><button aria-label="Close PDF reference" onClick={() => setReferencePdfOpen(false)}>×</button></header>
+          <header><div><h2 id="pdf-reference-title">{project.referencePdfs[0].name}</h2><p>Visual reference only. Electrical connectivity was not imported from this PDF.</p></div><button type="button" aria-label="Close PDF reference" onClick={() => setReferencePdfOpen(false)}>×</button></header>
           <iframe title={`PDF reference: ${project.referencePdfs[0].name}`} src={getProjectReferencePdfUrl(project.id, project.referencePdfs[0].id)} />
         </section>
       </div>}
       {manufacturingDialogOpen && <div className="manufacturing-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setManufacturingDialogOpen(false) }}>
         <section className="manufacturing-dialog" role="dialog" aria-modal="true" aria-labelledby="manufacturing-title">
-          <header><div><h2 id="manufacturing-title">Manufacturing preflight</h2><p>Review electrical and fabricator checks before generating files.</p></div><button aria-label="Close manufacturing checks" onClick={() => setManufacturingDialogOpen(false)}>×</button></header>
+          <header><div><h2 id="manufacturing-title">Manufacturing preflight</h2><p>Review electrical and fabricator checks before generating files.</p></div><button type="button" aria-label="Close manufacturing checks" onClick={() => setManufacturingDialogOpen(false)}>×</button></header>
           <label className="profile-select">Fabricator rule profile<select aria-label="Fabricator rule profile" value={manufacturingProfile} onChange={(event) => setManufacturingProfile(event.target.value)}>{manufacturingProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}</select></label>
           {manufacturingProfiles.find(({ id }) => id === manufacturingProfile)?.description && <p className="profile-description">{manufacturingProfiles.find(({ id }) => id === manufacturingProfile)?.description}</p>}
           <div className="manufacturing-checks" aria-live="polite">{loadingManufacturing ? <p className="checks-empty">Checking current build…</p> : manufacturingPreflight ? manufacturingPreflight.checks.map((check) => <ManufacturingCheckRow key={check.id} check={check} />) : <p className="checks-empty">Build the project to load manufacturing checks.</p>}</div>
-          <footer><span>{manufacturingPreflight?.ready ? 'Preflight ready' : manufacturingPreflight ? 'Resolve blocking checks before export' : 'Preflight unavailable'}</span><button className="build-button" disabled={!project || dirty || build.status !== 'ready' || build.revision !== revision || exportingManufacturing || loadingManufacturing || !manufacturingPreflight?.ready} onClick={downloadManufacturing}>{exportingManufacturing ? 'Exporting…' : 'Download Manufacturing ZIP'}</button></footer>
+          <footer><span>{manufacturingPreflight?.ready ? 'Preflight ready' : manufacturingPreflight ? 'Resolve blocking checks before export' : 'Preflight unavailable'}</span><button type="button" className="build-button" disabled={!project || dirty || build.status !== 'ready' || build.revision !== revision || exportingManufacturing || loadingManufacturing || !manufacturingPreflight?.ready} onClick={downloadManufacturing}>{exportingManufacturing ? 'Exporting…' : 'Download Manufacturing ZIP'}</button></footer>
         </section>
       </div>}
       {boardOutlineOpen && <BoardOutlineDialog points={boardOutlinePoints} error={boardOutlineError} onChange={setBoardOutlinePoints} onImport={(file) => void importBoardOutlineSvg(file)} onError={setBoardOutlineError} onApply={applyEditedBoardOutline} onClose={() => setBoardOutlineOpen(false)} />}
-      {error && <div className="toast-error" role="alert"><span>{error}</span>{error.includes('changed on disk') || error.includes('changed outside') ? <button className="reload-button" onClick={reloadFile}>Reload file</button> : null}<button aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
+      {error && <div className="toast-error" role="alert"><span>{error}</span>{error.includes('changed on disk') || error.includes('changed outside') ? <button type="button" className="reload-button" onClick={reloadFile}>Reload file</button> : null}<button type="button" aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
     </main>
   )
 }
@@ -762,26 +763,27 @@ function BoardOutlineDialog({ points, error, onChange, onImport, onError, onAppl
 
   return <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <section className="history-dialog board-outline-dialog" role="dialog" aria-modal="true" aria-labelledby="board-outline-title">
-      <header><div><h2 id="board-outline-title">Board outline</h2><p>Click to place points on the canvas, edit coordinates, or import an SVG polygon.</p></div><button aria-label="Close board outline editor" onClick={onClose}>×</button></header>
+      <header><div><h2 id="board-outline-title">Board outline</h2><p>Click to place points on the canvas, edit coordinates, or import an SVG polygon.</p></div><button type="button" aria-label="Close board outline editor" onClick={onClose}>×</button></header>
       <div className="board-outline-content">
         <label className="outline-upload">Import outline SVG<input aria-label="Import outline SVG" type="file" accept=".svg,image/svg+xml" onChange={(event) => { const file = event.target.files?.[0]; if (file) onImport(file); event.currentTarget.value = '' }} /></label>
+        {/* biome-ignore lint/a11y/useKeyWithClickEvents: the Add point button below places points without the canvas, so a keyboard path exists */}
         <svg className="outline-canvas" viewBox="0 0 400 300" role="application" aria-label="Draw board outline" onClick={addPoint}>
           <path d="M200 0V300M0 150H400" className="outline-axis" />
           {points.length >= 2 && <polyline points={points.length >= 3 ? `${canvasPoints} ${canvasPoints.split(' ')[0]}` : canvasPoints} className="outline-polygon" />}
           {points.map(({ x, y }, index) => <g key={`${index}-${x}-${y}`}><circle cx={200 + x * 5} cy={150 - y * 5} r="4" className="outline-point" /><text x={204 + x * 5} y={146 - y * 5}>{index + 1}</text></g>)}
         </svg>
-        <div className="outline-point-list" aria-label="Outline points">
-          {points.map((point, index) => <div className="outline-point-row" key={index}>
+        <ul className="outline-point-list" aria-label="Outline points">
+          {points.map((point, index) => <li className="outline-point-row" key={`${index}-${point.x}-${point.y}`}>
             <strong>{index + 1}</strong>
             <label>X (mm)<input aria-label={`Outline point ${index + 1} x`} type="number" step="0.1" value={point.x} onChange={(event) => onChange(points.map((item, pointIndex) => pointIndex === index ? { ...item, x: Number(event.target.value) } : item))} /></label>
             <label>Y (mm)<input aria-label={`Outline point ${index + 1} y`} type="number" step="0.1" value={point.y} onChange={(event) => onChange(points.map((item, pointIndex) => pointIndex === index ? { ...item, y: Number(event.target.value) } : item))} /></label>
-            <button className="quiet-button" aria-label={`Remove point ${index + 1}`} onClick={() => { onChange(points.filter((_, pointIndex) => pointIndex !== index)); onError('') }}>Remove</button>
-          </div>)}
-        </div>
-        <button className="outline-button" onClick={() => { const last = points.at(-1); onChange([...points, last ? { x: last.x + 5, y: last.y } : { x: 0, y: 0 }]); onError('') }}>Add point</button>
+            <button type="button" className="quiet-button" aria-label={`Remove point ${index + 1}`} onClick={() => { onChange(points.filter((_, pointIndex) => pointIndex !== index)); onError('') }}>Remove</button>
+          </li>)}
+        </ul>
+        <button type="button" className="outline-button" onClick={() => { const last = points.at(-1); onChange([...points, last ? { x: last.x + 5, y: last.y } : { x: 0, y: 0 }]); onError('') }}>Add point</button>
         {error && <p className="outline-error" role="alert">{error}</p>}
       </div>
-      <footer><span>{points.length} points · millimeters</span><div><button className="quiet-button" onClick={onClose}>Cancel</button><button className="build-button" onClick={onApply}>Apply outline</button></div></footer>
+      <footer><span>{points.length} points · millimeters</span><div><button type="button" className="quiet-button" onClick={onClose}>Cancel</button><button type="button" className="build-button" onClick={onApply}>Apply outline</button></div></footer>
     </section>
   </div>
 }
@@ -806,7 +808,7 @@ function formatInspectorValue(value: unknown) {
 function SimulationPanel({ simulation, build, canRun, onRun }: { simulation: Simulation | null; build: BuildStatus; canRun: boolean; onRun: () => void }) {
   const building = ['running', 'compiling', 'validating', 'routing', 'rendering'].includes(build.status)
   return <div className="simulation-results">
-    <div className="simulation-heading"><div><h2>Simulation</h2><span>Runs tscircuit's configured analog simulation</span></div><button className="build-button" disabled={!canRun || building} onClick={onRun}>{building ? 'Running simulation…' : 'Run simulation'}</button></div>
+    <div className="simulation-heading"><div><h2>Simulation</h2><span>Runs tscircuit's configured analog simulation</span></div><button type="button" className="build-button" disabled={!canRun || building} onClick={onRun}>{building ? 'Running simulation…' : 'Run simulation'}</button></div>
     {building ? <p className="simulation-message" aria-live="polite">Building with tscircuit…</p> : build.status === 'failed' ? <div className="simulation-message" role="alert"><strong>Build failed</strong>{build.diagnostics?.length ? build.diagnostics.map((item, index) => <p key={`${item.path ?? item.file}-${item.line}-${index}`}>{item.path || item.file}{item.line ? `:${item.line}` : ''}{item.path || item.file ? ': ' : ''}{item.message}</p>) : <p>Check the project source and build output for details.</p>}</div> : simulation?.status === 'failed' ? <div className="simulation-message" role="alert"><strong>Simulation failed</strong>{simulation.diagnostics.map((item) => <p key={item.message}>{item.message}</p>)}</div> : !simulation ? <p className="simulation-message">Run the current source to inspect its simulation results.</p> : simulation.status === 'not_configured' ? <div className="simulation-message"><strong>No simulation configured</strong><p>Add tscircuit <code>&lt;analogsimulation /&gt;</code> and voltage/current probes to the circuit source.</p></div> : <>
       <div className="simulation-heading"><h2>{simulation.experiments.map((item) => item.name).join(', ') || 'Simulation results'}</h2><span>{simulation.signals.length} signals · build {simulation.revision.slice(0, 8)}</span></div>
       <WaveformViewer key={simulation.revision} signals={simulation.signals} />
