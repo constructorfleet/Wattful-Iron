@@ -51,7 +51,9 @@ displays transient graph data emitted by tscircuit. Treat all views as
 development previews rather than engineering approval.
 
 ACP agent interfaces, user-level authentication, and full KiCad-equivalent
-ERC/DRC are not implemented in this slice. Manufacturing preflight runs the
+ERC/DRC are not implemented in this slice. MCP agents can run the supported
+electrical, board, and routing rule checks and read IPC-2221 trace current
+capacity; every report names the checks it does not evaluate. Manufacturing preflight runs the
 supported tscircuit Circuit JSON checks and a limited set of fabricator rules.
 Project code runs in disposable build containers;
 see the [security model](docs/security.md) for the runtime boundary and limits.
