@@ -128,6 +128,16 @@ test("MCP exposes read-only inspection of components, nets, pins, routes, and bo
     assert.equal(vccTrace.net.routing, "partially-routed")
     const missingNet = await client.callTool({ name: "get_net_trace", arguments: { projectId: project.id, net: "SPI_MISO" } })
     assert.equal(missingNet.isError, true)
+    const revisions = readResult<{ gitBacked: boolean; revisions: Array<{ revision: string; commit?: string; retainedSnapshot: boolean; hasDesignSummary: boolean }> }>(
+      await client.callTool({ name: "list_project_revisions", arguments: { projectId: project.id } }))
+    assert.ok(revisions.revisions.length >= 1)
+    assert.equal(revisions.revisions.at(-1)?.retainedSnapshot, true)
+    const comparison = readResult<{ from: string; to: string; files: unknown[]; design: { available: boolean; reason?: string } }>(
+      await client.callTool({ name: "compare_project_revisions", arguments: { projectId: project.id, from: revisions.revisions.at(-1)!.revision, to: revisions.revisions[0]!.revision } }))
+    assert.equal(comparison.to, revisions.revisions[0]!.revision)
+    assert.ok(Array.isArray(comparison.files))
+    assert.equal(typeof comparison.design.available, "boolean")
+
     const pins = readResult<Array<{ name: string; connectedNets: string[] }>>(await client.callTool({ name: "get_pin_connections", arguments: { projectId: project.id, component: "R1" } }))
     assert.deepEqual(pins.map(({ name, connectedNets }) => [name, connectedNets]), [["pin1", ["VCC"]], ["pin2", ["GND"]]])
     const board = readResult<Array<{ width: number; height: number; num_layers: number }>>(await client.callTool({ name: "get_board_properties", arguments: { projectId: project.id } }))
@@ -375,6 +385,14 @@ test("MCP exposes electrical, board, routing, and power reports for a build", as
 
     const invalid = await client.callTool({ name: "analyze_power", arguments: { projectId: project.id, temperatureRiseC: 500 } })
     assert.equal(invalid.isError, true)
+
+    const signals = readResult<{ status: string; signals: Array<{ sampleCount: number }>; operatingPoints: unknown[]; sweeps: unknown[]; notEvaluated: Array<{ analysis: string }> }>(
+      await client.callTool({ name: "list_simulation_signals", arguments: { projectId: project.id } }))
+    assert.equal(signals.status, "not_configured")
+    assert.deepEqual(signals.signals, [])
+    assert.ok(signals.notEvaluated.some(({ analysis }) => analysis === "DC operating point"))
+    const missingWaveform = await client.callTool({ name: "get_waveform", arguments: { projectId: project.id, signal: "VOUT" } })
+    assert.equal(missingWaveform.isError, true)
   } finally {
     await client.close()
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
@@ -446,13 +464,95 @@ test("MCP clients can build a circuit structurally and have each edit rejected w
   }
 })
 
-async function makeFixture(buildCircuit: (projectDir: string) => Promise<unknown> = async () => [{ type: "source_component", name: "fixture" }]) {
+test("MCP exposes supplier lookups and a component cost estimate when sourcing is configured", async () => {
+  const circuitJson = [
+    { type: "source_component", source_component_id: "sc1", name: "R1", ftype: "simple_resistor", supplier_part_numbers: { jlcpcb: ["C25804"] } },
+    { type: "source_component", source_component_id: "sc2", name: "J1", ftype: "simple_connector" },
+  ]
+  const sourcing = {
+    provider: "stub",
+    baseUrl: "https://parts.example",
+    lookup: async (part: string) => part === "C25804"
+      ? { lcscPartNumber: "C25804", manufacturerPartNumber: "0603WAF1002", package: "0603", stockQuantity: 9000, unitPriceUsd: 0.002, isBasicPart: true }
+      : null,
+  }
+  const fixture = await makeFixture(async () => circuitJson, { componentSourcing: sourcing })
+  const server = createServer(fixture.app)
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address()
+  assert.ok(address && typeof address !== "string")
+  const client = new Client({ name: "circuits-workbench-test", version: "1.0.0" })
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`), {
+    requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+  })
+  try {
+    await client.connect(transport)
+    const project = readResult<{ id: string }>(await client.callTool({ name: "create_project", arguments: { name: "Sourced board" } }))
+    await waitForToolStatus(client, project.id, "ready")
+
+    const part = readResult<{ provider: string; part: { manufacturerPartNumber: string; stockQuantity: number } }>(
+      await client.callTool({ name: "get_component_sourcing", arguments: { part: "C25804" } }))
+    assert.equal(part.provider, "stub")
+    assert.equal(part.part.stockQuantity, 9000)
+    const missing = await client.callTool({ name: "get_component_sourcing", arguments: { part: "C999" } })
+    assert.equal(missing.isError, true)
+
+    const estimate = readResult<{ configured: boolean; boards: number; componentCostUsd: number; unpriced: Array<{ name: string }>; limitations: string[] }>(
+      await client.callTool({ name: "estimate_manufacturing_cost", arguments: { projectId: project.id, boards: 100 } }))
+    assert.equal(estimate.configured, true)
+    assert.equal(estimate.boards, 100)
+    assert.equal(estimate.componentCostUsd, 0.2)
+    assert.deepEqual(estimate.unpriced.map(({ name }) => name), ["J1"])
+    assert.ok(estimate.limitations.some((item) => item.includes("Board fabrication, assembly")))
+
+    const availability = readResult<{ checks: Array<{ id: string; status: string }> }>(
+      await client.callTool({ name: "check_manufacturability", arguments: { projectId: project.id } }))
+    assert.equal(availability.checks.find(({ id }) => id === "component-availability")?.status, "warning")
+  } finally {
+    await client.close()
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    await fixture.cleanup()
+  }
+})
+
+test("MCP reports component sourcing as unconfigured instead of guessing prices", async () => {
+  const fixture = await makeFixture()
+  const server = createServer(fixture.app)
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address()
+  assert.ok(address && typeof address !== "string")
+  const client = new Client({ name: "circuits-workbench-test", version: "1.0.0" })
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`), {
+    requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+  })
+  try {
+    await client.connect(transport)
+    const project = readResult<{ id: string }>(await client.callTool({ name: "create_project", arguments: { name: "Unsourced board" } }))
+    await waitForToolStatus(client, project.id, "ready")
+    const lookup = await client.callTool({ name: "get_component_sourcing", arguments: { part: "C25804" } })
+    assert.equal(lookup.isError, true)
+    const estimate = readResult<{ configured: boolean; message: string; parts: unknown[] }>(
+      await client.callTool({ name: "estimate_manufacturing_cost", arguments: { projectId: project.id } }))
+    assert.equal(estimate.configured, false)
+    assert.match(estimate.message, /COMPONENT_SOURCING_URL/)
+  } finally {
+    await client.close()
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    await fixture.cleanup()
+  }
+})
+
+async function makeFixture(
+  buildCircuit: (projectDir: string) => Promise<unknown> = async () => [{ type: "source_component", name: "fixture" }],
+  options: Partial<Parameters<typeof createApp>[0]> = {},
+) {
   const root = await mkdtemp(path.join(tmpdir(), "circuits-mcp-"))
   const app = createApp({
     projectsDir: root,
     watchFiles: false,
     mcpAuthToken: TOKEN,
     buildCircuit,
+    ...options,
   })
   return {
     app,

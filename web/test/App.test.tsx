@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import App from '../src/App'
 
 const api = vi.hoisted(() => ({
@@ -23,6 +23,9 @@ const api = vi.hoisted(() => ({
   getPreview: vi.fn(),
   getSimulation: vi.fn(),
   getNets: vi.fn(),
+  getPower: vi.fn(),
+  getBomCost: vi.fn(),
+  getComponentSourcing: vi.fn(),
   getManufacturingProfiles: vi.fn(),
   getManufacturingPreflight: vi.fn(),
   subscribeToProject: vi.fn((_id: string, _onEvent: (event: unknown) => void) => () => {}),
@@ -60,11 +63,15 @@ beforeEach(() => {
   api.getProject.mockResolvedValue(existingProject)
   api.getProjectFile.mockResolvedValue({ path: 'index.tsx', content: 'export default () => <board />', revision: 'rev-1' })
   api.getProjectFiles.mockResolvedValue(['index.tsx', 'package.json', 'src/helpers.js'])
-  api.getProjectHistory.mockResolvedValue({ revisions: [
-    { revision: 'rev-1', createdAt: '2026-01-02T00:00:00.000Z', changedFiles: ['index.tsx'], sizeBytes: 120 },
-    { revision: 'rev-2', createdAt: '2026-01-01T00:00:00.000Z', changedFiles: ['index.tsx'], sizeBytes: 110 },
+  api.getProjectHistory.mockResolvedValue({ gitBacked: true, snapshotRetention: 50, revisions: [
+    { revision: 'rev-1', createdAt: '2026-01-02T00:00:00.000Z', changedFiles: ['index.tsx'], sizeBytes: 120, commit: 'abcdef1234567890', retainedSnapshot: true, hasDesignSummary: true },
+    { revision: 'rev-2', createdAt: '2026-01-01T00:00:00.000Z', changedFiles: ['index.tsx'], sizeBytes: 110, commit: 'fedcba0987654321', retainedSnapshot: true, hasDesignSummary: true },
   ] })
-  api.compareProjectRevisions.mockResolvedValue({ from: 'rev-2', to: 'rev-1', files: [{ path: 'index.tsx', before: 'old source', after: 'new source' }] })
+  api.compareProjectRevisions.mockResolvedValue({
+    from: 'rev-2', to: 'rev-1',
+    files: [{ path: 'index.tsx', before: 'old source', after: 'new source' }],
+    design: { available: false, reason: 'No retained build summary for revision rev-2. Build those revisions to compare their designs; summaries are written when a build succeeds.' },
+  })
   api.restoreProjectRevision.mockResolvedValue({ revision: 'rev-3', restoredFrom: 'rev-2', changedFiles: ['index.tsx'] })
   api.getPreview.mockResolvedValue({ kind: 'schematic', revision: 'rev-1', circuitJson: [] })
   api.getManufacturingProfiles.mockResolvedValue({ profiles: [
@@ -72,7 +79,10 @@ beforeEach(() => {
     { id: 'jlcpcb-2layer-1oz', label: 'JLCPCB rigid PCB, 2-layer, 1 oz', description: 'JLCPCB baseline.', rules: { minTraceWidthMm: 0.1, minNonPlatedHoleMm: 0.5, copperToBoardEdgeMm: 0.2 } },
   ] })
   api.getManufacturingPreflight.mockResolvedValue({ preflight: { ready: true, profile: { id: 'board-default', label: 'Board defaults' }, checks: [{ id: 'circuit-errors', status: 'not-evaluated', message: 'Circuit JSON contains no ERC/DRC error records; no validator result confirms this check passed.' }] } })
-  api.getSimulation.mockResolvedValue({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], diagnostics: [] })
+  api.getSimulation.mockResolvedValue({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], operatingPoints: [], sweeps: [], analyses: [], diagnostics: [], notEvaluated: [] })
+  api.getBomCost.mockResolvedValue({ configured: false, revision: 'rev-1', parts: [], message: 'No component sourcing provider is configured, so no prices or stock were looked up. Set COMPONENT_SOURCING_URL to enable it.' })
+  api.getComponentSourcing.mockResolvedValue({ configured: false })
+  api.getPower.mockResolvedValue({ revision: 'rev-1', status: 'not-evaluated', assumptions: ['IPC-2221 current capacity at a 10 degree Celsius temperature rise.'], traceCapacity: [], nodeVoltages: [], branchCurrents: [], componentPower: [], supplyLoads: [], traceLoads: [], notEvaluated: [{ quantity: 'Thermal rise of components and planes', reason: 'Not implemented. No thermal model or copper area analysis is performed.' }] })
   api.getNets.mockResolvedValue({ revision: 'rev-1', nets: [], uncorrelatedSimulationSignals: [], limitations: ['Nets are grouped by the Circuit JSON connectivity map emitted by the build.'] })
   api.createProject.mockResolvedValue({ ...existingProject, id: 'new-1', name: 'Sensor Board' })
   api.duplicateProject.mockResolvedValue({ ...existingProject, id: 'copy-1', name: 'LED Board copy', revision: 'copy-rev-1' })
@@ -402,10 +412,11 @@ describe('workbench', () => {
     api.saveProjectFile.mockResolvedValue({ path: 'index.tsx', content: 'export default () => <board name="updated" />', revision: 'rev-2' })
     api.getPreview.mockResolvedValue({ kind: 'schematic', revision: 'rev-2', circuitJson: [] })
     api.getSimulation
-      .mockResolvedValueOnce({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], diagnostics: [] })
+      .mockResolvedValueOnce({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], operatingPoints: [], sweeps: [], analyses: [], diagnostics: [], notEvaluated: [] })
       .mockResolvedValue({
         revision: 'rev-2', status: 'complete', experiments: [{ id: 'exp-1', name: 'Transient', type: 'transient' }],
-        signals: [{ id: 'trace-1', name: 'OUT', unit: 'V', netId: 'net-1', samples: [{ x: 0, y: 0 }, { x: 1, y: 5 }] }], diagnostics: [],
+        signals: [{ id: 'trace-1', name: 'OUT', unit: 'V', netId: 'net-1', samples: [{ x: 0, y: 0 }, { x: 1, y: 5 }] }],
+        operatingPoints: [], sweeps: [], analyses: [], diagnostics: [], notEvaluated: [],
       })
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
@@ -422,6 +433,99 @@ describe('workbench', () => {
     expect(await screen.findByText('Net net-1 · V')).toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'OUT waveform' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Zoom in OUT' })).toBeEnabled()
+  })
+
+  it('shows supplier stock and price for a component that carries an LCSC part number', async () => {
+    api.getPreview.mockResolvedValue({ kind: 'schematic', revision: 'rev-1', circuitJson: [
+      { type: 'source_component', source_component_id: 'sc-r1', name: 'R1', ftype: 'simple_resistor', supplier_part_numbers: { jlcpcb: ['C25804'] } },
+    ] })
+    api.getComponentSourcing.mockResolvedValue({
+      configured: true, provider: 'jlcsearch',
+      part: { lcscPartNumber: 'C25804', manufacturerPartNumber: '0603WAF1002', package: '0603', stockQuantity: 912345, unitPriceUsd: 0.002, isBasicPart: true },
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Components 1/ }))
+
+    await waitFor(() => expect(api.getComponentSourcing).toHaveBeenCalledWith('C25804'))
+    const inspector = screen.getByRole('complementary', { name: 'Component inspector' })
+    expect(within(inspector).getByText('0603WAF1002')).toBeInTheDocument()
+    expect(within(inspector).getByText('912,345')).toBeInTheDocument()
+    expect(within(inspector).getByText('$0.002')).toBeInTheDocument()
+    expect(within(inspector).getByText('Basic part')).toBeInTheDocument()
+  })
+
+  it('estimates component cost for a board quantity in the manufacturing dialog', async () => {
+    api.getBomCost.mockResolvedValue({
+      configured: true, provider: 'jlcsearch', revision: 'rev-1', boards: 1,
+      lines: [{ name: 'R1, R2', quantity: 2, lcscPartNumber: 'C25804', unitPriceUsd: 0.002, extendedPriceUsd: 0.004, stockQuantity: 912345, isBasicPart: true }],
+      unpriced: [{ name: 'J1', reason: 'Circuit JSON records no LCSC part number for this component.' }],
+      componentCostUsd: 0.004,
+      limitations: ['Component cost only. Board fabrication, assembly, tooling, shipping, and taxes are not included.'],
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Rule checks · Manufacturing/ }))
+
+    expect(await screen.findByText('$0.004 for 1 board · 1 priced line')).toBeInTheDocument()
+    expect(screen.getByText('R1, R2 ×2')).toBeInTheDocument()
+    expect(screen.getByText('Circuit JSON records no LCSC part number for this component.')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Board quantity'), { target: { value: '25' } })
+    await waitFor(() => expect(api.getBomCost).toHaveBeenCalledWith('led-1', 25))
+  })
+
+  it('shows the DC operating point, sweeps, and power from the build', async () => {
+    api.getSimulation.mockResolvedValue({
+      revision: 'rev-1', status: 'complete',
+      experiments: [{ id: 'exp-1', name: 'Operating point', type: 'spice_dc_operating_point' }, { id: 'exp-2', name: 'AC', type: 'spice_ac_analysis' }],
+      signals: [],
+      operatingPoints: [
+        { id: 'opv1', name: 'VOUT', unit: 'V', value: 3.3, netId: 'net-1' },
+        { id: 'opc1', name: 'Supply', unit: 'A', value: 0.25 },
+      ],
+      sweeps: [{
+        id: 'ac1', name: 'VOUT', kind: 'ac', unit: 'V', xLabel: 'Frequency (Hz)', netId: 'net-1',
+        samples: [{ x: 100, y: 1 }, { x: 1000, y: 0.5 }],
+        magnitudeDb: [{ x: 100, y: 0 }, { x: 1000, y: -6.021 }],
+        phaseDeg: [{ x: 100, y: 0 }, { x: 1000, y: -90 }],
+      }],
+      analyses: [{ type: 'spice_ac_analysis', experiments: 1, resultCount: 1 }],
+      diagnostics: [],
+      notEvaluated: [{ analysis: 'Monte Carlo tolerance analysis', reason: 'tscircuit emits no Monte Carlo elements in Circuit JSON. Component tolerance spread is not evaluated.' }],
+    })
+    api.getPower.mockResolvedValue({
+      revision: 'rev-1', status: 'partial',
+      assumptions: ['IPC-2221 current capacity at a 10 degree Celsius temperature rise.'],
+      traceCapacity: [{ pcbTraceId: 'pt-1', widthMm: 0.15, layers: ['top'], maxCurrentA: 0.64 }],
+      narrowestTrace: { pcbTraceId: 'pt-1', widthMm: 0.15, layers: ['top'], maxCurrentA: 0.64 },
+      nodeVoltages: [{ name: 'VOUT', voltageV: 3.3, netId: 'net-1' }],
+      branchCurrents: [{ name: 'Supply', currentA: 0.25, componentName: 'V1' }],
+      componentPower: [{ sourceComponentId: 'sc-r2', name: 'R2', ftype: 'simple_resistor', dissipationW: 0.0495, method: 'I2R' }],
+      supplyLoads: [{ sourceComponentId: 'sc-v1', name: 'V1', currentA: 0.25, voltageV: 5, powerW: 1.25 }],
+      traceLoads: [{ pcbTraceId: 'pt-1', netId: 'net-1', netName: 'VCC', currentA: 0.8, maxCurrentA: 0.64, utilization: 1.25, status: 'over-capacity' }],
+      totalSupplyCurrentA: 0.25,
+      totalDissipationW: 0.0495,
+      notEvaluated: [{ quantity: 'Regulator loading', reason: 'Requires a regulator model and its declared limits, neither of which is present in Circuit JSON.' }],
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Simulation' }))
+
+    const operatingPoint = await screen.findByRole('region', { name: 'DC operating point' })
+    expect(within(operatingPoint).getByText('3.3 V · net net-1')).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Power analysis' })).getByText('0.25 A')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'VOUT AC sweep' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'VOUT magnitude waveform' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'VOUT phase waveform' })).toBeInTheDocument()
+    expect(screen.getByText('0.0495 W · I²R')).toBeInTheDocument()
+    expect(screen.getByText(/0.8 A of 0.64 A \(125%\)/)).toBeInTheDocument()
+    expect(screen.getByText(/over capacity/)).toBeInTheDocument()
+    expect(screen.getByText('Monte Carlo tolerance analysis')).toBeInTheDocument()
+    expect(screen.getByText('Regulator loading')).toBeInTheDocument()
   })
 
   it('shows tscircuit build diagnostics when a simulation rebuild fails', async () => {
@@ -470,11 +574,47 @@ describe('workbench', () => {
     expect(await screen.findByRole('dialog', { name: 'Project source history' })).toBeInTheDocument()
     expect(await screen.findByText('old source')).toBeInTheDocument()
     expect(screen.getByText('new source')).toBeInTheDocument()
-    fireEvent.click(screen.getByText('rev-2').closest('button')!)
+    expect(screen.getByText(/kept in this project’s Git repository/)).toBeInTheDocument()
+    expect(screen.getByText(/No retained build summary for revision rev-2/)).toBeInTheDocument()
+    fireEvent.click(screen.getByText('fedcba09').closest('button')!)
     fireEvent.click(screen.getByRole('button', { name: 'Restore selected revision' }))
 
     await waitFor(() => expect(api.restoreProjectRevision).toHaveBeenCalledWith('led-1', 'rev-2', 'rev-1'))
     expect(await screen.findByLabelText('TSX source editor')).toHaveValue('export default () => <board />')
+  })
+
+  it('shows what changed in the design between two builds', async () => {
+    api.compareProjectRevisions.mockResolvedValue({
+      from: 'rev-2', to: 'rev-1',
+      files: [],
+      design: {
+        available: true,
+        board: [{ property: 'widthMm', before: 26, after: 30 }],
+        components: {
+          added: [{ name: 'C1', value: '100nF', pinCount: 2 }],
+          removed: [{ name: 'R3', pinCount: 2 }],
+          changed: [{ name: 'R1', changes: [{ property: 'value', before: '10kΩ', after: '22kΩ' }] }],
+        },
+        nets: { added: [], removed: [], changed: [{ name: 'SENSE', changes: [{ property: 'routing', before: 'unrouted', after: 'routed' }] }] },
+        counts: [{ metric: 'pcbTraces', before: 0, after: 3 }],
+        simulation: [{ property: 'operatingPoints', before: 0, after: 2 }],
+        limitations: ['Rendered schematic, PCB, and 3D images are not compared; this is a structural comparison of Circuit JSON.'],
+      },
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'History' }))
+
+    const design = await screen.findByRole('region', { name: 'Design changes' })
+    expect(within(design).getByText('26 → 30')).toBeInTheDocument()
+    expect(within(design).getByText('Added: C1 (100nF)')).toBeInTheDocument()
+    expect(within(design).getByText('Removed: R3')).toBeInTheDocument()
+    expect(within(design).getByText('value: 10kΩ → 22kΩ')).toBeInTheDocument()
+    expect(within(design).getByText('routing: unrouted → routed')).toBeInTheDocument()
+    expect(within(design).getByText('0 → 3')).toBeInTheDocument()
+    expect(within(design).getByText('0 → 2')).toBeInTheDocument()
+    expect(within(design).getByText(/Rendered schematic, PCB, and 3D images are not compared/)).toBeInTheDocument()
   })
 
   it('shows selected-profile preflight checks before manufacturing export', async () => {

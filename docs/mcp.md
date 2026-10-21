@@ -33,6 +33,8 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `remove_component` | Remove a component and every trace that references it. |
 | `set_component_properties` | Set, replace, or remove properties on a named component. |
 | `connect_components` | Add a trace between two tscircuit selectors. |
+| `list_project_revisions` | List the project's revision history with Git commit, timestamp, changed files, and whether a snapshot and build summary are retained. |
+| `compare_project_revisions` | Compare two revisions: changed source files with before/after content, plus the design comparison of what each build produced. |
 | `build_project` | Run the CLI build and return its result or diagnostics. |
 | `get_diagnostics` | Read diagnostics from the latest build. |
 | `get_preview` | Read the last successful Circuit JSON for `schematic`, `pcb`, or `3d`. |
@@ -48,11 +50,15 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `get_project_requirements` | Read a project's revisioned `requirements.json` document, when configured. |
 | `validate_project_requirements` | Compare supported board requirements with the latest successful build and report unsupported checks as not evaluated. |
 | `run_simulation` | Build the current source and return transient SPICE results emitted by tscircuit, when configured. |
-| `get_simulation_results` | Read waveform data and probe/net information from the latest successful build. |
+| `get_simulation_results` | Read transient waveforms, DC operating-point values, DC/AC sweeps, and probe/net information from the latest successful build. |
+| `list_simulation_signals` | List the emitted waveforms, operating-point values, and sweeps without sample data, with the analysis modes that produced no results. |
+| `get_waveform` | Read the samples of one waveform or sweep by signal ID or probe name. AC sweeps include magnitude in dB and phase in degrees. |
 | `run_erc` | Run the supported netlist, pin specification, and source checks, and report which electrical checks are not evaluated. |
 | `run_drc` | Run the supported placement and routing checks, and report which board checks are not evaluated. |
 | `check_routing` | Report routing findings, including unrouted and discontinuous connections. |
 | `analyze_power` | Report IPC-2221 current capacity per routed trace, and the power quantities that are not evaluated. |
+| `get_component_sourcing` | Read manufacturer part number, package, description, stock, unit price, and basic/preferred flags for an LCSC part number from the configured supplier index. |
+| `estimate_manufacturing_cost` | Price the build's components for a board quantity, listing every part that could not be priced. Component cost only. |
 | `check_manufacturability` | Run the same current-revision completeness checks used by the manufacturing download route. |
 | `get_manufacturing_package` | Return a `GET` path and `application/zip` content type for the preflight-gated manufacturing download route, optionally selecting a fabricator profile. |
 
@@ -92,8 +98,14 @@ Circuit inspection reads the most recent successful build. These tools expose th
 
 Simulation uses the existing tscircuit build integration. Add supported analog
 simulation elements and probes to the source; `run_simulation` rebuilds the
-project and reports any transient results present in Circuit JSON. The
-workbench does not implement a separate solver or expose every analysis type.
+project and reports the results present in Circuit JSON: transient waveforms,
+DC operating-point node voltages and branch currents, DC sweeps, and AC sweeps.
+AC sweeps are reported as magnitude, magnitude in dB, and phase in degrees,
+calculated from the complex samples tscircuit emits. Every simulation response
+carries a `notEvaluated` list naming the analysis modes that produced no
+results in that build, plus the modes the workbench cannot report at all:
+temperature sweeps, Monte Carlo tolerance analysis, and digital or mixed-signal
+simulation. The workbench does not implement a separate solver.
 
 `check_manufacturability` reports whether the latest build passes the current
 board, reference, footprint, revision, supported tscircuit design, and selected
@@ -107,6 +119,43 @@ generation. Pass `profile=jlcpcb-2layer-1oz` to apply the JLCPCB two-layer
 profile, or omit it to use board defaults. The ZIP contains Gerber/drill files,
 BOM, and pick-and-place data. These checks do not replace complete vendor rules
 or manufacturing review.
+
+## Component sourcing
+
+Supplier lookups are **off until a provider is configured**, so the workbench
+makes no outbound supplier requests by default and stays usable offline. Set
+`COMPONENT_SOURCING_URL` to a JLCPCB/LCSC part index that exposes the tscircuit
+JLCSearch `/api/search` shape — the public mirror is
+`https://jlcsearch.tscircuit.com`, or run your own — and optionally
+`COMPONENT_SOURCING_TIMEOUT_MS`.
+
+`get_component_sourcing` takes an LCSC part number such as `C2040` and returns
+the supplier's manufacturer part number, package, description, stock, unit
+price, and basic/preferred flags. Results are cached in memory for ten minutes.
+`estimate_manufacturing_cost` prices the components in the latest successful
+build for a board quantity, using the LCSC part numbers Circuit JSON already
+records in `supplier_part_numbers`. Identical parts are grouped and multiplied
+by the board count.
+
+The estimate is **component cost only**: board fabrication, assembly, tooling,
+shipping, and taxes are excluded, unit price is the supplier's listed price
+rather than a quote, and no attrition or spares are added. Parts without an
+LCSC part number, without a listed price, or that the supplier index does not
+return are listed in `unpriced` with the reason instead of being priced as
+zero. A supplier outage leaves the affected parts unpriced rather than failing
+the whole estimate.
+
+Keyword and parameter search is not implemented. The upstream index's search
+endpoint ignores keyword and value filters, so lookups are by LCSC part number
+only. Substitution recommendations are likewise not implemented: shared
+footprints do not make parts interchangeable, and no substitution data is
+available here.
+
+When a provider is configured, manufacturing preflight gains a
+`component-availability` check comparing supplier stock with the quantity the
+design needs. Without a provider the check reports `not-evaluated` rather than
+passing. The same data is available over REST at `GET /api/components/:part`
+and `GET /api/projects/:id/bom-cost?boards=N`.
 
 ## Rule checks and power
 
@@ -129,11 +178,22 @@ narrowest one, together with the assumptions used.
 geometric limit for an isolated trace; it does not account for adjacent copper,
 planes, vias, or ambient temperature.
 
-Total current demand, regulator loading, component dissipation, resistor
-power-rating headroom, and thermal rise are reported as not evaluated. They need
-operating-point values that Circuit JSON does not carry, and they are not
-estimated. Configure a tscircuit analog simulation to obtain voltages and
-currents.
+When the build contains a DC operating point, `analyze_power` also reports what
+that operating point makes calculable: node voltages, branch currents, supply
+current and power per supply component, component dissipation (I²R from a branch
+current through a declared resistance, or V²/R from a voltage measured across
+one), and each measured current against the IPC-2221 capacity of the copper
+carrying its net, flagged `over-capacity` when it exceeds it. Values come from
+the simulator; nothing is estimated, and a quantity is omitted when the data it
+needs is absent.
+
+Regulator loading, resistor power-rating headroom, and thermal rise stay not
+evaluated: Circuit JSON carries no regulator model, no component power ratings,
+and the workbench performs no thermal analysis. Without an emitted operating
+point, total current demand, component dissipation, and trace loading are also
+reported as not evaluated rather than estimated. The same analysis is available
+over REST at `GET /api/projects/:id/power`, which accepts the same
+`temperatureRiseC` and `copperOunces` query parameters.
 
 Projects can define engineering constraints in `requirements.json`. The
 requirements MCP tools expose the document and compare board dimensions and

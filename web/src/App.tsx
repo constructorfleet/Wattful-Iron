@@ -12,8 +12,11 @@ import {
   exportProjectArchive,
   getManufacturingArchive,
   getManufacturingPreflight,
+  getBomCost,
+  getComponentSourcing,
   getManufacturingProfiles,
   getNets,
+  getPower,
   getPreview,
   getProject,
   getProjectFile,
@@ -34,16 +37,21 @@ import {
   type BuildStatus,
   type ManufacturingCheck,
   type ManufacturingPreflight,
+  type BomCost,
+  type ComponentSourcing,
   type ManufacturingProfile,
   type NetTraceIndex,
+  type PowerAnalysis,
   type PreviewKind,
   type Project,
   type ProjectTemplate,
   type ProjectEvent,
   type TracedNet,
   type ProjectRevision,
+  type DesignDiff,
   type RevisionComparison,
   type Simulation,
+  type SimulationSweep,
 } from './api'
 
 const views: Array<{ kind: PreviewKind | 'simulation'; label: string; tab: 'schematic' | 'pcb' | 'cad' | 'simulation' }> = [
@@ -111,6 +119,7 @@ export default function App() {
   const [selectedComponentId, setSelectedComponentId] = useState('')
   const [simulation, setSimulation] = useState<Simulation | null>(null)
   const [netIndex, setNetIndex] = useState<NetTraceIndex | null>(null)
+  const [power, setPower] = useState<PowerAnalysis | null>(null)
   const [netInspectorOpen, setNetInspectorOpen] = useState(false)
   const [selectedNetId, setSelectedNetId] = useState('')
   const [build, setBuild] = useState<BuildStatus>(initialBuild)
@@ -119,6 +128,7 @@ export default function App() {
   const [historyDialogOpen, setHistoryDialogOpen] = useState(false)
   const [referencePdfOpen, setReferencePdfOpen] = useState(false)
   const [historyRevisions, setHistoryRevisions] = useState<ProjectRevision[]>([])
+  const [historyGitBacked, setHistoryGitBacked] = useState(false)
   const [historyFrom, setHistoryFrom] = useState('')
   const [historyTo, setHistoryTo] = useState('')
   const [revisionToRestore, setRevisionToRestore] = useState('')
@@ -142,6 +152,9 @@ export default function App() {
   const [manufacturingProfiles, setManufacturingProfiles] = useState<ManufacturingProfile[]>([])
   const [manufacturingPreflight, setManufacturingPreflight] = useState<ManufacturingPreflight | null>(null)
   const [manufacturingDialogOpen, setManufacturingDialogOpen] = useState(false)
+  const [bomCost, setBomCost] = useState<BomCost | null>(null)
+  const [boardQuantity, setBoardQuantity] = useState(1)
+  const [componentSourcing, setComponentSourcing] = useState<ComponentSourcing | null>(null)
   const [loadingManufacturing, setLoadingManufacturing] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sourceRef = useRef(source)
@@ -152,6 +165,7 @@ export default function App() {
   const tracedNets = netIndex?.nets ?? []
   const selectedNet = tracedNets.find(({ id }) => id === selectedNetId) ?? tracedNets[0]
   const selectedComponent = inspectedComponents.find(({ id }) => id === selectedComponentId) ?? inspectedComponents[0]
+  const selectedComponentLcscPart = lcscPartNumberOf(selectedComponent?.properties)
 
   useEffect(() => { sourceRef.current = source }, [source])
   useEffect(() => { revisionRef.current = revision }, [revision])
@@ -164,6 +178,8 @@ export default function App() {
       if (sim.revision === result.revision) setSimulation(sim)
       const nets = await getNets(id)
       if (nets.revision === result.revision) setNetIndex(nets)
+      const powerAnalysis = await getPower(id)
+      if (powerAnalysis.revision === result.revision) setPower(powerAnalysis)
     } catch {
       if (kind === view) setPreview(null)
     }
@@ -175,6 +191,7 @@ export default function App() {
     setPreview(null)
     setSimulation(null)
     setNetIndex(null)
+    setPower(null)
     setSelectedNetId('')
     setBuild(initialBuild)
     try {
@@ -337,6 +354,23 @@ export default function App() {
   }, [project?.id, manufacturingProfile, build.status, build.revision])
 
   useEffect(() => {
+    if (!project || !manufacturingDialogOpen) { setBomCost(null); return }
+    let active = true
+    getBomCost(project.id, boardQuantity).then((cost) => { if (active) setBomCost(cost) }).catch(() => { if (active) setBomCost(null) })
+    return () => { active = false }
+  }, [project?.id, manufacturingDialogOpen, boardQuantity, build.revision])
+
+  useEffect(() => {
+    const lcsc = selectedComponentLcscPart
+    if (!componentInspectorOpen || !lcsc) { setComponentSourcing(null); return }
+    let active = true
+    getComponentSourcing(lcsc).then((result) => { if (active) setComponentSourcing(result) }).catch((cause: unknown) => {
+      if (active) setComponentSourcing({ configured: true, error: cause instanceof Error ? cause.message : 'Supplier lookup failed' })
+    })
+    return () => { active = false }
+  }, [componentInspectorOpen, selectedComponentLcscPart])
+
+  useEffect(() => {
     if (!project) return
     return subscribeToProject(project.id, (event: ProjectEvent) => {
       if (event.type === 'build.status') {
@@ -380,9 +414,10 @@ export default function App() {
     if (!project || dirty || !revision) return
     let active = true
     setHistoryLoading(true)
-    getProjectHistory(project.id).then(({ revisions: items }) => {
+    getProjectHistory(project.id).then(({ revisions: items, gitBacked }) => {
       if (!active) return
       setHistoryRevisions(items)
+      setHistoryGitBacked(gitBacked)
       setHistoryFrom(items[1]?.revision ?? items[0]?.revision ?? '')
       setHistoryTo(items[0]?.revision ?? '')
       setRevisionToRestore(items[0]?.revision ?? '')
@@ -694,7 +729,7 @@ export default function App() {
               {renderPreviewCard('3d')}
             </div> : <>
             {build.status === 'failed' && view !== 'simulation' && <div className="build-errors" role="alert"><div className="error-title"><span>!</span> Build failed</div>{build.diagnostics?.length ? build.diagnostics.map((diagnostic, index) => { const path = diagnostic.path || diagnostic.file; return <div className="diagnostic" key={`${path}-${diagnostic.line}-${index}`}><strong>{path}{diagnostic.line ? `:${diagnostic.line}` : ''}</strong><span>{diagnostic.message}</span></div> }) : <p>Check the source and build output for details.</p>}</div>}
-            {view === 'simulation' ? <SimulationPanel simulation={simulation} build={build} canRun={Boolean(project)} onRun={() => { setSimulation(null); void runBuild() }} /> : preview && (view === 'schematic' || hasPcbPreview) ? view === 'pcb' ? <Suspense fallback={<div className="preview-loading">Loading PCB preview…</div>}><PcbPreview circuitJson={preview as PcbCircuitJson} selectedSourceComponentId={selectedComponentId} onViewSchematicComponent={(event) => { setSelectedComponentId(event.source_component_id); setComponentInspectorOpen(true); setView('schematic') }} /></Suspense> : <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview className="circuit-preview" key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={view === '3d' ? 'cad' : view} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : preview ? <div className="preview-placeholder">
+            {view === 'simulation' ? <SimulationPanel simulation={simulation} power={power} build={build} canRun={Boolean(project)} onRun={() => { setSimulation(null); void runBuild() }} /> : preview && (view === 'schematic' || hasPcbPreview) ? view === 'pcb' ? <Suspense fallback={<div className="preview-loading">Loading PCB preview…</div>}><PcbPreview circuitJson={preview as PcbCircuitJson} selectedSourceComponentId={selectedComponentId} onViewSchematicComponent={(event) => { setSelectedComponentId(event.source_component_id); setComponentInspectorOpen(true); setView('schematic') }} /></Suspense> : <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview className="circuit-preview" key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={view === '3d' ? 'cad' : view} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : preview ? <div className="preview-placeholder">
               <div className="placeholder-board"><span className="board-edge edge-a" /><span className="board-edge edge-b" /><span className="board-chip chip-a" /><span className="board-chip chip-b" /><span className="board-pad pad-a" /><span className="board-pad pad-b" /><span className="board-route route-a" /><span className="board-route route-b" /></div>
               <h2>{view === 'pcb' ? 'No PCB layout in this project' : 'No PCB data for 3D preview'}</h2>
               <p>This schematic has no PCB placements. Generate a draft layout, then review footprints, component models, pin mappings, and routing before fabrication.</p>
@@ -714,6 +749,18 @@ export default function App() {
                 <div className="inspector-section"><h3>Properties</h3>{selectedComponent.properties.length ? <dl>{selectedComponent.properties.map(([key, value]) => <Fragment key={key}><dt>{key}</dt><dd>{formatInspectorValue(value)}</dd></Fragment>)}</dl> : <p>No additional source properties.</p>}</div>
                 <div className="inspector-section"><h3>PCB placement</h3>{selectedComponent.placement ? <dl>{(['center', 'rotation', 'layer', 'width', 'height'] as const).filter((key) => selectedComponent.placement?.[key] !== undefined).map((key) => <Fragment key={key}><dt>{key}</dt><dd>{formatInspectorValue(selectedComponent.placement?.[key])}</dd></Fragment>)}</dl> : <p>No PCB placement in this build.</p>}</div>
                 <div className="inspector-section"><h3>Pins and nets</h3>{selectedComponent.pins.length ? selectedComponent.pins.map((pin) => <div className="inspector-pin" key={pin.id || pin.name}><strong>{pin.name}</strong><code>{pin.id || 'No source port ID'}</code><span>{pin.connections.length ? pin.connections.join(', ') : 'No source trace connection found'}</span>{pin.id && tracedNets.some((net) => net.pins.some((item) => item.sourcePortId === pin.id)) && <button type="button" className="quiet-button pin-trace-button" onClick={() => traceNetForPort(pin.id)}>Trace net</button>}</div>) : <p>No source ports were found for this component.</p>}</div>
+                <div className="inspector-section"><h3>Supplier</h3>{!selectedComponentLcscPart ? <p>Circuit JSON records no LCSC part number for this component.</p>
+                  : !componentSourcing ? <p>Looking up {selectedComponentLcscPart}…</p>
+                    : componentSourcing.configured === false ? <p>No component sourcing provider is configured, so stock and price were not looked up.</p>
+                      : componentSourcing.error ? <p>{componentSourcing.error}</p>
+                        : componentSourcing.part ? <dl>
+                          <dt>LCSC</dt><dd>{componentSourcing.part.lcscPartNumber}</dd>
+                          {componentSourcing.part.manufacturerPartNumber && <><dt>MPN</dt><dd>{componentSourcing.part.manufacturerPartNumber}</dd></>}
+                          {componentSourcing.part.package && <><dt>Package</dt><dd>{componentSourcing.part.package}</dd></>}
+                          {componentSourcing.part.stockQuantity !== undefined && <><dt>Stock</dt><dd>{componentSourcing.part.stockQuantity.toLocaleString()}</dd></>}
+                          {componentSourcing.part.unitPriceUsd !== undefined && <><dt>Unit price</dt><dd>${componentSourcing.part.unitPriceUsd}</dd></>}
+                          {componentSourcing.part.isBasicPart !== undefined && <><dt>Assembly</dt><dd>{componentSourcing.part.isBasicPart ? 'Basic part' : 'Extended part'}</dd></>}
+                        </dl> : <p>The supplier index returned no part for {selectedComponentLcscPart}.</p>}</div>
                 <p className="inspector-note">Details reflect the latest successful build. Selecting a component focuses its PCB footprint; use that footprint’s context menu to open it here from the PCB. <strong>Trace net</strong> opens the net inspector for that pin. Schematic and 3D canvas highlighting are not available yet.</p>
               </>}
             </aside>}
@@ -728,13 +775,14 @@ export default function App() {
       </section></div>}
       {historyDialogOpen && <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryDialogOpen(false) }}>
         <section className="history-dialog" role="dialog" aria-modal="true" aria-labelledby="history-title">
-          <header><div><h2 id="history-title">Project source history</h2><p>{historyRevisions.length} of 50 retained revisions · snapshots include project source files</p></div><button type="button" aria-label="Close project history" onClick={() => setHistoryDialogOpen(false)}>×</button></header>
+          <header><div><h2 id="history-title">Project source history</h2><p>{historyRevisions.length} revision{historyRevisions.length === 1 ? '' : 's'} · {historyGitBacked ? 'kept in this project\u2019s Git repository' : 'local snapshots only, newest 50 retained'}</p></div><button type="button" aria-label="Close project history" onClick={() => setHistoryDialogOpen(false)}>×</button></header>
           {historyLoading ? <p className="history-empty">Loading revisions…</p> : historyRevisions.length === 0 ? <p className="history-empty">No saved revisions yet.</p> : <div className="history-layout">
             <ul className="history-revision-list" aria-label="Saved revisions">{historyRevisions.map((item) => <li key={item.revision}><button type="button" className={`history-revision ${revisionToRestore === item.revision ? 'selected' : ''}`} onClick={() => setRevisionToRestore(item.revision)}>
-              <strong>{new Date(item.createdAt).toLocaleString()}</strong><small>{item.changedFiles.join(', ') || 'No changed files'} · {formatBytes(item.sizeBytes)}</small><code>{item.revision.slice(0, 8)}</code>
+              <strong>{new Date(item.createdAt).toLocaleString()}</strong><small>{item.changedFiles.join(', ') || 'No changed files'}{item.sizeBytes === undefined ? '' : ` · ${formatBytes(item.sizeBytes)}`}</small><code>{item.commit ? item.commit.slice(0, 8) : item.revision.slice(0, 8)}</code>
             </button></li>)}</ul>
             <div className="history-compare">
               <div className="history-selects"><label>Compare from<select aria-label="Compare from" value={historyFrom} onChange={(event) => setHistoryFrom(event.target.value)}>{historyRevisions.map((item) => <option key={item.revision} value={item.revision}>{new Date(item.createdAt).toLocaleString()}</option>)}</select></label><label>Compare with<select aria-label="Compare with" value={historyTo} onChange={(event) => setHistoryTo(event.target.value)}>{historyRevisions.map((item) => <option key={item.revision} value={item.revision}>{new Date(item.createdAt).toLocaleString()}</option>)}</select></label></div>
+              {revisionComparison ? <DesignDiffSummary design={revisionComparison.design} /> : null}
               {revisionComparison?.files.length ? revisionComparison.files.map((file) => <section className="history-file-diff" key={file.path}><h3>{file.path}</h3><div><section aria-label={`${file.path} before`}><pre>{file.before ?? '— file did not exist —'}</pre></section><section aria-label={`${file.path} after`}><pre>{file.after ?? '— file did not exist —'}</pre></section></div></section>) : <p className="history-empty">{historyFrom === historyTo ? 'Choose two different revisions to compare.' : 'These revisions contain no source changes.'}</p>}
             </div>
           </div>}
@@ -753,6 +801,17 @@ export default function App() {
           <label className="profile-select">Fabricator rule profile<select aria-label="Fabricator rule profile" value={manufacturingProfile} onChange={(event) => setManufacturingProfile(event.target.value)}>{manufacturingProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}</select></label>
           {manufacturingProfiles.find(({ id }) => id === manufacturingProfile)?.description && <p className="profile-description">{manufacturingProfiles.find(({ id }) => id === manufacturingProfile)?.description}</p>}
           <div className="manufacturing-checks" aria-live="polite">{loadingManufacturing ? <p className="checks-empty">Checking current build…</p> : manufacturingPreflight ? manufacturingPreflight.checks.map((check) => <ManufacturingCheckRow key={check.id} check={check} />) : <p className="checks-empty">Build the project to load manufacturing checks.</p>}</div>
+          <section className="bom-cost" aria-label="Component cost estimate">
+            <div className="bom-cost-heading"><h3>Component cost</h3><label>Boards<input type="number" min="1" max="10000" aria-label="Board quantity" value={boardQuantity} onChange={(event) => setBoardQuantity(Math.max(1, Math.min(10000, Math.round(Number(event.target.value) || 1))))} /></label></div>
+            {!bomCost ? <p className="checks-empty">Loading component prices…</p>
+              : bomCost.configured === false ? <p className="checks-empty">{bomCost.message}</p>
+                : <>
+                  <p className="bom-total">{bomCost.componentCostUsd === undefined ? 'No part could be priced.' : `$${bomCost.componentCostUsd} for ${bomCost.boards} board${bomCost.boards === 1 ? '' : 's'} · ${bomCost.lines?.length ?? 0} priced line${bomCost.lines?.length === 1 ? '' : 's'}`}</p>
+                  {bomCost.lines?.length ? <dl className="bom-lines">{bomCost.lines.map((line) => <Fragment key={line.name}><dt>{line.name} ×{line.quantity}</dt><dd>{line.extendedPriceUsd === undefined ? 'no price' : `$${line.extendedPriceUsd}`}{line.stockQuantity !== undefined ? ` · ${line.stockQuantity.toLocaleString()} in stock` : ''}</dd></Fragment>)}</dl> : null}
+                  {bomCost.unpriced?.length ? <div className="bom-unpriced"><h4>Unpriced</h4><dl>{bomCost.unpriced.map((item) => <Fragment key={item.name}><dt>{item.name}</dt><dd>{item.reason}</dd></Fragment>)}</dl></div> : null}
+                  {bomCost.limitations?.length ? <p className="inspector-note">{bomCost.limitations.join(' ')}</p> : null}
+                </>}
+          </section>
           <footer><span>{manufacturingPreflight?.ready ? 'Preflight ready' : manufacturingPreflight ? 'Resolve blocking checks before export' : 'Preflight unavailable'}</span><button type="button" className="build-button" disabled={!project || dirty || build.status !== 'ready' || build.revision !== revision || exportingManufacturing || loadingManufacturing || !manufacturingPreflight?.ready} onClick={downloadManufacturing}>{exportingManufacturing ? 'Exporting…' : 'Download Manufacturing ZIP'}</button></footer>
         </section>
       </div>}
@@ -814,6 +873,28 @@ function BoardOutlineDialog({ points, error, onChange, onImport, onError, onAppl
       <footer><span>{points.length} points · millimeters</span><div><button type="button" className="quiet-button" onClick={onClose}>Cancel</button><button type="button" className="build-button" onClick={onApply}>Apply outline</button></div></footer>
     </section>
   </div>
+}
+
+function DesignDiffSummary({ design }: { design: DesignDiff }) {
+  if (!design.available) return <section className="design-diff" aria-label="Design changes"><h3>Design changes</h3><p>{design.reason}</p></section>
+  const unchanged = design.board.length === 0 && design.counts.length === 0 && design.simulation.length === 0
+    && design.components.added.length === 0 && design.components.removed.length === 0 && design.components.changed.length === 0
+    && design.nets.added.length === 0 && design.nets.removed.length === 0 && design.nets.changed.length === 0
+  return <section className="design-diff" aria-label="Design changes">
+    <h3>Design changes</h3>
+    {unchanged ? <p>Both builds produced the same board, components, nets, and routing counts.</p> : <>
+      {design.board.length > 0 && <dl>{design.board.map((item) => <Fragment key={item.property}><dt>{item.property}</dt><dd>{item.before ?? '—'} → {item.after ?? '—'}</dd></Fragment>)}</dl>}
+      {design.components.added.length > 0 && <p className="design-added">Added: {design.components.added.map(({ name, value }) => value ? `${name} (${value})` : name).join(', ')}</p>}
+      {design.components.removed.length > 0 && <p className="design-removed">Removed: {design.components.removed.map(({ name }) => name).join(', ')}</p>}
+      {design.components.changed.length > 0 && <dl>{design.components.changed.map((item) => <Fragment key={item.name}><dt>{item.name}</dt><dd>{item.changes.map((change) => `${change.property}: ${change.before ?? '—'} → ${change.after ?? '—'}`).join(', ')}</dd></Fragment>)}</dl>}
+      {design.nets.added.length > 0 && <p className="design-added">Nets added: {design.nets.added.map(({ name }) => name).join(', ')}</p>}
+      {design.nets.removed.length > 0 && <p className="design-removed">Nets removed: {design.nets.removed.map(({ name }) => name).join(', ')}</p>}
+      {design.nets.changed.length > 0 && <dl>{design.nets.changed.map((item) => <Fragment key={item.name}><dt>Net {item.name}</dt><dd>{item.changes.map((change) => `${change.property}: ${change.before} → ${change.after}`).join(', ')}</dd></Fragment>)}</dl>}
+      {design.counts.length > 0 && <dl>{design.counts.map((item) => <Fragment key={item.metric}><dt>{item.metric}</dt><dd>{item.before} → {item.after}</dd></Fragment>)}</dl>}
+      {design.simulation.length > 0 && <dl>{design.simulation.map((item) => <Fragment key={item.property}><dt>simulation {item.property}</dt><dd>{item.before} → {item.after}</dd></Fragment>)}</dl>}
+    </>}
+    <p className="inspector-note">{design.limitations.join(' ')}</p>
+  </section>
 }
 
 function ManufacturingCheckRow({ check }: { check: ManufacturingCheck }) {
@@ -878,13 +959,65 @@ function NetInspector({ nets, index, selected, onSelect, onFocusPin, onViewSigna
   </aside>
 }
 
-function SimulationPanel({ simulation, build, canRun, onRun }: { simulation: Simulation | null; build: BuildStatus; canRun: boolean; onRun: () => void }) {
+/** Read the first LCSC part number from a component's Circuit JSON supplier part numbers. */
+function lcscPartNumberOf(properties?: Array<[string, unknown]>) {
+  const suppliers = properties?.find(([key]) => key === 'supplier_part_numbers')?.[1]
+  const values = suppliers && typeof suppliers === 'object' ? (suppliers as Record<string, unknown>) : {}
+  const candidates = [values.jlcpcb, values.lcsc].flatMap((value) => Array.isArray(value) ? value : [])
+  const match = candidates.find((value) => typeof value === 'string' && /^C?\d{2,12}$/i.test(value.trim()))
+  return typeof match === 'string' ? match.trim() : undefined
+}
+
+/** Present a DC or AC sweep as waveform-viewer signals; AC sweeps split into magnitude and phase. */
+function sweepSignals(sweep: SimulationSweep) {
+  const xUnit = sweep.kind === 'ac' ? 'Hz' : sweep.xLabel.replace(/^.*\(|\)$/g, '')
+  if (sweep.kind !== 'ac') return [{ id: sweep.id, name: sweep.name, unit: sweep.unit, netId: sweep.netId, samples: sweep.samples, xUnit }]
+  return [
+    { id: `${sweep.id}-magnitude`, name: `${sweep.name} magnitude`, unit: 'dB', netId: sweep.netId, samples: sweep.magnitudeDb ?? sweep.samples, xUnit },
+    { id: `${sweep.id}-phase`, name: `${sweep.name} phase`, unit: '°', netId: sweep.netId, samples: sweep.phaseDeg ?? [], xUnit },
+  ]
+}
+
+function PowerSummary({ power }: { power: PowerAnalysis }) {
+  const measured = power.nodeVoltages.length > 0 || power.branchCurrents.length > 0
+  return <section className="power-summary" aria-label="Power analysis">
+    <div className="simulation-heading"><h2>Power</h2><span>{measured ? 'From the DC operating point in this build' : 'Board geometry only'}</span></div>
+    {power.totalSupplyCurrentA !== undefined || power.totalDissipationW !== undefined ? <dl className="power-totals">
+      {power.totalSupplyCurrentA !== undefined && <><dt>Supply current</dt><dd>{power.totalSupplyCurrentA} A</dd></>}
+      {power.totalDissipationW !== undefined && <><dt>Dissipation</dt><dd>{power.totalDissipationW} W</dd></>}
+    </dl> : null}
+    {power.nodeVoltages.length > 0 && <div className="power-section"><h3>Node voltages</h3><dl>{power.nodeVoltages.map((node) => <Fragment key={node.name}><dt>{node.name}</dt><dd>{node.voltageV} V{node.netId ? ` · net ${node.netId}` : ''}</dd></Fragment>)}</dl></div>}
+    {power.branchCurrents.length > 0 && <div className="power-section"><h3>Branch currents</h3><dl>{power.branchCurrents.map((branch) => <Fragment key={branch.name}><dt>{branch.name}</dt><dd>{branch.currentA} A{branch.componentName ? ` · ${branch.componentName}` : ''}</dd></Fragment>)}</dl></div>}
+    {power.componentPower.length > 0 && <div className="power-section"><h3>Component dissipation</h3><dl>{power.componentPower.map((component) => <Fragment key={component.sourceComponentId}><dt>{component.name}</dt><dd>{component.dissipationW} W · {component.method === 'I2R' ? 'I²R' : 'V²/R'}</dd></Fragment>)}</dl></div>}
+    {power.traceLoads.length > 0 && <div className="power-section"><h3>Trace loading</h3>{power.traceLoads.map((load) => <p className={`trace-load ${load.status}`} key={`${load.pcbTraceId}-${load.netId}`}>
+      <strong>{load.netName ?? load.netId}</strong> {load.currentA} A of {load.maxCurrentA} A ({Math.round(load.utilization * 100)}%){load.status === 'over-capacity' ? ' · over capacity' : ''}
+    </p>)}</div>}
+    {power.narrowestTrace && <div className="power-section"><h3>Narrowest routed trace</h3><p>{power.narrowestTrace.widthMm} mm on {power.narrowestTrace.layers.join(', ') || 'unknown layer'} carries up to {power.narrowestTrace.maxCurrentA} A.</p></div>}
+    <div className="power-section"><h3>Not evaluated</h3><dl>{power.notEvaluated.map((item) => <Fragment key={item.quantity}><dt>{item.quantity}</dt><dd>{item.reason}</dd></Fragment>)}</dl></div>
+    <p className="inspector-note">{power.assumptions.join(' ')}</p>
+  </section>
+}
+
+function SimulationPanel({ simulation, power, build, canRun, onRun }: { simulation: Simulation | null; power: PowerAnalysis | null; build: BuildStatus; canRun: boolean; onRun: () => void }) {
   const building = ['running', 'compiling', 'validating', 'routing', 'rendering'].includes(build.status)
   return <div className="simulation-results">
     <div className="simulation-heading"><div><h2>Simulation</h2><span>Runs tscircuit's configured analog simulation</span></div><button type="button" className="build-button" disabled={!canRun || building} onClick={onRun}>{building ? 'Running simulation…' : 'Run simulation'}</button></div>
     {building ? <p className="simulation-message" aria-live="polite">Building with tscircuit…</p> : build.status === 'failed' ? <div className="simulation-message" role="alert"><strong>Build failed</strong>{build.diagnostics?.length ? build.diagnostics.map((item, index) => <p key={`${item.path ?? item.file}-${item.line}-${index}`}>{item.path || item.file}{item.line ? `:${item.line}` : ''}{item.path || item.file ? ': ' : ''}{item.message}</p>) : <p>Check the project source and build output for details.</p>}</div> : simulation?.status === 'failed' ? <div className="simulation-message" role="alert"><strong>Simulation failed</strong>{simulation.diagnostics.map((item) => <p key={item.message}>{item.message}</p>)}</div> : !simulation ? <p className="simulation-message">Run the current source to inspect its simulation results.</p> : simulation.status === 'not_configured' ? <div className="simulation-message"><strong>No simulation configured</strong><p>Add tscircuit <code>&lt;analogsimulation /&gt;</code> and voltage/current probes to the circuit source.</p></div> : <>
-      <div className="simulation-heading"><h2>{simulation.experiments.map((item) => item.name).join(', ') || 'Simulation results'}</h2><span>{simulation.signals.length} signals · build {simulation.revision.slice(0, 8)}</span></div>
-      <WaveformViewer key={simulation.revision} signals={simulation.signals} />
+      <div className="simulation-heading"><h2>{simulation.experiments.map((item) => item.name).join(', ') || 'Simulation results'}</h2><span>{simulation.signals.length} waveforms · {simulation.operatingPoints.length} operating-point values · {simulation.sweeps.length} sweeps · build {simulation.revision.slice(0, 8)}</span></div>
+      {simulation.operatingPoints.length > 0 && <section className="operating-point" aria-label="DC operating point">
+        <h3>DC operating point</h3>
+        <dl>{simulation.operatingPoints.map((point) => <Fragment key={point.id}><dt>{point.name}</dt><dd>{point.value} {point.unit}{point.netId ? ` · net ${point.netId}` : ''}</dd></Fragment>)}</dl>
+      </section>}
+      {simulation.signals.length > 0 && <WaveformViewer key={`${simulation.revision}-transient`} signals={simulation.signals} />}
+      {simulation.sweeps.map((sweep) => <section className="sweep" aria-label={`${sweep.name} ${sweep.kind === 'ac' ? 'AC' : 'DC'} sweep`} key={sweep.id}>
+        <h3>{sweep.name} · {sweep.kind === 'ac' ? 'AC sweep' : 'DC sweep'} · {sweep.xLabel}</h3>
+        <WaveformViewer signals={sweepSignals(sweep)} />
+      </section>)}
+      {power && <PowerSummary power={power} />}
+      {simulation.notEvaluated.length > 0 && <section className="simulation-not-evaluated" aria-label="Analyses not evaluated">
+        <h3>Not evaluated</h3>
+        <dl>{simulation.notEvaluated.map((item) => <Fragment key={item.analysis}><dt>{item.analysis}</dt><dd>{item.reason}</dd></Fragment>)}</dl>
+      </section>}
     </>}
   </div>
 }

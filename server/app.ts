@@ -13,6 +13,10 @@ import { mountMcp } from "./mcp.js"
 import { createGerberArchive, mountManufacturingRoutes } from "./manufacturing.js"
 import { getSimulationResults } from "./simulation.js"
 import { buildNetTraceIndex } from "./net-trace.js"
+import { analyzePower } from "./power-analysis.js"
+import { createSourcingClient, estimateBomCost, listDesignParts, normalizeLcscPartNumber, type SourcingClient } from "./component-sourcing.js"
+import { createProjectGit, type ProjectGit } from "./project-git.js"
+import { designDiffUnavailable, diffDesignSummaries, summarizeDesign, type DesignSummary } from "./design-summary.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
 import { runCommand } from "./build-process.js"
 import { executeRemoteBuild, type IsolatedBuildResult } from "./build-client.js"
@@ -28,7 +32,7 @@ type ProjectState = { project: ProjectData; preview?: unknown }
 type ProjectSnapshot = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes: number; files: Record<string, string> }
 type ServerEvent = "project" | "file" | "build.status" | "build.ready" | "build.failed"
 type BuildFn = (projectDir: string, entrypoint: string) => Promise<unknown>
-type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; buildExecutionMode?: "isolated" | "trusted-local"; buildRunner?: { url: string; token: string }; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string; workbenchAuthToken?: string; kicadCliPath?: string }
+type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; buildExecutionMode?: "isolated" | "trusted-local"; buildRunner?: { url: string; token: string }; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string; workbenchAuthToken?: string; kicadCliPath?: string; componentSourcing?: SourcingClient | { baseUrl: string; provider?: string }; gitHistory?: boolean; gitPath?: string }
 
 const execFile = promisify(execFileCallback)
 
@@ -41,7 +45,16 @@ const templates = [
   { id: "voltage-divider", name: "Filtered voltage divider", description: "A connected divider with a low-pass capacitor." },
 ] as const
 
+/**
+ * tscircuit version pinned into every new project. Keep it in step with the
+ * dependency in the repository's package.json; the workbench has no dependency
+ * management surface yet, so projects are created with this single pin.
+ */
+const PROJECT_TSCIRCUIT_VERSION = "0.0.2930"
+
 const HISTORY_RETENTION = 50
+/** Build summaries retained per project for revision comparison. */
+const DESIGN_SUMMARY_RETENTION = 200
 
 class ProjectService {
   readonly root: string
@@ -59,6 +72,7 @@ class ProjectService {
   readonly queuedBuilds = new Map<string, { buildId: string; revision: string }>()
   readonly deletingProjects = new Set<string>()
   readonly writeQueues = new Map<string, Promise<void>>()
+  readonly git: ProjectGit
   readonly ownFileHashes = new Map<string, string>()
   readonly ownFileDeletes = new Set<string>()
   readonly closeHandlers: Array<() => Promise<void>> = []
@@ -78,6 +92,10 @@ class ProjectService {
     this.watchFiles = options.watchFiles ?? true
     this.kicadCliPath = options.kicadCliPath ?? process.env.KICAD_CLI_PATH ?? "kicad-cli"
     this.appNodeModules = path.resolve(process.cwd(), "node_modules")
+    this.git = createProjectGit({
+      ...(options.gitPath ?? process.env.GIT_PATH ? { gitPath: options.gitPath ?? process.env.GIT_PATH } : {}),
+      enabled: options.gitHistory ?? process.env.GIT_HISTORY !== "false",
+    })
     this.ready = this.initialize()
   }
 
@@ -107,7 +125,7 @@ class ProjectService {
     await mkdir(path.join(dir, ".workbench"), { recursive: true })
     const project: ProjectData = { id, name: name.trim(), entrypoint: "index.circuit.tsx", revision: newRevision() }
     await writeFile(path.join(dir, project.entrypoint), source)
-    const projectPackage = JSON.stringify({ name: safePackageName(name), private: true, dependencies: { tscircuit: "0.0.2930" } }, null, 2) + "\n"
+    const projectPackage = JSON.stringify({ name: safePackageName(name), private: true, dependencies: { tscircuit: PROJECT_TSCIRCUIT_VERSION } }, null, 2) + "\n"
     await writeFile(path.join(dir, "package.json"), projectPackage)
     this.ownFileHashes.set(path.join(dir, project.entrypoint), digest(source))
     this.ownFileHashes.set(path.join(dir, "package.json"), digest(projectPackage))
@@ -296,7 +314,7 @@ class ProjectService {
     const project: ProjectData = { id, name: name.trim(), entrypoint, revision: newRevision() }
     await writeFile(path.join(dir, entrypoint), source)
     await writeFile(path.join(dir, ".workbench", "imported-circuit.json"), JSON.stringify(circuitJson))
-    const projectPackage = JSON.stringify({ name: safePackageName(name), private: true, dependencies: { tscircuit: "0.0.2930" } }, null, 2) + "\n"
+    const projectPackage = JSON.stringify({ name: safePackageName(name), private: true, dependencies: { tscircuit: PROJECT_TSCIRCUIT_VERSION } }, null, 2) + "\n"
     await writeFile(path.join(dir, "package.json"), projectPackage)
     for (const file of files) await writeFile(path.join(dir, "imports", path.basename(file.name)), file.content)
     this.ownFileHashes.set(path.join(dir, entrypoint), digest(source))
@@ -473,17 +491,57 @@ class ProjectService {
   }
 
   async listHistory(id: string) {
-    return (await this.readSnapshots(id)).map(({ revision, createdAt, changedFiles, sizeBytes }) => ({ revision, createdAt, changedFiles, sizeBytes }))
+    const snapshots = await this.readSnapshots(id)
+    const commits = await this.git.listRevisions(this.projectDir(id)).catch(() => [])
+    type HistoryEntry = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes?: number; commit?: string; retainedSnapshot: boolean }
+    const entries = new Map<string, HistoryEntry>()
+    // Git log is newest first, and commit timestamps only have second resolution, so the
+    // log position breaks ties that the timestamps alone cannot.
+    const gitOrder = new Map<string, number>()
+    for (const [index, commit] of commits.entries()) {
+      if (!commit.revision) continue
+      gitOrder.set(commit.revision, index)
+      entries.set(commit.revision, { revision: commit.revision, createdAt: commit.createdAt, changedFiles: commit.changedFiles, commit: commit.commit, retainedSnapshot: false })
+    }
+    for (const snapshot of snapshots) {
+      const existing = entries.get(snapshot.revision)
+      entries.set(snapshot.revision, {
+        revision: snapshot.revision,
+        createdAt: snapshot.createdAt,
+        changedFiles: snapshot.changedFiles,
+        sizeBytes: snapshot.sizeBytes,
+        ...(existing?.commit ? { commit: existing.commit } : {}),
+        retainedSnapshot: true,
+      })
+    }
+    // Compare instants rather than strings: snapshots record milliseconds and UTC `Z`,
+    // while Git records whole seconds and a numeric offset.
+    const instant = (entry: HistoryEntry) => Date.parse(entry.createdAt) || 0
+    const position = (entry: HistoryEntry) => gitOrder.get(entry.revision) ?? Number.MAX_SAFE_INTEGER
+    const revisions = [...entries.values()].sort((left, right) =>
+      instant(right) - instant(left) || position(left) - position(right) || left.revision.localeCompare(right.revision))
+    const designs = new Set((await readdir(path.join(this.projectDir(id), ".workbench", "designs")).catch(() => []))
+      .filter((name) => name.endsWith(".json")).map((name) => name.replace(/\.json$/, "")))
+    return {
+      gitBacked: await this.git.isAvailable(),
+      snapshotRetention: HISTORY_RETENTION,
+      revisions: revisions.map((entry) => ({ ...entry, hasDesignSummary: designs.has(entry.revision) })),
+    }
   }
 
   async compareHistory(id: string, from: string, to: string) {
-    const snapshots = await this.readSnapshots(id)
-    const before = snapshots.find((snapshot) => snapshot.revision === from)
-    const after = snapshots.find((snapshot) => snapshot.revision === to)
-    if (!before || !after) throw Object.assign(new Error("Project revision not found in retained history"), { status: 404 })
+    const [before, after] = await Promise.all([this.readRevisionFiles(id, from), this.readRevisionFiles(id, to)])
+    if (!before || !after) throw Object.assign(new Error("Project revision not found in project history"), { status: 404 })
     const changedPaths = [...new Set([...Object.keys(before.files), ...Object.keys(after.files)])]
       .filter((file) => before.files[file] !== after.files[file]).sort()
-    return { from: before.revision, to: after.revision, files: changedPaths.map((file) => ({ path: file, before: before.files[file] ?? null, after: after.files[file] ?? null })) }
+    const [beforeDesign, afterDesign] = await Promise.all([this.readDesignSummary(id, before.revision), this.readDesignSummary(id, after.revision)])
+    const missing = [...(beforeDesign ? [] : [before.revision]), ...(afterDesign ? [] : [after.revision])]
+    return {
+      from: before.revision,
+      to: after.revision,
+      files: changedPaths.map((file) => ({ path: file, before: before.files[file] ?? null, after: after.files[file] ?? null })),
+      design: beforeDesign && afterDesign ? diffDesignSummaries(beforeDesign, afterDesign) : designDiffUnavailable(missing),
+    }
   }
 
   async restoreHistory(id: string, revision: string, expectedRevision: string) {
@@ -491,8 +549,8 @@ class ProjectService {
       const state = this.state(id)
       this.assertRevision(state.project, expectedRevision)
       await rm(path.join(this.projectDir(id), ".workbench", "imported-circuit.json"), { force: true })
-      const snapshot = (await this.readSnapshots(id)).find((item) => item.revision === revision)
-      if (!snapshot) throw Object.assign(new Error("Project revision not found in retained history"), { status: 404 })
+      const snapshot = await this.readRevisionFiles(id, revision)
+      if (!snapshot) throw Object.assign(new Error("Project revision not found in project history"), { status: 404 })
       const currentFiles = await this.getFileList(id)
       const currentContent = new Map<string, string>()
       for (const relative of currentFiles) currentContent.set(relative, await readFile(await this.safeFile(id, relative, false), "utf8"))
@@ -680,6 +738,49 @@ class ProjectService {
     await rename(temporary, path.join(historyDir, revision + ".json"))
     const retained = await this.readSnapshots(id)
     for (const old of retained.slice(HISTORY_RETENTION)) await rm(path.join(historyDir, old.revision + ".json"), { force: true })
+    try {
+      await this.git.commitRevision(this.projectDir(id), revision, snapshot.changedFiles)
+    } catch (error) {
+      // History stays readable from snapshots when Git is unavailable or fails.
+      console.error(`Git history commit failed for project ${id}`, error)
+    }
+  }
+
+  /** Retain what a successful build produced, so two revisions can be compared later. */
+  private async storeDesignSummary(id: string, revision: string, circuitJson: unknown) {
+    try {
+      const dir = path.join(this.projectDir(id), ".workbench", "designs")
+      await mkdir(dir, { recursive: true })
+      const summary = summarizeDesign(circuitJson, revision)
+      const temporary = path.join(dir, revision + ".json." + randomUUID() + ".tmp")
+      await writeFile(temporary, JSON.stringify(summary))
+      await rename(temporary, path.join(dir, revision + ".json"))
+      const names = (await readdir(dir)).filter((name) => name.endsWith(".json")).sort()
+      if (names.length > DESIGN_SUMMARY_RETENTION) {
+        const summaries = await Promise.all(names.map(async (name) => ({ name, summary: await this.readDesignSummary(id, name.replace(/\.json$/, "")) })))
+        const ordered = summaries.filter((item) => item.summary).sort((left, right) => (right.summary!.createdAt).localeCompare(left.summary!.createdAt))
+        for (const old of ordered.slice(DESIGN_SUMMARY_RETENTION)) await rm(path.join(dir, old.name), { force: true })
+      }
+    } catch (error) {
+      console.error(`Design summary could not be retained for project ${id}`, error)
+    }
+  }
+
+  private async readDesignSummary(id: string, revision: string): Promise<DesignSummary | undefined> {
+    try {
+      const file = path.join(this.projectDir(id), ".workbench", "designs", revision + ".json")
+      const summary = JSON.parse(await readFile(file, "utf8")) as DesignSummary
+      return summary && Array.isArray(summary.components) ? summary : undefined
+    } catch { return undefined }
+  }
+
+  /** Read a revision's files from its retained snapshot, or from Git when the snapshot has aged out. */
+  private async readRevisionFiles(id: string, revision: string): Promise<{ revision: string; files: Record<string, string> } | undefined> {
+    const snapshot = (await this.readSnapshots(id)).find((item) => item.revision === revision)
+    if (snapshot) return { revision: snapshot.revision, files: snapshot.files }
+    const commit = await this.git.resolveRevision(this.projectDir(id), revision)
+    if (!commit) return undefined
+    return { revision, files: await this.git.filesAt(this.projectDir(id), commit) }
   }
 
   private async readSnapshots(id: string): Promise<ProjectSnapshot[]> {
@@ -787,6 +888,7 @@ class ProjectService {
       await rename(temporary, previewFile)
       const record: BuildRecord = { buildId, revision, status: "ready", diagnostics: buildDiagnostics, updatedAt: new Date().toISOString() }
       state.project.lastBuild = record
+      await this.storeDesignSummary(id, revision, circuitJson)
       await this.persist(state)
       this.emit(id, "build.ready", { buildId, revision, artifacts: { circuitJsonUrl: `/api/projects/${id}/preview?kind=pcb` } })
     } catch (error) {
@@ -861,8 +963,33 @@ export function createApp(options: AppOptions = {}): Express {
 
   app.get("/healthz", (_request, response) => response.json({ status: "ok" }))
   const token = options.mcpAuthToken ?? process.env.MCP_AUTH_TOKEN
-  mountMcp(app, service, token)
-  mountManufacturingRoutes(app, service)
+  const sourcing = createConfiguredSourcing(options.componentSourcing)
+  mountMcp(app, service, token, sourcing)
+  mountManufacturingRoutes(app, service, sourcing)
+  app.get("/api/components/:part", async (request, response, next) => {
+    try {
+      if (!sourcing) return response.status(503).json({ configured: false, error: "No component sourcing provider is configured. Set COMPONENT_SOURCING_URL to enable supplier lookups." })
+      const part = normalizeLcscPartNumber(request.params.part)
+      if (!part) throw badRequest("Component lookups take an LCSC part number such as C2040")
+      const sourced = await sourcing.lookup(part)
+      if (!sourced) return response.status(404).json({ configured: true, error: `The supplier index returned no part for ${part}` })
+      response.json({ configured: true, provider: sourcing.provider, part: sourced })
+    } catch (error) { next(error) }
+  })
+  app.get("/api/projects/:id/bom-cost", async (request, response, next) => {
+    try {
+      const preview = await service.preview(request.params.id!)
+      if (!sourcing) return response.status(200).json({
+        configured: false,
+        revision: preview.revision,
+        parts: listDesignParts(preview.circuitJson),
+        message: "No component sourcing provider is configured, so no prices or stock were looked up. Set COMPONENT_SOURCING_URL to enable it.",
+      })
+      const boards = request.query.boards === undefined ? 1 : Number(request.query.boards)
+      if (!Number.isInteger(boards)) throw badRequest("boards must be a whole number")
+      response.json({ configured: true, provider: sourcing.provider, revision: preview.revision, ...await estimateBomCost(preview.circuitJson, sourcing, boards) })
+    } catch (error) { next(error) }
+  })
   app.get("/api/projects", async (_request, response, next) => {
     try { response.json(await service.list()) } catch (error) { next(error) }
   })
@@ -993,7 +1120,7 @@ export function createApp(options: AppOptions = {}): Express {
     try { response.json(await service.getFileList(request.params.id!)) } catch (error) { next(error) }
   })
   app.get("/api/projects/:id/history", async (request, response, next) => {
-    try { response.json({ revisions: await service.listHistory(request.params.id!) }) } catch (error) { next(error) }
+    try { response.json(await service.listHistory(request.params.id!)) } catch (error) { next(error) }
   })
   app.get("/api/projects/:id/history/compare", async (request, response, next) => {
     try {
@@ -1030,6 +1157,22 @@ export function createApp(options: AppOptions = {}): Express {
     try {
       const preview = await service.preview(request.params.id!)
       response.json({ revision: preview.revision, ...getSimulationResults(preview.circuitJson) })
+    } catch (error) { next(error) }
+  })
+  app.get("/api/projects/:id/power", async (request, response, next) => {
+    try {
+      const numeric = (value: unknown, label: string) => {
+        if (value === undefined) return undefined
+        const parsed = Number(value)
+        if (!Number.isFinite(parsed)) throw badRequest(`${label} must be a number`)
+        return parsed
+      }
+      const preview = await service.preview(request.params.id!)
+      const analysis = analyzePower(preview.circuitJson, {
+        temperatureRiseC: numeric(request.query.temperatureRiseC, "temperatureRiseC"),
+        copperOunces: numeric(request.query.copperOunces, "copperOunces"),
+      })
+      response.json({ revision: preview.revision, ...analysis })
     } catch (error) { next(error) }
   })
   app.get("/api/projects/:id/nets", async (request, response, next) => {
@@ -1166,6 +1309,28 @@ function cleanRelative(input: string) {
 }
 function isId(id: string) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) }
 function newRevision() { return randomUUID() }
+/**
+ * Build the supplier lookup client from an injected client, explicit options, or
+ * COMPONENT_SOURCING_URL. Sourcing stays off unless one of those is present, so the
+ * workbench makes no outbound supplier requests by default.
+ */
+function createConfiguredSourcing(option: AppOptions["componentSourcing"]): SourcingClient | undefined {
+  if (option && "lookup" in option) return option
+  const baseUrl = option?.baseUrl ?? process.env.COMPONENT_SOURCING_URL
+  if (!baseUrl) return undefined
+  const timeoutMs = Number(process.env.COMPONENT_SOURCING_TIMEOUT_MS)
+  try {
+    return createSourcingClient({
+      baseUrl,
+      provider: option?.provider ?? process.env.COMPONENT_SOURCING_PROVIDER ?? "jlcsearch",
+      ...(Number.isFinite(timeoutMs) && timeoutMs > 0 ? { timeoutMs } : {}),
+    })
+  } catch (error) {
+    console.error("Component sourcing is disabled because its configuration is invalid", error)
+    return undefined
+  }
+}
+
 function badRequest(message: string) { return Object.assign(new Error(message), { status: 400 }) }
 function digest(value: string | Buffer) { return createHash("sha256").update(value).digest("hex") }
 function safePackageName(name: string) { return name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "circuit-project" }

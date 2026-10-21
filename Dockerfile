@@ -40,6 +40,12 @@ ENV NODE_ENV=production \
     BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 WORKDIR /app
 
+# Git backs project revision history. Without it the workbench falls back to
+# bounded local snapshots and reports history as not Git-backed.
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes git \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/package.json ./package.json

@@ -47,18 +47,20 @@ assert_circuit_previews() {
       const records = result.circuitJson;
       if (result.kind !== process.argv[2] || result.revision !== process.argv[3] || !Array.isArray(records)) process.exit(1);
       const types = (type) => records.filter((item) => item.type === type);
-      for (const name of ["R1", "R2"]) {
+      for (const name of ["J1", "C1", "R1", "D1", "R2"]) {
         if (!types("source_component").some((item) => item.name === name)) throw new Error(`${process.argv[2]} missing component ${name}`);
       }
       if (types("source_component").find((item) => item.name === "R1")?.resistance !== 2000) {
         throw new Error(`${process.argv[2]} did not update R1 to 2kΩ`);
       }
-      if (!types("source_trace").some((item) => item.name === "SIGNAL")) throw new Error(`${process.argv[2]} missing the SIGNAL net`);
-      if (!types("pcb_board").length || types("pcb_component").length < 2) throw new Error(`${process.argv[2]} missing board/component layout data`);
-      if (types("schematic_component").length < 2 || !types("schematic_trace").length) {
+      for (const net of ["VIN", "SIGNAL", "GND"]) {
+        if (!types("source_trace").some((item) => item.name === net)) throw new Error(`${process.argv[2]} missing the ${net} net`);
+      }
+      if (!types("pcb_board").length || types("pcb_component").length < 5) throw new Error(`${process.argv[2]} missing board/component layout data`);
+      if (types("schematic_component").length < 5 || !types("schematic_trace").length) {
         throw new Error(`${process.argv[2]} missing schematic rendering data`);
       }
-      if (types("cad_component").length < 2) throw new Error(`${process.argv[2]} missing 3D component data`);
+      if (types("cad_component").length < 5) throw new Error(`${process.argv[2]} missing 3D component data`);
       if (!types("pcb_trace").length) throw new Error(`${process.argv[2]} missing routed PCB trace data`);
     ' "$preview" "$kind" "$revision"
   done
@@ -85,14 +87,27 @@ file_json=$(curl --fail --silent --show-error \
   "$base_url/api/projects/$project_id/files?path=$entrypoint")
 source=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).content)' "$file_json")
 revision=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).revision)' "$file_json")
+# The representative acceptance circuit: power input header, decoupling,
+# current-limited LED, a divider leg, and three named nets across the board.
+# Every part names a built-in footprint, because build containers have no
+# network and cannot fetch supplier footprints.
 edited_source=$(node -e '
   const source = `export default () => (
-  <board name="Container acceptance circuit" width="20mm" height="12mm">
-    <resistor name="R1" resistance="2k" footprint="0603" pcbX={-3} pcbY={0} schX={-2} schY={0} />
-    <resistor name="R2" resistance="10k" footprint="0603" pcbX={3} pcbY={0} schX={2} schY={0} />
-    <trace from=".R1 > .pin2" to=".R2 > .pin1" name="SIGNAL" />
+  <board name="Container acceptance circuit" width="30mm" height="16mm">
+    <pinheader name="J1" pinCount={2} footprint="pinrow2" pinLabels={["VIN", "GND"]} pcbX={-11.5} pcbY={0} schX={-8} schY={0} />
+    <capacitor name="C1" capacitance="10uF" footprint="0805" pcbX={-6} pcbY={0} schX={-5} schY={0} />
+    <resistor name="R1" resistance="2k" footprint="0603" pcbX={0} pcbY={0} schX={-2} schY={0} />
+    <led name="D1" footprint="0603" pcbX={6} pcbY={0} schX={2} schY={0} />
+    <resistor name="R2" resistance="10k" footprint="0603" pcbX={11} pcbY={0} schX={5} schY={0} />
+    <trace from=".J1 > .VIN" to=".C1 > .pin1" name="VIN" />
+    <trace from=".C1 > .pin1" to=".R1 > .pin1" name="VIN" />
+    <trace from=".R1 > .pin2" to=".D1 > .anode" name="SIGNAL" />
+    <trace from=".D1 > .anode" to=".R2 > .pin1" name="SIGNAL" />
+    <trace from=".J1 > .GND" to=".C1 > .pin2" name="GND" />
+    <trace from=".C1 > .pin2" to=".D1 > .cathode" name="GND" />
+    <trace from=".D1 > .cathode" to=".R2 > .pin2" name="GND" />
     <schematicsheet name="Main" displayName="Main" sheetIndex={0}>
-      <schematictext text="Container acceptance" schX={0} schY={5} />
+      <schematictext text="Container acceptance" schX={0} schY={6} />
     </schematicsheet>
   </board>
 )`;
@@ -231,8 +246,90 @@ assert_manufacturing_package() {
   printf 'Manufacturing preflight reported %s and the export agreed.\n' "$ready"
 }
 
+assert_net_tracing() {
+  nets=$(curl --fail --silent --show-error "$base_url/api/projects/$project_id/nets")
+  node -e '
+    const result = JSON.parse(process.argv[1]);
+    if (result.revision !== process.argv[2]) throw new Error(`Net index is at ${result.revision}, expected ${process.argv[2]}`);
+    for (const name of ["VIN", "SIGNAL", "GND"]) {
+      const net = result.nets.find((item) => item.name === name);
+      if (!net) throw new Error(`Net ${name} is missing from the net index: ${result.nets.map((item) => item.name).join(", ")}`);
+      if (net.pins.length < 2) throw new Error(`Net ${name} reported ${net.pins.length} pins`);
+      if (!net.copperTraces.length) throw new Error(`Net ${name} reported no copper traces`);
+    }
+    const ground = result.nets.find((item) => item.name === "GND");
+    if (!ground.pins.some((pin) => pin.componentName === "J1")) throw new Error("GND does not reach the power connector");
+    if (!Array.isArray(result.limitations) || !result.limitations.length) throw new Error("Net index reported no limitations");
+  ' "$nets" "$1"
+}
+
+assert_power_analysis() {
+  power=$(curl --fail --silent --show-error "$base_url/api/projects/$project_id/power")
+  node -e '
+    const result = JSON.parse(process.argv[1]);
+    if (!["partial", "complete", "not-evaluated"].includes(result.status)) throw new Error(`Unexpected power status: ${result.status}`);
+    if (!result.traceCapacity.length || !result.narrowestTrace) throw new Error("Power analysis reported no routed trace capacity");
+    if (!(result.narrowestTrace.maxCurrentA > 0)) throw new Error("Narrowest trace has no current capacity");
+    // This circuit has no simulation, so operating-point quantities must stay unevaluated.
+    for (const quantity of ["Component power dissipation", "Thermal rise of components and planes"]) {
+      if (!result.notEvaluated.some((item) => item.quantity === quantity)) throw new Error(`Power analysis did not report ${quantity} as not evaluated`);
+    }
+  ' "$power"
+}
+
+assert_component_sourcing_disabled() {
+  cost=$(curl --fail --silent --show-error "$base_url/api/projects/$project_id/bom-cost")
+  node -e '
+    const result = JSON.parse(process.argv[1]);
+    if (result.configured !== false) throw new Error("Component sourcing should be disabled unless COMPONENT_SOURCING_URL is set");
+    if (!Array.isArray(result.parts) || result.parts.length < 4) throw new Error(`Expected the design parts list, received ${JSON.stringify(result).slice(0, 200)}`);
+  ' "$cost"
+  status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$base_url/api/components/C2040")
+  if [ "$status" != 503 ]; then
+    printf 'Component lookup returned %s instead of 503 while sourcing is disabled\n' "$status" >&2
+    return 1
+  fi
+}
+
+assert_history_and_design_diff() {
+  history=$(curl --fail --silent --show-error "$base_url/api/projects/$project_id/history")
+  node -e '
+    const result = JSON.parse(process.argv[1]);
+    if (result.gitBacked !== true) throw new Error("Container history should be Git-backed; git is installed in the runtime image");
+    if (result.revisions.length < 3) throw new Error(`Expected several revisions, received ${result.revisions.length}`);
+    if (!result.revisions.every((item) => typeof item.commit === "string" && item.commit.length >= 7)) {
+      throw new Error("Every revision should carry a Git commit");
+    }
+  ' "$history"
+  from=$(node -e '
+    const revisions = JSON.parse(process.argv[1]).revisions.filter((item) => item.hasDesignSummary);
+    if (revisions.length < 2) throw new Error("Expected build summaries for at least two revisions");
+    process.stdout.write(revisions.at(-1).revision);
+  ' "$history")
+  to=$(node -e '
+    const revisions = JSON.parse(process.argv[1]).revisions.filter((item) => item.hasDesignSummary);
+    process.stdout.write(revisions[0].revision);
+  ' "$history")
+  comparison=$(curl --fail --silent --show-error \
+    "$base_url/api/projects/$project_id/history/compare?from=$from&to=$to")
+  node -e '
+    const result = JSON.parse(process.argv[1]);
+    if (!result.files.length) throw new Error("Revision comparison reported no changed source files");
+    if (result.design.available !== true) throw new Error(`Design comparison unavailable: ${result.design.reason}`);
+    const added = result.design.components.added.map((item) => item.name);
+    for (const name of ["D1", "J1"]) {
+      if (!added.includes(name)) throw new Error(`Design comparison did not report ${name} as added: ${added.join(", ")}`);
+    }
+    if (!result.design.limitations.length) throw new Error("Design comparison reported no limitations");
+  ' "$comparison"
+}
+
 assert_live_updates
 assert_simulation_status
+assert_net_tracing "$corrected_revision"
+assert_power_analysis
+assert_component_sourcing_disabled
+assert_history_and_design_diff
 assert_manufacturing_package
 
-printf 'Container acceptance passed for project %s through edit, live updates, diagnostics, preview retention, recovery, simulation status, manufacturing preflight and export, and all preview endpoints.\n' "$project_id"
+printf 'Container acceptance passed for project %s through edit, live updates, diagnostics, preview retention, recovery, simulation status, net tracing, power analysis, disabled component sourcing, Git-backed history with design comparison, manufacturing preflight and export, and all preview endpoints.\n' "$project_id"

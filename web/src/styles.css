@@ -142,6 +142,35 @@ button { color: inherit; cursor: pointer; }
 .net-routing.partially-routed { color: #e8c37a; }
 .net-routing.unrouted { color: #e58b7b; }
 .net-routing.not-applicable { color: #8c99a1; }
+.operating-point,.sweep,.power-summary,.simulation-not-evaluated { margin-top: 14px; padding-top: 12px; border-top: 1px solid #263036; }
+.operating-point h3,.sweep h3,.power-summary h3,.simulation-not-evaluated h3 { margin: 0 0 8px; color: #cfd9de; font-size: 11px; }
+.operating-point dl,.power-section dl,.simulation-not-evaluated dl { display: grid; margin: 0; gap: 4px 12px; grid-template-columns: minmax(90px, max-content) 1fr; font-size: 10px; }
+.operating-point dt,.power-section dt,.simulation-not-evaluated dt { color: #93a0a8; }
+.operating-point dd,.power-section dd,.simulation-not-evaluated dd { margin: 0; color: #d5dee2; font: 10px var(--mono); }
+.power-section { margin-top: 10px; }
+.power-totals { display: flex; margin: 0 0 6px; gap: 16px; font: 11px var(--mono); }
+.power-totals dt { color: #93a0a8; }
+.power-totals dd { margin: 0 0 0 6px; color: #72d4af; }
+.trace-load { margin: 4px 0; color: #c6d2d8; font: 10px var(--mono); }
+.trace-load.over-capacity { color: #e58b7b; }
+.design-diff { margin: 0 0 14px; padding: 10px 12px; border: 1px solid #2c363c; border-radius: 6px; background: #161d21; }
+.design-diff h3 { margin: 0 0 7px; color: #cfd9de; font-size: 11px; }
+.design-diff p { margin: 4px 0; color: #c6d2d8; font-size: 10px; }
+.design-diff dl { display: grid; margin: 5px 0; gap: 3px 12px; grid-template-columns: minmax(80px, max-content) 1fr; font-size: 10px; }
+.design-diff dt { color: #93a0a8; }
+.design-diff dd { margin: 0; color: #d5dee2; font: 10px var(--mono); }
+.design-added { color: #72d4af; }
+.design-removed { color: #e58b7b; }
+.bom-cost { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid #263036; }
+.bom-cost-heading { display: flex; align-items: center; justify-content: space-between; }
+.bom-cost-heading h3 { margin: 0; color: #cfd9de; font-size: 11px; }
+.bom-cost-heading label { display: flex; align-items: center; gap: 6px; color: #93a0a8; font-size: 10px; }
+.bom-cost-heading input { width: 70px; padding: 3px 5px; color: #d9e2e6; border: 1px solid #39454a; border-radius: 4px; background: #121a1e; font: 10px var(--mono); }
+.bom-total { margin: 8px 0; color: #72d4af; font: 11px var(--mono); }
+.bom-lines,.bom-unpriced dl { display: grid; margin: 0; gap: 3px 12px; grid-template-columns: minmax(90px, max-content) 1fr; font-size: 10px; }
+.bom-lines dt,.bom-unpriced dt { color: #93a0a8; }
+.bom-lines dd,.bom-unpriced dd { margin: 0; color: #d5dee2; font: 10px var(--mono); }
+.bom-unpriced h4 { margin: 10px 0 4px; color: #e8c37a; font-size: 10px; }
 .net-vias { margin: 7px 0 0; color: #a9b8bc; font: 9px var(--mono); overflow-wrap: anywhere; }
 .circuit-preview [role="tablist"] { display: none; }
 .pcb-preview { min-height: 620px; height: 100%; overflow: hidden; }

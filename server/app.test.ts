@@ -10,9 +10,9 @@ import { createApp } from "./app.js"
 
 const circuit = [{ type: "source_component", name: "demo" }]
 
-async function fixture(build: (projectDir: string) => Promise<unknown>) {
+async function fixture(build: (projectDir: string) => Promise<unknown>, options: Partial<Parameters<typeof createApp>[0]> = {}) {
   const root = await mkdtemp(path.join(tmpdir(), "circuits-server-"))
-  const app = createApp({ projectsDir: root, buildCircuit: build, watchFiles: false })
+  const app = createApp({ projectsDir: root, buildCircuit: build, watchFiles: false, ...options })
   return { root, app, cleanup: async () => { await (app.locals.projectService as { close: () => Promise<void> }).close(); await rm(root, { recursive: true, force: true }) } }
 }
 
@@ -335,10 +335,51 @@ test("history restore writes a new current revision and rejects stale restores",
   } finally { await f.cleanup() }
 })
 
-test("history retains the newest 50 snapshots and reports per-revision storage size", async () => {
+test("git history keeps revisions past snapshot retention and still compares them", async () => {
   const f = await fixture(async () => circuit)
   try {
     const { body: project } = await request(f.app).post("/api/projects").send({ name: "Retention" }).expect(201)
+    const originalRevision = project.revision
+    let revision = project.revision
+    const written = [originalRevision]
+    for (let index = 0; index < 50; index++) {
+      const result = await request(f.app).put(`/api/projects/${project.id}/files`).query({ path: project.entrypoint })
+        .set("If-Match", revision).send({ content: `revision ${index}`, revision }).expect(200)
+      revision = result.body.revision
+      written.push(revision)
+    }
+    const history = await request(f.app).get(`/api/projects/${project.id}/history`).expect(200)
+    assert.equal(history.body.gitBacked, true)
+    // Ordering must follow the order the revisions were written, even though Git records
+    // whole seconds while snapshots record milliseconds.
+    assert.deepEqual(history.body.revisions.map((item: { revision: string }) => item.revision), [...written].reverse())
+    assert.equal(history.body.snapshotRetention, 50)
+    // Every revision stays listed even though only the newest 50 keep a snapshot.
+    assert.equal(history.body.revisions.length, 51)
+    assert.equal(history.body.revisions[0].revision, revision)
+    assert.ok(history.body.revisions.every((item: { commit?: string }) => typeof item.commit === "string"))
+    const oldest = history.body.revisions.at(-1)
+    assert.equal(oldest.revision, originalRevision)
+    assert.equal(oldest.retainedSnapshot, false)
+    assert.equal(oldest.sizeBytes, undefined)
+    assert.ok(history.body.revisions.filter((item: { retainedSnapshot: boolean }) => item.retainedSnapshot).every((item: { sizeBytes: number }) => item.sizeBytes > 0))
+
+    // The aged-out revision is still readable from Git, so the comparison works.
+    const compared = await request(f.app).get(`/api/projects/${project.id}/history/compare`).query({ from: originalRevision, to: revision }).expect(200)
+    assert.equal(compared.body.files.length, 1)
+    assert.match(compared.body.files[0].before, /20mm/)
+    assert.equal(compared.body.files[0].after, "revision 49")
+
+    // Restoring a revision whose snapshot aged out works from Git too.
+    const restored = await request(f.app).post(`/api/projects/${project.id}/history/${originalRevision}/restore`).set("If-Match", revision).expect(200)
+    assert.deepEqual(restored.body.changedFiles, [project.entrypoint])
+  } finally { await f.cleanup() }
+})
+
+test("snapshot-only history stays bounded when git is unavailable", async () => {
+  const f = await fixture(async () => circuit, { gitHistory: false })
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "No git" }).expect(201)
     const originalRevision = project.revision
     let revision = project.revision
     for (let index = 0; index < 50; index++) {
@@ -347,8 +388,8 @@ test("history retains the newest 50 snapshots and reports per-revision storage s
       revision = result.body.revision
     }
     const history = await request(f.app).get(`/api/projects/${project.id}/history`).expect(200)
+    assert.equal(history.body.gitBacked, false)
     assert.equal(history.body.revisions.length, 50)
-    assert.equal(history.body.revisions[0].revision, revision)
     assert.equal(history.body.revisions.some((item: { revision: string }) => item.revision === originalRevision), false)
     assert.ok(history.body.revisions.every((item: { sizeBytes: number }) => item.sizeBytes > 0))
     await request(f.app).get(`/api/projects/${project.id}/history/compare`).query({ from: originalRevision, to: revision }).expect(404)
@@ -421,6 +462,104 @@ test("simulation endpoint returns retained tscircuit waveforms with net correlat
     assert.equal(result.body.status, "complete")
     assert.equal(result.body.signals[0].netId, "net1")
     assert.deepEqual(result.body.signals[0].samples, [{ x: 0, y: 0 }, { x: 1, y: 5 }])
+  } finally { await f.cleanup() }
+})
+
+const sourcedCircuit = [
+  { type: "source_component", source_component_id: "sc1", name: "R1", ftype: "simple_resistor", supplier_part_numbers: { jlcpcb: ["C25804"] } },
+  { type: "source_component", source_component_id: "sc2", name: "J1", ftype: "simple_connector" },
+]
+
+/** A sourcing client stub, so the tests never reach a real supplier index. */
+const stubSourcing = (stock = 1000, unitPriceUsd: number | undefined = 0.01) => ({
+  provider: "stub",
+  baseUrl: "https://parts.example",
+  lookup: async (part: string) => part === "C25804"
+    ? { lcscPartNumber: "C25804", manufacturerPartNumber: "0603WAF1002", package: "0603", stockQuantity: stock, unitPriceUsd, isBasicPart: true }
+    : null,
+})
+
+test("component sourcing endpoints stay off until a provider is configured", async () => {
+  const f = await fixture(async () => sourcedCircuit)
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Unsourced" }).expect(201)
+    await waitForBuild(f.app, project.id, "ready")
+    const lookup = await request(f.app).get("/api/components/C25804").expect(503)
+    assert.equal(lookup.body.configured, false)
+    const cost = await request(f.app).get(`/api/projects/${project.id}/bom-cost`).expect(200)
+    assert.equal(cost.body.configured, false)
+    assert.deepEqual(cost.body.parts.map((item: { name: string; quantity: number }) => [item.name, item.quantity]), [["R1", 1], ["J1", 1]])
+    const preflight = await request(f.app).get(`/api/projects/${project.id}/manufacturing`).expect(200)
+    const availability = preflight.body.preflight.checks.find((check: { id: string }) => check.id === "component-availability")
+    assert.equal(availability.status, "not-evaluated")
+    assert.match(availability.message, /COMPONENT_SOURCING_URL/)
+  } finally { await f.cleanup() }
+})
+
+test("configured sourcing prices the BOM and flags short stock in preflight", async () => {
+  const f = await fixture(async () => sourcedCircuit, { componentSourcing: stubSourcing(0) })
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Sourced" }).expect(201)
+    await waitForBuild(f.app, project.id, "ready")
+
+    const lookup = await request(f.app).get("/api/components/c25804").expect(200)
+    assert.equal(lookup.body.part.manufacturerPartNumber, "0603WAF1002")
+    await request(f.app).get("/api/components/RP2040").expect(400)
+    await request(f.app).get("/api/components/C999").expect(404)
+
+    const cost = await request(f.app).get(`/api/projects/${project.id}/bom-cost`).query({ boards: 10 }).expect(200)
+    assert.equal(cost.body.configured, true)
+    assert.equal(cost.body.componentCostUsd, 0.1)
+    assert.deepEqual(cost.body.unpriced, [{ name: "J1", reason: "Circuit JSON records no LCSC part number for this component." }])
+
+    const preflight = await request(f.app).get(`/api/projects/${project.id}/manufacturing`).expect(200)
+    const availability = preflight.body.preflight.checks.find((check: { id: string }) => check.id === "component-availability")
+    assert.equal(availability.status, "warning")
+    assert.match(availability.message, /C25804: 0 in stock, 1 needed/)
+  } finally { await f.cleanup() }
+})
+
+test("power endpoint reports operating-point loads against trace capacity", async () => {
+  const poweredCircuit = [
+    { type: "source_component", source_component_id: "sc-v1", name: "V1", ftype: "simple_voltage_source", voltage: 5 },
+    { type: "source_component", source_component_id: "sc-r1", name: "R1", ftype: "simple_resistor", resistance: 100 },
+    { type: "source_port", source_port_id: "sp1", source_component_id: "sc-r1", name: "pin1", subcircuit_connectivity_map_key: "net1" },
+    { type: "source_port", source_port_id: "sp2", source_component_id: "sc-r1", name: "pin2", subcircuit_connectivity_map_key: "net1" },
+    { type: "source_trace", source_trace_id: "st1", name: "VCC", connected_source_port_ids: ["sp1", "sp2"], connected_source_net_ids: [], subcircuit_connectivity_map_key: "net1" },
+    { type: "pcb_port", pcb_port_id: "pp1", source_port_id: "sp1", layers: ["top"], x: 0, y: 0 },
+    { type: "pcb_port", pcb_port_id: "pp2", source_port_id: "sp2", layers: ["top"], x: 2, y: 0 },
+    { type: "pcb_trace", pcb_trace_id: "pt1", connection_name: "st1", connectsTo: ["pp1", "pp2"], route: [
+      { route_type: "wire", x: 0, y: 0, width: 0.2, layer: "top", start_pcb_port_id: "pp1" },
+      { route_type: "wire", x: 2, y: 0, width: 0.2, layer: "top", end_pcb_port_id: "pp2" },
+    ] },
+    { type: "simulation_experiment", simulation_experiment_id: "e1", name: "Operating point", experiment_type: "spice_dc_operating_point" },
+    { type: "simulation_current_probe", simulation_current_probe_id: "cp1", name: "R1 branch", source_component_id: "sc-r1", positive_source_net_id: "net1" },
+    { type: "simulation_current_probe", simulation_current_probe_id: "cp2", name: "Supply", source_component_id: "sc-v1" },
+    { type: "simulation_voltage_probe", simulation_voltage_probe_id: "vp1", name: "VCC", signal_input_source_net_id: "net1" },
+    { type: "simulation_dc_operating_point_voltage", simulation_dc_operating_point_voltage_id: "opv1", simulation_experiment_id: "e1", simulation_voltage_probe_id: "vp1", voltage: 5 },
+    { type: "simulation_dc_operating_point_current", simulation_dc_operating_point_current_id: "opc1", simulation_experiment_id: "e1", simulation_current_probe_id: "cp1", current: 0.05 },
+    { type: "simulation_dc_operating_point_current", simulation_dc_operating_point_current_id: "opc2", simulation_experiment_id: "e1", simulation_current_probe_id: "cp2", current: 0.05 },
+  ]
+  const f = await fixture(async () => poweredCircuit)
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Power" }).expect(201)
+    await waitForBuild(f.app, project.id, "ready")
+    const result = await request(f.app).get(`/api/projects/${project.id}/power`).expect(200)
+    assert.equal(result.body.revision, project.revision)
+    assert.deepEqual(result.body.nodeVoltages, [{ name: "VCC", voltageV: 5, netId: "net1" }])
+    assert.equal(result.body.totalSupplyCurrentA, 0.05)
+    // R1 carries 50 mA through 100 ohms: I^2R = 0.25 W.
+    assert.equal(result.body.componentPower[0].dissipationW, 0.25)
+    assert.equal(result.body.traceLoads[0].netName, "VCC")
+    assert.equal(result.body.traceLoads[0].status, "ok")
+    assert.ok(result.body.notEvaluated.some((item: { quantity: string }) => item.quantity === "Thermal rise of components and planes"))
+
+    const simulation = await request(f.app).get(`/api/projects/${project.id}/simulation`).expect(200)
+    assert.equal(simulation.body.status, "complete")
+    assert.equal(simulation.body.operatingPoints.length, 3)
+    assert.ok(simulation.body.notEvaluated.some((item: { analysis: string }) => item.analysis === "AC analysis"))
+
+    await request(f.app).get(`/api/projects/${project.id}/power`).query({ temperatureRiseC: "not-a-number" }).expect(400)
   } finally { await f.cleanup() }
 })
 

@@ -88,3 +88,16 @@ The shared access token remains a perimeter gate, not tenant isolation. The
 runner bounds concurrent jobs and validates every source path, but no
 per-user/project authorization or audit history exists. Review the threat
 model before exposing the service to multiple mutually untrusted users.
+
+## Outbound component sourcing requests
+
+Component sourcing is disabled unless `COMPONENT_SOURCING_URL` is set. With no
+value the workbench makes no outbound supplier requests, so an air-gapped
+deployment stays air-gapped. When it is set, the application server queries that
+URL for LCSC part numbers taken from the project's Circuit JSON. That reveals
+which parts a design uses to the configured endpoint, so point it at your own
+instance if that matters. The client requires an `http` or `https` URL, applies
+a request timeout (`COMPONENT_SOURCING_TIMEOUT_MS`, default 8000 ms), rejects
+responses larger than 512 KB, and caches results in memory for ten minutes. A
+supplier outage degrades the affected features to "not evaluated" rather than
+failing a build or a preflight.

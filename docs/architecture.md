@@ -18,7 +18,22 @@ against one project volume.
 
 - Project creation, listing, opening, and file read/write.
 - Browser source editing.
-- Local source history with compare and concurrency-checked restore.
+- Git-backed project history: every revision is committed to a repository kept
+  beside the project, so history, comparison, and restore are not limited by
+  snapshot retention. Local snapshots remain as a fallback, and history reports
+  whether it is Git-backed. Comparing two revisions reports design changes
+  (board, components, nets, routing and simulation counts) from retained build
+  summaries alongside the source-file comparison. Rendered image comparison is
+  not implemented.
+- Project duplication, rename, deletion, and ZIP archive import/export with a
+  versioned manifest and traversal/symlink/size limits.
+- KiCad `.kicad_sch` and EasyEDA Standard schematic import, converted to
+  editable tscircuit source with converter notes; PDF schematics are retained
+  as a visual reference only, with no connectivity reconstructed.
+- A provisional PCB draft generator for imported schematics that have no
+  placements, and a board-outline editor that writes a polygon to the source.
+- Simultaneous resizable schematic, PCB, and 3D panels with keyboard-accessible
+  dividers, alongside the single-view tabs.
 - tscircuit build execution and build diagnostics.
 - Generated Circuit JSON retained for preview.
 - A read-only component inspector that joins source components to PCB placements,
@@ -35,11 +50,25 @@ against one project volume.
 - Live SSE updates.
 - Schematic, PCB, and 3D preview panels.
 - A simulation panel and `/api/projects/:id/simulation` results endpoint that
-  read transient waveform elements emitted by tscircuit builds, with voltage
-  probe to Circuit JSON net correlation. The panel can explicitly rebuild the
-  current source on demand and display the resulting waveforms or diagnostics.
+  read the simulation results emitted by tscircuit builds: transient waveforms,
+  DC operating-point node voltages and branch currents, DC sweeps, and AC
+  sweeps reported as magnitude, magnitude in dB, and phase. Probes are
+  correlated with Circuit JSON nets. Each response names the analysis modes
+  that produced no results. The panel can explicitly rebuild the current source
+  on demand and display the results or diagnostics.
+- Power analysis over REST at `/api/projects/:id/power` and through MCP: node
+  voltages, branch currents, supply current and power, component dissipation
+  from I²R or V²/R, and measured current against IPC-2221 trace capacity per
+  net, alongside the quantities that remain not evaluated.
 - An optional bearer-token protected Streamable HTTP MCP endpoint with project,
   build, preview, diagnostics, and simulation tools.
+- Optional JLCPCB/LCSC component sourcing, off unless
+  `COMPONENT_SOURCING_URL` is set: supplier stock, price, package, and
+  basic/preferred flags per LCSC part number, a component-cost estimate for a
+  board quantity, a `component-availability` preflight check, supplier fields
+  in the component inspector, and the cost panel in the manufacturing dialog.
+  Keyword/parameter search and substitution recommendations are not
+  implemented.
 - A `/api/projects/:id/manufacturing` preflight for current builds, supported
   tscircuit Circuit JSON design checks, emitted validation diagnostics, and a
   limited set of selected fabricator rule checks.
@@ -64,19 +93,22 @@ component model or analysis mode. Preview output is not an electrical or
 manufacturing sign-off.
 
 Electrical and board rule checks run tscircuit's own check suite and report
-findings by category, alongside the trace current capacity that is derivable
-from board geometry. Every report names the checks it does not evaluate. This
-is not KiCad-equivalent ERC/DRC, and operating-point quantities such as
-dissipation and total current demand are not evaluated at all.
+findings by category, alongside trace current capacity derived from board
+geometry. Every report names the checks it does not evaluate. This is not
+KiCad-equivalent ERC/DRC. Operating-point quantities such as component
+dissipation, supply current, and trace loading are reported only when the build
+emits a DC operating point to calculate them from; regulator loading, resistor
+power-rating headroom, and thermal rise are never evaluated.
 
 ## Not implemented
 
 The following capabilities in the project vision are not available in this
 slice: ACP servers, per-user authentication and authorization, full
 KiCad-equivalent ERC/DRC, highlighted net and component geometry inside the
-schematic, PCB, and 3D canvases, component datasheets and supplier/availability/cost enrichment, complete
-fabricator rule coverage, Git-backed revision history, approval states, and
-purchasing or fabrication integrations. Cross-probing moves a selection between the
+schematic, PCB, and 3D canvases, component datasheets, supplier
+keyword/parameter search, substitution recommendations, complete
+fabricator rule coverage, approval states, rendered schematic and PCB image
+diffs, and purchasing or fabrication integrations. Cross-probing moves a selection between the
 component inspector, the net inspector, the focused PCB footprint, and the
 waveform panel, and lists the schematic wires, copper traces, vias, and
 simulation signals on a net; it does not highlight geometry inside the
@@ -90,8 +122,7 @@ evaluates the emitted board dimensions and layer count; other requirement types
 are retained but marked not evaluated.
 Simulation execution uses tscircuit's configured SPICE support during its
 normal build; the workbench does not run a second solver or claim support for
-every component model or analysis mode. Project source history uses local
-bounded snapshots, not Git commits. Do not infer support from the architecture goals in
+every component model or analysis mode. Do not infer support from the architecture goals in
 `PROMPT.md`.
 
 See [security limitations](security.md) before exposing the prototype to a

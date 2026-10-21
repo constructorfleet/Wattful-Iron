@@ -12,6 +12,7 @@ import { parseRequirements, validateRequirements } from "./requirements.js"
 import { addComponent, connectComponents, listSourceComponents, removeComponent, setBoardDimensions, setComponentProperties } from "./circuit-source.js"
 import { checkRouting, runDesignRuleCheck, runElectricalRuleCheck } from "./rule-checks.js"
 import { analyzePower } from "./power-analysis.js"
+import { estimateBomCost, listDesignParts, normalizeLcscPartNumber, type SourcingClient } from "./component-sourcing.js"
 
 type Project = {
   id: string
@@ -30,6 +31,8 @@ type ProjectService = {
   readFile(id: string, relativePath: string): Promise<{ path: string; content: string; revision: string }>
   writeFile(id: string, relativePath: string, content: string, revision: string): Promise<{ path: string; revision: string }>
   requestBuild(id: string): { buildId: string; status: string }
+  listHistory(id: string): Promise<unknown>
+  compareHistory(id: string, from: string, to: string): Promise<unknown>
   preview(id: string): Promise<{ revision: string; circuitJson: unknown }>
   onClose(close: () => Promise<void>): void
 }
@@ -44,7 +47,7 @@ const toolError = (error: unknown) => ({
   content: [{ type: "text" as const, text: error instanceof Error ? error.message : JSON.stringify(error, null, 2) ?? String(error) }],
 })
 
-export function mountMcp(app: Express, service: ProjectService, configuredToken?: string) {
+export function mountMcp(app: Express, service: ProjectService, configuredToken?: string, sourcing?: SourcingClient) {
   if (!configuredToken) {
     app.all("/mcp", (_request, response) => response.status(503).json({ error: "MCP_AUTH_TOKEN must be configured" }))
     return
@@ -62,7 +65,7 @@ export function mountMcp(app: Express, service: ProjectService, configuredToken?
     },
   }
 
-  const mcpHandler = createMcpHandler(() => createServer(service), { onerror: (error) => console.error("MCP handler failed", error) })
+  const mcpHandler = createMcpHandler(() => createServer(service, sourcing), { onerror: (error) => console.error("MCP handler failed", error) })
   const handler = toNodeHandler(mcpHandler)
   service.onClose(() => mcpHandler.close())
   const auth = requireBearerAuth({ verifier })
@@ -77,7 +80,7 @@ export function mountMcp(app: Express, service: ProjectService, configuredToken?
   })
 }
 
-function createServer(service: ProjectService): McpServer {
+function createServer(service: ProjectService, sourcing?: SourcingClient): McpServer {
   const server = new McpServer({ name: "circuits-workbench", version: "0.2.0" })
   server.registerTool("list_projects", {
     title: "List projects",
@@ -188,6 +191,18 @@ function createServer(service: ProjectService): McpServer {
     }),
   }, async ({ projectId, revision, from, to, name }) =>
     safeTool(() => editSource(service, projectId, revision, (source) => connectComponents(source, { from, to, name }))))
+
+  server.registerTool("list_project_revisions", {
+    title: "List project revisions",
+    description: "List the project's revision history newest first: revision, Git commit when the project is Git-backed, timestamp, changed files, whether a source snapshot is still retained, and whether a build summary exists for comparison.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => service.listHistory(projectId)))
+
+  server.registerTool("compare_project_revisions", {
+    title: "Compare two project revisions",
+    description: "Compare two revisions: the changed source files with their before and after contents, plus a design comparison of what each revision's build produced (board dimensions, components, nets, routing counts, simulation results). The design comparison is unavailable, with a reason, when either revision has no retained build summary. Rendered images are not compared.",
+    inputSchema: z.object({ projectId, from: revision, to: revision }),
+  }, async ({ projectId, from, to }) => safeTool(async () => service.compareHistory(projectId, from, to)))
 
   server.registerTool("build_project", {
     title: "Build project",
@@ -323,6 +338,38 @@ function createServer(service: ProjectService): McpServer {
     return { revision: preview.revision, ...getSimulationResults(preview.circuitJson) }
   }))
 
+  server.registerTool("list_simulation_signals", {
+    title: "List simulation signals",
+    description: "List the transient waveforms, DC operating-point values, and DC/AC sweeps the latest successful build emitted, without their sample data. Also reports which analysis modes produced no results.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => {
+    const preview = await service.preview(projectId)
+    const results = getSimulationResults(preview.circuitJson)
+    return {
+      revision: preview.revision,
+      status: results.status,
+      experiments: results.experiments,
+      analyses: results.analyses,
+      signals: results.signals.map(({ id, name, unit, netId, samples }) => ({ id, name, unit, netId, kind: "transient", sampleCount: samples.length })),
+      operatingPoints: results.operatingPoints,
+      sweeps: results.sweeps.map(({ id, name, kind, unit, xLabel, netId, samples }) => ({ id, name, kind, unit, xLabel, netId, sampleCount: samples.length })),
+      notEvaluated: results.notEvaluated,
+    }
+  }))
+
+  server.registerTool("get_waveform", {
+    title: "Get one simulation waveform or sweep",
+    description: "Return the samples of one transient waveform or one DC/AC sweep from the latest successful build, matched by signal ID or probe name. AC sweeps include magnitude in dB and phase in degrees.",
+    inputSchema: z.object({ projectId, signal: z.string().trim().min(1) }),
+  }, async ({ projectId, signal }) => safeTool(async () => {
+    const preview = await service.preview(projectId)
+    const results = getSimulationResults(preview.circuitJson)
+    const waveform = results.signals.find((item) => item.id === signal || item.name === signal)
+    const sweep = results.sweeps.find((item) => item.id === signal || item.name === signal)
+    if (!waveform && !sweep) throw new Error(`No simulation signal or sweep in the latest successful build matches '${signal}'`)
+    return { revision: preview.revision, ...(waveform ? { kind: "transient", signal: waveform } : { kind: sweep!.kind, sweep }) }
+  }))
+
   server.registerTool("run_erc", {
     title: "Run electrical rule checks",
     description: "Run the supported tscircuit netlist, pin specification, and source checks against the latest successful build, and report which electrical checks are not evaluated.",
@@ -376,8 +423,38 @@ function createServer(service: ProjectService): McpServer {
         project.lastBuild ?? { status: "idle", revision: "" },
         preview.revision,
         project.revision,
+        undefined,
+        sourcing,
       ),
     }
+  }))
+
+  server.registerTool("get_component_sourcing", {
+    title: "Look up supplier data for a part",
+    description: "Read manufacturer part number, package, description, stock, unit price, and basic/preferred flags for an LCSC part number from the configured supplier index. Fails when no provider is configured.",
+    inputSchema: z.object({ part: z.string().trim().min(2).max(20) }),
+  }, async ({ part }) => safeTool(async () => {
+    if (!sourcing) throw new Error("No component sourcing provider is configured. Set COMPONENT_SOURCING_URL to enable supplier lookups.")
+    const normalized = normalizeLcscPartNumber(part)
+    if (!normalized) throw new Error(`'${part}' is not an LCSC part number such as C2040`)
+    const sourced = await sourcing.lookup(normalized)
+    if (!sourced) throw new Error(`The supplier index returned no part for ${normalized}`)
+    return { provider: sourcing.provider, part: sourced }
+  }))
+
+  server.registerTool("estimate_manufacturing_cost", {
+    title: "Estimate component cost for a board quantity",
+    description: "Price the components in the latest successful build for a board quantity using the configured supplier index. Covers component cost only: fabrication, assembly, tooling, shipping, and taxes are excluded, and parts without an LCSC part number or price are listed as unpriced.",
+    inputSchema: z.object({ projectId, boards: z.number().int().min(1).max(10000).optional() }),
+  }, async ({ projectId, boards }) => safeTool(async () => {
+    const preview = await service.preview(projectId)
+    if (!sourcing) return {
+      revision: preview.revision,
+      configured: false,
+      parts: listDesignParts(preview.circuitJson),
+      message: "No component sourcing provider is configured, so no prices or stock were looked up. Set COMPONENT_SOURCING_URL to enable it.",
+    }
+    return { revision: preview.revision, configured: true, provider: sourcing.provider, ...await estimateBomCost(preview.circuitJson, sourcing, boards ?? 1) }
   }))
 
   server.registerTool("get_manufacturing_package", {

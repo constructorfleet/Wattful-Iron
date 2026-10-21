@@ -9,8 +9,31 @@ export type Project = {
 export type ProjectTemplate = { id: string; name: string; description: string }
 
 export type ProjectFile = { path: string; content: string; revision: string }
-export type ProjectRevision = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes: number }
-export type RevisionComparison = { from: string; to: string; files: Array<{ path: string; before: string | null; after: string | null }> }
+export type ProjectRevision = {
+  revision: string
+  createdAt: string
+  changedFiles: string[]
+  sizeBytes?: number
+  commit?: string
+  retainedSnapshot: boolean
+  hasDesignSummary: boolean
+}
+export type ProjectHistory = { gitBacked: boolean; snapshotRetention: number; revisions: ProjectRevision[] }
+export type DesignComponentSummary = { name: string; ftype?: string; value?: string; manufacturerPartNumber?: string; footprint?: string; pinCount: number }
+export type DesignNetSummary = { name: string; pinCount: number; routing: string }
+export type DesignChange = { name: string; changes: Array<{ property: string; before?: string | number; after?: string | number }> }
+export type DesignDiff =
+  | {
+    available: true
+    board: Array<{ property: string; before?: number; after?: number }>
+    components: { added: DesignComponentSummary[]; removed: DesignComponentSummary[]; changed: DesignChange[] }
+    nets: { added: DesignNetSummary[]; removed: DesignNetSummary[]; changed: DesignChange[] }
+    counts: Array<{ metric: string; before: number; after: number }>
+    simulation: Array<{ property: string; before: string | number; after: string | number }>
+    limitations: string[]
+  }
+  | { available: false; reason: string }
+export type RevisionComparison = { from: string; to: string; files: Array<{ path: string; before: string | null; after: string | null }>; design: DesignDiff }
 export type BuildStatus = {
   buildId?: string
   revision?: string
@@ -27,12 +50,43 @@ export type ProjectEvent =
 
 export type Preview = { revision: string; kind: PreviewKind; circuitJson: unknown }
 export type PreviewKind = 'schematic' | 'pcb' | '3d'
+export type SimulationOperatingPoint = { id: string; name: string; unit: 'V' | 'A'; value: number; netId?: string; sourceComponentId?: string; experimentId?: string }
+export type SimulationSweep = {
+  id: string
+  name: string
+  kind: 'dc' | 'ac'
+  unit: 'V' | 'A'
+  xLabel: string
+  netId?: string
+  samples: Array<{ x: number; y: number }>
+  magnitudeDb?: Array<{ x: number; y: number }>
+  phaseDeg?: Array<{ x: number; y: number }>
+}
 export type Simulation = {
   revision: string
   status: 'complete' | 'failed' | 'not_configured'
   experiments: Array<{ id: string; name: string; type: string }>
   signals: Array<{ id: string; name: string; unit: 'V' | 'A'; netId?: string; samples: Array<{ x: number; y: number }> }>
+  operatingPoints: SimulationOperatingPoint[]
+  sweeps: SimulationSweep[]
+  analyses: Array<{ type: string; experiments: number; resultCount: number }>
   diagnostics: Array<{ message: string; severity: 'error' }>
+  notEvaluated: Array<{ analysis: string; reason: string }>
+}
+export type PowerAnalysis = {
+  revision: string
+  status: 'complete' | 'partial' | 'not-evaluated'
+  assumptions: string[]
+  traceCapacity: Array<{ pcbTraceId?: string; widthMm: number; layers: string[]; maxCurrentA: number }>
+  narrowestTrace?: { pcbTraceId?: string; widthMm: number; layers: string[]; maxCurrentA: number }
+  nodeVoltages: Array<{ name: string; voltageV: number; netId?: string }>
+  branchCurrents: Array<{ name: string; currentA: number; netId?: string; sourceComponentId?: string; componentName?: string }>
+  componentPower: Array<{ sourceComponentId: string; name: string; ftype?: string; dissipationW: number; method: 'I2R' | 'V2R' }>
+  supplyLoads: Array<{ sourceComponentId?: string; name: string; currentA: number; voltageV?: number; powerW?: number }>
+  traceLoads: Array<{ pcbTraceId?: string; netId?: string; netName?: string; currentA: number; maxCurrentA: number; utilization: number; status: 'ok' | 'over-capacity' }>
+  totalSupplyCurrentA?: number
+  totalDissipationW?: number
+  notEvaluated: Array<{ quantity: string; reason: string }>
 }
 export type NetPin = { sourcePortId: string; pinName: string; pinNumber?: number; sourceComponentId?: string; componentName?: string; pcbPortId?: string; routed: boolean }
 export type NetCopperTrace = { pcbTraceId: string; layers: string[]; widthMm?: number; lengthMm: number; connectedPcbPortIds: string[] }
@@ -52,6 +106,29 @@ export type TracedNet = {
   routing: 'routed' | 'partially-routed' | 'unrouted' | 'not-applicable'
 }
 export type NetTraceIndex = { revision: string; nets: TracedNet[]; uncorrelatedSimulationSignals: NetSimulationSignal[]; limitations: string[] }
+export type SourcedPart = {
+  lcscPartNumber: string
+  manufacturerPartNumber?: string
+  package?: string
+  description?: string
+  stockQuantity?: number
+  unitPriceUsd?: number
+  isBasicPart?: boolean
+  isPreferredPart?: boolean
+}
+export type ComponentSourcing = { configured: boolean; provider?: string; part?: SourcedPart; error?: string }
+export type BomCost = {
+  configured: boolean
+  provider?: string
+  revision: string
+  boards?: number
+  lines?: Array<{ name: string; quantity: number; lcscPartNumber?: string; unitPriceUsd?: number; extendedPriceUsd?: number; stockQuantity?: number; isBasicPart?: boolean }>
+  unpriced?: Array<{ name: string; reason: string }>
+  componentCostUsd?: number
+  limitations?: string[]
+  parts?: Array<{ name: string; quantity: number; lcscPartNumbers: string[]; manufacturerPartNumber?: string }>
+  message?: string
+}
 export type ManufacturingProfile = { id: string; label: string; description: string; rules: { minTraceWidthMm: number; minNonPlatedHoleMm: number; copperToBoardEdgeMm: number } }
 export type ManufacturingCheckIssue = { severity: 'error' | 'warning'; type: string; category: string; message: string; affectedIds: string[] }
 export type ManufacturingCheck = { id: string; status: 'pass' | 'fail' | 'warning' | 'not-evaluated'; message: string; issues?: ManufacturingCheckIssue[] }
@@ -144,7 +221,7 @@ export const saveProjectFile = (id: string, path: string, content: string, revis
   body: JSON.stringify({ content, revision }),
 }, fetcher)
 
-export const getProjectHistory = (id: string, fetcher?: Fetcher) => request<{ revisions: ProjectRevision[] }>(`/api/projects/${encodeURIComponent(id)}/history`, undefined, fetcher)
+export const getProjectHistory = (id: string, fetcher?: Fetcher) => request<ProjectHistory>(`/api/projects/${encodeURIComponent(id)}/history`, undefined, fetcher)
 
 export const compareProjectRevisions = (id: string, from: string, to: string, fetcher?: Fetcher) => request<RevisionComparison>(
   `/api/projects/${encodeURIComponent(id)}/history/compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
@@ -173,6 +250,24 @@ export const getPreview = (id: string, kind: PreviewKind, fetcher?: Fetcher) => 
 )
 
 export const getSimulation = (id: string, fetcher?: Fetcher) => request<Simulation>(`/api/projects/${encodeURIComponent(id)}/simulation`, undefined, fetcher)
+
+export async function getComponentSourcing(part: string, fetcher: Fetcher = fetch): Promise<ComponentSourcing> {
+  const response = await fetcher(`/api/components/${encodeURIComponent(part)}`)
+  if (response.status === 503) return { configured: false, ...(await response.json().catch(() => ({}))) as { error?: string } }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as { error?: string }
+    return { configured: true, error: payload.error || `Supplier lookup failed (${response.status})` }
+  }
+  return response.json() as Promise<ComponentSourcing>
+}
+
+export const getBomCost = (id: string, boards = 1, fetcher?: Fetcher) => request<BomCost>(
+  `/api/projects/${encodeURIComponent(id)}/bom-cost?boards=${encodeURIComponent(String(boards))}`,
+  undefined,
+  fetcher,
+)
+
+export const getPower = (id: string, fetcher?: Fetcher) => request<PowerAnalysis>(`/api/projects/${encodeURIComponent(id)}/power`, undefined, fetcher)
 
 export const getNets = (id: string, fetcher?: Fetcher) => request<NetTraceIndex>(`/api/projects/${encodeURIComponent(id)}/nets`, undefined, fetcher)
 
