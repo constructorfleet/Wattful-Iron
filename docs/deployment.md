@@ -113,6 +113,38 @@ short idle timeouts for the SSE endpoint. The shared app token and MCP token
 do not provide individual accounts or project-level authorization. See
 [security](security.md).
 
+### Traefik
+
+`docker-compose.traefik.yml` is an overlay for an existing Traefik instance. It
+does not deploy Traefik. Traefik must already run with an HTTPS entrypoint, a
+certificate resolver, and an external Docker network it watches.
+
+```sh
+WORKBENCH_HOST=circuits.example.com \
+TRAEFIK_NETWORK=traefik \
+TRAEFIK_ENTRYPOINT=websecure \
+TRAEFIK_CERT_RESOLVER=letsencrypt \
+docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d
+```
+
+`WORKBENCH_HOST` is required; the other three default to `traefik`,
+`websecure`, and `letsencrypt`. The overlay attaches the app to the Traefik
+network in addition to the internal `backend` network, removes the published
+host port so the proxy is the only ingress, routes the host to container port
+3000 over TLS, and adds a `wattful-iron-headers` middleware with HSTS,
+no-sniff, frame-deny, and a same-origin referrer policy.
+
+It sets `responseforwarding.flushinterval: -1` so Traefik does not buffer
+server-sent events, and points Traefik's load-balancer health check at
+`/healthz`. Keep the published port out of the stack when the proxy fronts it;
+to keep a loopback port as well, drop the `ports` override from the overlay.
+
+Traefik terminates TLS and can enforce its own authentication middleware. It
+does not add per-user authorization to the workbench: the shared browser/REST
+token and the separate MCP bearer token remain the only access control the
+application itself applies. Do not expose the service to untrusted users. See
+[security](security.md).
+
 ## Docker Swarm
 
 Build or pull the image on nodes before deploying. Use the same image version on

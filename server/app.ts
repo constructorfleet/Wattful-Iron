@@ -45,6 +45,13 @@ const templates = [
   { id: "voltage-divider", name: "Filtered voltage divider", description: "A connected divider with a low-pass capacitor." },
 ] as const
 
+/**
+ * tscircuit version pinned into every new project. Keep it in step with the
+ * dependency in the repository's package.json; the workbench has no dependency
+ * management surface yet, so projects are created with this single pin.
+ */
+const PROJECT_TSCIRCUIT_VERSION = "0.0.2930"
+
 const HISTORY_RETENTION = 50
 /** Build summaries retained per project for revision comparison. */
 const DESIGN_SUMMARY_RETENTION = 200
@@ -118,7 +125,7 @@ class ProjectService {
     await mkdir(path.join(dir, ".workbench"), { recursive: true })
     const project: ProjectData = { id, name: name.trim(), entrypoint: "index.circuit.tsx", revision: newRevision() }
     await writeFile(path.join(dir, project.entrypoint), source)
-    const projectPackage = JSON.stringify({ name: safePackageName(name), private: true, dependencies: { tscircuit: "0.0.2930" } }, null, 2) + "\n"
+    const projectPackage = JSON.stringify({ name: safePackageName(name), private: true, dependencies: { tscircuit: PROJECT_TSCIRCUIT_VERSION } }, null, 2) + "\n"
     await writeFile(path.join(dir, "package.json"), projectPackage)
     this.ownFileHashes.set(path.join(dir, project.entrypoint), digest(source))
     this.ownFileHashes.set(path.join(dir, "package.json"), digest(projectPackage))
@@ -307,7 +314,7 @@ class ProjectService {
     const project: ProjectData = { id, name: name.trim(), entrypoint, revision: newRevision() }
     await writeFile(path.join(dir, entrypoint), source)
     await writeFile(path.join(dir, ".workbench", "imported-circuit.json"), JSON.stringify(circuitJson))
-    const projectPackage = JSON.stringify({ name: safePackageName(name), private: true, dependencies: { tscircuit: "0.0.2930" } }, null, 2) + "\n"
+    const projectPackage = JSON.stringify({ name: safePackageName(name), private: true, dependencies: { tscircuit: PROJECT_TSCIRCUIT_VERSION } }, null, 2) + "\n"
     await writeFile(path.join(dir, "package.json"), projectPackage)
     for (const file of files) await writeFile(path.join(dir, "imports", path.basename(file.name)), file.content)
     this.ownFileHashes.set(path.join(dir, entrypoint), digest(source))
