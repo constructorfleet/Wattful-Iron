@@ -8,6 +8,7 @@ import { getSimulationResults } from "./simulation.js"
 import { checkManufacturability } from "./manufacturing.js"
 import { checkConnectivity, getBoardProperties, getComponent, getPinConnections, listComponents, listNets, traceNet } from "./circuit-inspection.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
+import { addComponent, connectComponents, listSourceComponents, removeComponent, setBoardDimensions, setComponentProperties } from "./circuit-source.js"
 import { checkRouting, runDesignRuleCheck, runElectricalRuleCheck } from "./rule-checks.js"
 import { analyzePower } from "./power-analysis.js"
 
@@ -33,6 +34,10 @@ type ProjectService = {
 }
 
 const projectId = z.string().uuid()
+const propertyValue = z.union([z.string().max(200), z.number().finite(), z.boolean()])
+const componentProps = z.record(z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/), propertyValue)
+const revision = z.string().uuid()
+
 const toolError = (error: unknown) => ({
   isError: true,
   content: [{ type: "text" as const, text: error instanceof Error ? error.message : JSON.stringify(error, null, 2) ?? String(error) }],
@@ -114,6 +119,74 @@ function createServer(service: ProjectService): McpServer {
     description: "Write source using the revision returned by read_project_file. Stale revisions are rejected with a conflict.",
     inputSchema: z.object({ projectId, path: z.string().min(1), content: z.string(), revision: z.string().uuid() }),
   }, async ({ projectId, path, content, revision }) => safeTool(() => service.writeFile(projectId, path, content, revision)))
+
+  server.registerTool("list_source_components", {
+    title: "List circuit source components",
+    description: "List the component elements placed in the project's circuit source, as opposed to the components in the last build output.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => {
+    const project = await service.get(projectId)
+    const file = await service.readFile(projectId, project.entrypoint)
+    return { path: file.path, revision: file.revision, components: listSourceComponents(file.content) }
+  }))
+
+  server.registerTool("set_board_dimensions", {
+    title: "Set board dimensions",
+    description: "Set the board width, height, or layer count in the circuit source. Lengths need a unit, such as 30mm. Requires the current project revision.",
+    inputSchema: z.object({
+      projectId,
+      revision,
+      width: z.string().max(20).optional(),
+      height: z.string().max(20).optional(),
+      layers: z.number().int().min(1).max(32).optional(),
+    }),
+  }, async ({ projectId, revision, width, height, layers }) =>
+    safeTool(() => editSource(service, projectId, revision, (source) => setBoardDimensions(source, { width, height, layers }))))
+
+  server.registerTool("add_component", {
+    title: "Add a component",
+    description: "Add a component element such as resistor, capacitor, or led to the board, with its tscircuit properties. Requires the current project revision.",
+    inputSchema: z.object({
+      projectId,
+      revision,
+      element: z.string().min(1).max(50),
+      name: z.string().min(1).max(64),
+      props: componentProps.optional(),
+    }),
+  }, async ({ projectId, revision, element, name, props }) =>
+    safeTool(() => editSource(service, projectId, revision, (source) => addComponent(source, { element, name, props }))))
+
+  server.registerTool("remove_component", {
+    title: "Remove a component",
+    description: "Remove a component from the board together with every trace that references it. Requires the current project revision.",
+    inputSchema: z.object({ projectId, revision, name: z.string().min(1).max(64) }),
+  }, async ({ projectId, revision, name }) =>
+    safeTool(() => editSource(service, projectId, revision, (source) => removeComponent(source, name))))
+
+  server.registerTool("set_component_properties", {
+    title: "Set component properties",
+    description: "Set or replace properties on a named component. A null value removes that property. Requires the current project revision.",
+    inputSchema: z.object({
+      projectId,
+      revision,
+      name: z.string().min(1).max(64),
+      props: z.record(z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/), propertyValue.nullable()),
+    }),
+  }, async ({ projectId, revision, name, props }) =>
+    safeTool(() => editSource(service, projectId, revision, (source) => setComponentProperties(source, name, props))))
+
+  server.registerTool("connect_components", {
+    title: "Connect two ports",
+    description: "Add a trace between two tscircuit selectors, such as '.R1 > .pin2' and '.D1 > .pin1'. Requires the current project revision.",
+    inputSchema: z.object({
+      projectId,
+      revision,
+      from: z.string().min(1).max(200),
+      to: z.string().min(1).max(200),
+      name: z.string().min(1).max(64).optional(),
+    }),
+  }, async ({ projectId, revision, from, to, name }) =>
+    safeTool(() => editSource(service, projectId, revision, (source) => connectComponents(source, { from, to, name }))))
 
   server.registerTool("build_project", {
     title: "Build project",
@@ -311,6 +384,16 @@ function createServer(service: ProjectService): McpServer {
 
 
   return server
+}
+
+/** Apply a structural edit to a project's circuit source and write it back under the caller's revision. */
+async function editSource(service: ProjectService, id: string, expectedRevision: string, transform: (source: string) => string) {
+  const project = await service.get(id)
+  const file = await service.readFile(id, project.entrypoint)
+  const updated = transform(file.content)
+  if (updated === file.content) return { path: file.path, revision: file.revision, changed: false }
+  const written = await service.writeFile(id, project.entrypoint, updated, expectedRevision)
+  return { ...written, changed: true }
 }
 
 function result(value: unknown) {
