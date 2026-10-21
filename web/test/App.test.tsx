@@ -41,7 +41,7 @@ vi.mock('@tscircuit/runframe', () => ({
 }))
 vi.mock('@tscircuit/pcb-viewer', () => ({
   usePcbViewerController: () => ({ controller: { focusRequest: null, onFocusRequestHandled: vi.fn() }, focusPcbComponent: pcbViewer.focusPcbComponent }),
-  PCBViewer: ({ circuitJson, onViewSchematicComponent }: { circuitJson: Array<{ type: string }>; onViewSchematicComponent?: (event: { source_component_id: string; pcb_component_id: string; refdes: string }) => void }) => <><div data-testid="pcb-viewer" data-circuit-types={circuitJson.map((item) => item.type).join(',')} />{onViewSchematicComponent && <button onClick={() => onViewSchematicComponent({ source_component_id: 'sc-r1', pcb_component_id: 'pcb-r1', refdes: 'R1' })}>View R1 on Schematic</button>}</>,
+  PCBViewer: ({ circuitJson, onViewSchematicComponent }: { circuitJson: Array<{ type: string }>; onViewSchematicComponent?: (event: { source_component_id: string; pcb_component_id: string; refdes: string }) => void }) => <><div data-testid="pcb-viewer" data-circuit-types={circuitJson.map((item) => item.type).join(',')} />{onViewSchematicComponent && <button type="button" onClick={() => onViewSchematicComponent({ source_component_id: 'sc-r1', pcb_component_id: 'pcb-r1', refdes: 'R1' })}>View R1 on Schematic</button>}</>,
 }))
 
 const existingProject = { id: 'led-1', name: 'LED Board', entrypoint: 'index.tsx', revision: 'rev-1' }

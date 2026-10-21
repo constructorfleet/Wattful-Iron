@@ -8,7 +8,7 @@ import { convertSchematicV6 } from "easyeda2kicad6"
 
 const execFile = promisify(execFileCallback)
 
-type Item = Record<string, any>
+type Item = Record<string, unknown>
 
 type EasyedaComponent = { x: number; y: number; reference: string; value: string; package?: string; manufacturerPartNumber?: string }
 
@@ -38,6 +38,12 @@ function placedComponents(document: unknown): EasyedaComponent[] {
   })
 }
 
+function centerPoint(value: unknown): { x: number; y: number } | undefined {
+  if (!value || typeof value !== "object") return undefined
+  const { x, y } = value as { x?: unknown; y?: unknown }
+  return typeof x === "number" && typeof y === "number" ? { x, y } : undefined
+}
+
 /** Restores EasyEDA instance fields the KiCad intermediate converter flattens into free text. */
 export function enrichEasyedaComponentMetadata(circuit: unknown, documents: unknown[]): unknown {
   if (!Array.isArray(circuit)) return circuit
@@ -48,7 +54,7 @@ export function enrichEasyedaComponentMetadata(circuit: unknown, documents: unkn
   const enriched = new Map<string, EasyedaComponent>()
   for (const component of components) {
     const symbol = symbols.find((item) => item.source_component_id === component.source_component_id)
-    const center = symbol?.center
+    const center = centerPoint(symbol?.center)
     if (!center || !Number.isFinite(center.x) || !Number.isFinite(center.y)) continue
     // easyeda2kicad6's sheet coordinates map to Circuit JSON at this scale and origin.
     const rawX = (center.x + 7) / (25.4 / 1500)

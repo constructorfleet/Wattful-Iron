@@ -42,6 +42,10 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `validate_project_requirements` | Compare supported board requirements with the latest successful build and report unsupported checks as not evaluated. |
 | `run_simulation` | Build the current source and return transient SPICE results emitted by tscircuit, when configured. |
 | `get_simulation_results` | Read waveform data and probe/net information from the latest successful build. |
+| `run_erc` | Run the supported netlist, pin specification, and source checks, and report which electrical checks are not evaluated. |
+| `run_drc` | Run the supported placement and routing checks, and report which board checks are not evaluated. |
+| `check_routing` | Report routing findings, including unrouted and discontinuous connections. |
+| `analyze_power` | Report IPC-2221 current capacity per routed trace, and the power quantities that are not evaluated. |
 | `check_manufacturability` | Run the same current-revision completeness checks used by the manufacturing download route. |
 | `get_manufacturing_package` | Return a `GET` path and `application/zip` content type for the preflight-gated manufacturing download route, optionally selecting a fabricator profile. |
 
@@ -68,6 +72,33 @@ generation. Pass `profile=jlcpcb-2layer-1oz` to apply the JLCPCB two-layer
 profile, or omit it to use board defaults. The ZIP contains Gerber/drill files,
 BOM, and pick-and-place data. These checks do not replace complete vendor rules
 or manufacturing review.
+
+## Rule checks and power
+
+`run_erc`, `run_drc`, and `check_routing` run tscircuit's own check suite over
+the latest successful build and split its findings by category: netlist, pin
+specification, and source findings are electrical; placement and routing
+findings are board-level. Every report lists the checks it does **not**
+evaluate, with the reason, so a passing report is not mistaken for full
+coverage. Fabricator limits such as minimum trace width and hole size are
+checked against a selected profile by `check_manufacturability` instead. These
+reports are not KiCad-equivalent ERC/DRC.
+
+`analyze_power` calculates how much current each routed trace can carry using
+the IPC-2221 curves, from the narrowest segment width, the layer the segment is
+on, an assumed copper weight, and an allowed temperature rise. External and
+internal layers use their respective constants. It reports each trace and the
+narrowest one, together with the assumptions used.
+
+`temperatureRiseC` defaults to 10 and `copperOunces` to 1. The result is a
+geometric limit for an isolated trace; it does not account for adjacent copper,
+planes, vias, or ambient temperature.
+
+Total current demand, regulator loading, component dissipation, resistor
+power-rating headroom, and thermal rise are reported as not evaluated. They need
+operating-point values that Circuit JSON does not carry, and they are not
+estimated. Configure a tscircuit analog simulation to obtain voltages and
+currents.
 
 Projects can define engineering constraints in `requirements.json`. The
 requirements MCP tools expose the document and compare board dimensions and

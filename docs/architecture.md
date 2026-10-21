@@ -56,6 +56,12 @@ simulator errors; it does not run a second solver or claim support for every
 component model or analysis mode. Preview output is not an electrical or
 manufacturing sign-off.
 
+Electrical and board rule checks run tscircuit's own check suite and report
+findings by category, alongside the trace current capacity that is derivable
+from board geometry. Every report names the checks it does not evaluate. This
+is not KiCad-equivalent ERC/DRC, and operating-point quantities such as
+dissipation and total current demand are not evaluated at all.
+
 ## Not implemented
 
 The following capabilities in the project vision are not available in this

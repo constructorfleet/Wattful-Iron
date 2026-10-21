@@ -8,6 +8,8 @@ import { getSimulationResults } from "./simulation.js"
 import { checkManufacturability } from "./manufacturing.js"
 import { checkConnectivity, getBoardProperties, getComponent, getPinConnections, listComponents, listNets, traceNet } from "./circuit-inspection.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
+import { checkRouting, runDesignRuleCheck, runElectricalRuleCheck } from "./rule-checks.js"
+import { analyzePower } from "./power-analysis.js"
 
 type Project = {
   id: string
@@ -234,6 +236,46 @@ function createServer(service: ProjectService): McpServer {
   }, async ({ projectId }) => safeTool(async () => {
     const preview = await service.preview(projectId)
     return { revision: preview.revision, ...getSimulationResults(preview.circuitJson) }
+  }))
+
+  server.registerTool("run_erc", {
+    title: "Run electrical rule checks",
+    description: "Run the supported tscircuit netlist, pin specification, and source checks against the latest successful build, and report which electrical checks are not evaluated.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => {
+    const preview = await service.preview(projectId)
+    return { revision: preview.revision, ...await runElectricalRuleCheck(preview.circuitJson) }
+  }))
+
+  server.registerTool("run_drc", {
+    title: "Run PCB design rule checks",
+    description: "Run the supported tscircuit placement and routing checks against the latest successful build, and report which board checks are not evaluated. Fabricator limits are checked by check_manufacturability.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => {
+    const preview = await service.preview(projectId)
+    return { revision: preview.revision, ...await runDesignRuleCheck(preview.circuitJson) }
+  }))
+
+  server.registerTool("check_routing", {
+    title: "Check routing",
+    description: "Report routing findings for the latest successful build, including unrouted and discontinuous connections.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => {
+    const preview = await service.preview(projectId)
+    return { revision: preview.revision, ...await checkRouting(preview.circuitJson) }
+  }))
+
+  server.registerTool("analyze_power", {
+    title: "Analyze power",
+    description: "Report the IPC-2221 current capacity of each routed trace in the latest successful build. Quantities that need an operating point, such as dissipation and total current demand, are reported as not evaluated rather than estimated.",
+    inputSchema: z.object({
+      projectId,
+      temperatureRiseC: z.number().positive().max(100).optional(),
+      copperOunces: z.number().positive().max(10).optional(),
+    }),
+  }, async ({ projectId, temperatureRiseC, copperOunces }) => safeTool(async () => {
+    const preview = await service.preview(projectId)
+    return { revision: preview.revision, ...analyzePower(preview.circuitJson, { temperatureRiseC, copperOunces }) }
   }))
 
   server.registerTool("check_manufacturability", {

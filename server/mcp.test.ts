@@ -318,6 +318,55 @@ test("MCP build request completes when the automatic initial build is already ru
   }
 })
 
+test("MCP exposes electrical, board, routing, and power reports for a build", async () => {
+  const circuitJson = [
+    { type: "source_component", source_component_id: "sc1", name: "R1", ftype: "simple_resistor", resistance: 1000 },
+    { type: "pcb_component", pcb_component_id: "pc1", source_component_id: "sc1", center: { x: 0, y: 0 }, width: 2, height: 1, rotation: 0, layer: "top" },
+    { type: "pcb_trace", pcb_trace_id: "pt1", route: [{ width: 0.2, layer: "top" }, { width: 0.2, layer: "top" }] },
+    { type: "pcb_board", pcb_board_id: "board1", width: 20, height: 20, center: { x: 0, y: 0 }, thickness: 1.6, num_layers: 2 },
+  ]
+  const fixture = await makeFixture(async () => circuitJson)
+  const server = createServer(fixture.app)
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address()
+  assert.ok(address && typeof address !== "string")
+  const client = new Client({ name: "circuits-workbench-test", version: "1.0.0" })
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`), {
+    requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+  })
+  try {
+    await client.connect(transport)
+    const project = readResult<{ id: string }>(await client.callTool({ name: "create_project", arguments: { name: "Rule checks" } }))
+    await waitForToolStatus(client, project.id, "ready")
+
+    for (const name of ["run_erc", "run_drc", "check_routing"]) {
+      const report = readResult<{ status: string; categories: string[]; notEvaluated: Array<{ check: string; reason: string }> }>(
+        await client.callTool({ name, arguments: { projectId: project.id } }))
+      assert.ok(["pass", "fail", "warning"].includes(report.status), `${name} reported ${report.status}`)
+      assert.ok(report.categories.length > 0, name)
+      assert.ok(report.notEvaluated.length > 0, name)
+    }
+
+    const power = readResult<{ status: string; traceCapacity: Array<{ maxCurrentA: number }>; notEvaluated: unknown[] }>(
+      await client.callTool({ name: "analyze_power", arguments: { projectId: project.id } }))
+    assert.equal(power.status, "partial")
+    assert.equal(power.traceCapacity.length, 1)
+    assert.ok(Math.abs(power.traceCapacity[0]!.maxCurrentA - 0.745) < 0.01)
+    assert.ok(power.notEvaluated.length > 0)
+
+    const warmer = readResult<{ traceCapacity: Array<{ maxCurrentA: number }> }>(
+      await client.callTool({ name: "analyze_power", arguments: { projectId: project.id, temperatureRiseC: 20, copperOunces: 2 } }))
+    assert.ok(warmer.traceCapacity[0]!.maxCurrentA > power.traceCapacity[0]!.maxCurrentA)
+
+    const invalid = await client.callTool({ name: "analyze_power", arguments: { projectId: project.id, temperatureRiseC: 500 } })
+    assert.equal(invalid.isError, true)
+  } finally {
+    await client.close()
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    await fixture.cleanup()
+  }
+})
+
 async function makeFixture(buildCircuit: (projectDir: string) => Promise<unknown> = async () => [{ type: "source_component", name: "fixture" }]) {
   const root = await mkdtemp(path.join(tmpdir(), "circuits-mcp-"))
   const app = createApp({
