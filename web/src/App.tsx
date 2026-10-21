@@ -12,6 +12,8 @@ import {
   exportProjectArchive,
   getManufacturingArchive,
   getManufacturingPreflight,
+  getBomCost,
+  getComponentSourcing,
   getManufacturingProfiles,
   getNets,
   getPower,
@@ -35,6 +37,8 @@ import {
   type BuildStatus,
   type ManufacturingCheck,
   type ManufacturingPreflight,
+  type BomCost,
+  type ComponentSourcing,
   type ManufacturingProfile,
   type NetTraceIndex,
   type PowerAnalysis,
@@ -146,6 +150,9 @@ export default function App() {
   const [manufacturingProfiles, setManufacturingProfiles] = useState<ManufacturingProfile[]>([])
   const [manufacturingPreflight, setManufacturingPreflight] = useState<ManufacturingPreflight | null>(null)
   const [manufacturingDialogOpen, setManufacturingDialogOpen] = useState(false)
+  const [bomCost, setBomCost] = useState<BomCost | null>(null)
+  const [boardQuantity, setBoardQuantity] = useState(1)
+  const [componentSourcing, setComponentSourcing] = useState<ComponentSourcing | null>(null)
   const [loadingManufacturing, setLoadingManufacturing] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sourceRef = useRef(source)
@@ -156,6 +163,7 @@ export default function App() {
   const tracedNets = netIndex?.nets ?? []
   const selectedNet = tracedNets.find(({ id }) => id === selectedNetId) ?? tracedNets[0]
   const selectedComponent = inspectedComponents.find(({ id }) => id === selectedComponentId) ?? inspectedComponents[0]
+  const selectedComponentLcscPart = lcscPartNumberOf(selectedComponent?.properties)
 
   useEffect(() => { sourceRef.current = source }, [source])
   useEffect(() => { revisionRef.current = revision }, [revision])
@@ -342,6 +350,23 @@ export default function App() {
     getManufacturingPreflight(project.id, manufacturingProfile).then(({ preflight }) => { if (active) setManufacturingPreflight(preflight) }).catch(() => { if (active) setManufacturingPreflight(null) }).finally(() => { if (active) setLoadingManufacturing(false) })
     return () => { active = false }
   }, [project?.id, manufacturingProfile, build.status, build.revision])
+
+  useEffect(() => {
+    if (!project || !manufacturingDialogOpen) { setBomCost(null); return }
+    let active = true
+    getBomCost(project.id, boardQuantity).then((cost) => { if (active) setBomCost(cost) }).catch(() => { if (active) setBomCost(null) })
+    return () => { active = false }
+  }, [project?.id, manufacturingDialogOpen, boardQuantity, build.revision])
+
+  useEffect(() => {
+    const lcsc = selectedComponentLcscPart
+    if (!componentInspectorOpen || !lcsc) { setComponentSourcing(null); return }
+    let active = true
+    getComponentSourcing(lcsc).then((result) => { if (active) setComponentSourcing(result) }).catch((cause: unknown) => {
+      if (active) setComponentSourcing({ configured: true, error: cause instanceof Error ? cause.message : 'Supplier lookup failed' })
+    })
+    return () => { active = false }
+  }, [componentInspectorOpen, selectedComponentLcscPart])
 
   useEffect(() => {
     if (!project) return
@@ -721,6 +746,18 @@ export default function App() {
                 <div className="inspector-section"><h3>Properties</h3>{selectedComponent.properties.length ? <dl>{selectedComponent.properties.map(([key, value]) => <Fragment key={key}><dt>{key}</dt><dd>{formatInspectorValue(value)}</dd></Fragment>)}</dl> : <p>No additional source properties.</p>}</div>
                 <div className="inspector-section"><h3>PCB placement</h3>{selectedComponent.placement ? <dl>{(['center', 'rotation', 'layer', 'width', 'height'] as const).filter((key) => selectedComponent.placement?.[key] !== undefined).map((key) => <Fragment key={key}><dt>{key}</dt><dd>{formatInspectorValue(selectedComponent.placement?.[key])}</dd></Fragment>)}</dl> : <p>No PCB placement in this build.</p>}</div>
                 <div className="inspector-section"><h3>Pins and nets</h3>{selectedComponent.pins.length ? selectedComponent.pins.map((pin) => <div className="inspector-pin" key={pin.id || pin.name}><strong>{pin.name}</strong><code>{pin.id || 'No source port ID'}</code><span>{pin.connections.length ? pin.connections.join(', ') : 'No source trace connection found'}</span>{pin.id && tracedNets.some((net) => net.pins.some((item) => item.sourcePortId === pin.id)) && <button type="button" className="quiet-button pin-trace-button" onClick={() => traceNetForPort(pin.id)}>Trace net</button>}</div>) : <p>No source ports were found for this component.</p>}</div>
+                <div className="inspector-section"><h3>Supplier</h3>{!selectedComponentLcscPart ? <p>Circuit JSON records no LCSC part number for this component.</p>
+                  : !componentSourcing ? <p>Looking up {selectedComponentLcscPart}…</p>
+                    : componentSourcing.configured === false ? <p>No component sourcing provider is configured, so stock and price were not looked up.</p>
+                      : componentSourcing.error ? <p>{componentSourcing.error}</p>
+                        : componentSourcing.part ? <dl>
+                          <dt>LCSC</dt><dd>{componentSourcing.part.lcscPartNumber}</dd>
+                          {componentSourcing.part.manufacturerPartNumber && <><dt>MPN</dt><dd>{componentSourcing.part.manufacturerPartNumber}</dd></>}
+                          {componentSourcing.part.package && <><dt>Package</dt><dd>{componentSourcing.part.package}</dd></>}
+                          {componentSourcing.part.stockQuantity !== undefined && <><dt>Stock</dt><dd>{componentSourcing.part.stockQuantity.toLocaleString()}</dd></>}
+                          {componentSourcing.part.unitPriceUsd !== undefined && <><dt>Unit price</dt><dd>${componentSourcing.part.unitPriceUsd}</dd></>}
+                          {componentSourcing.part.isBasicPart !== undefined && <><dt>Assembly</dt><dd>{componentSourcing.part.isBasicPart ? 'Basic part' : 'Extended part'}</dd></>}
+                        </dl> : <p>The supplier index returned no part for {selectedComponentLcscPart}.</p>}</div>
                 <p className="inspector-note">Details reflect the latest successful build. Selecting a component focuses its PCB footprint; use that footprint’s context menu to open it here from the PCB. <strong>Trace net</strong> opens the net inspector for that pin. Schematic and 3D canvas highlighting are not available yet.</p>
               </>}
             </aside>}
@@ -760,6 +797,17 @@ export default function App() {
           <label className="profile-select">Fabricator rule profile<select aria-label="Fabricator rule profile" value={manufacturingProfile} onChange={(event) => setManufacturingProfile(event.target.value)}>{manufacturingProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}</select></label>
           {manufacturingProfiles.find(({ id }) => id === manufacturingProfile)?.description && <p className="profile-description">{manufacturingProfiles.find(({ id }) => id === manufacturingProfile)?.description}</p>}
           <div className="manufacturing-checks" aria-live="polite">{loadingManufacturing ? <p className="checks-empty">Checking current build…</p> : manufacturingPreflight ? manufacturingPreflight.checks.map((check) => <ManufacturingCheckRow key={check.id} check={check} />) : <p className="checks-empty">Build the project to load manufacturing checks.</p>}</div>
+          <section className="bom-cost" aria-label="Component cost estimate">
+            <div className="bom-cost-heading"><h3>Component cost</h3><label>Boards<input type="number" min="1" max="10000" aria-label="Board quantity" value={boardQuantity} onChange={(event) => setBoardQuantity(Math.max(1, Math.min(10000, Math.round(Number(event.target.value) || 1))))} /></label></div>
+            {!bomCost ? <p className="checks-empty">Loading component prices…</p>
+              : bomCost.configured === false ? <p className="checks-empty">{bomCost.message}</p>
+                : <>
+                  <p className="bom-total">{bomCost.componentCostUsd === undefined ? 'No part could be priced.' : `$${bomCost.componentCostUsd} for ${bomCost.boards} board${bomCost.boards === 1 ? '' : 's'} · ${bomCost.lines?.length ?? 0} priced line${bomCost.lines?.length === 1 ? '' : 's'}`}</p>
+                  {bomCost.lines?.length ? <dl className="bom-lines">{bomCost.lines.map((line) => <Fragment key={line.name}><dt>{line.name} ×{line.quantity}</dt><dd>{line.extendedPriceUsd === undefined ? 'no price' : `$${line.extendedPriceUsd}`}{line.stockQuantity !== undefined ? ` · ${line.stockQuantity.toLocaleString()} in stock` : ''}</dd></Fragment>)}</dl> : null}
+                  {bomCost.unpriced?.length ? <div className="bom-unpriced"><h4>Unpriced</h4><dl>{bomCost.unpriced.map((item) => <Fragment key={item.name}><dt>{item.name}</dt><dd>{item.reason}</dd></Fragment>)}</dl></div> : null}
+                  {bomCost.limitations?.length ? <p className="inspector-note">{bomCost.limitations.join(' ')}</p> : null}
+                </>}
+          </section>
           <footer><span>{manufacturingPreflight?.ready ? 'Preflight ready' : manufacturingPreflight ? 'Resolve blocking checks before export' : 'Preflight unavailable'}</span><button type="button" className="build-button" disabled={!project || dirty || build.status !== 'ready' || build.revision !== revision || exportingManufacturing || loadingManufacturing || !manufacturingPreflight?.ready} onClick={downloadManufacturing}>{exportingManufacturing ? 'Exporting…' : 'Download Manufacturing ZIP'}</button></footer>
         </section>
       </div>}
@@ -883,6 +931,15 @@ function NetInspector({ nets, index, selected, onSelect, onFocusPin, onViewSigna
       <p className="inspector-note">Nets come from the build's connectivity map. Pins, wires, copper, and vias are listed by ID; the schematic, PCB, and 3D canvases expose no highlight API, so a selected net is not drawn highlighted. Connectivity tracing is not signal propagation.</p>
     </>}
   </aside>
+}
+
+/** Read the first LCSC part number from a component's Circuit JSON supplier part numbers. */
+function lcscPartNumberOf(properties?: Array<[string, unknown]>) {
+  const suppliers = properties?.find(([key]) => key === 'supplier_part_numbers')?.[1]
+  const values = suppliers && typeof suppliers === 'object' ? (suppliers as Record<string, unknown>) : {}
+  const candidates = [values.jlcpcb, values.lcsc].flatMap((value) => Array.isArray(value) ? value : [])
+  const match = candidates.find((value) => typeof value === 'string' && /^C?\d{2,12}$/i.test(value.trim()))
+  return typeof match === 'string' ? match.trim() : undefined
 }
 
 /** Present a DC or AC sweep as waveform-viewer signals; AC sweeps split into magnitude and phase. */

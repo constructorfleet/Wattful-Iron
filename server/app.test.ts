@@ -10,9 +10,9 @@ import { createApp } from "./app.js"
 
 const circuit = [{ type: "source_component", name: "demo" }]
 
-async function fixture(build: (projectDir: string) => Promise<unknown>) {
+async function fixture(build: (projectDir: string) => Promise<unknown>, options: Partial<Parameters<typeof createApp>[0]> = {}) {
   const root = await mkdtemp(path.join(tmpdir(), "circuits-server-"))
-  const app = createApp({ projectsDir: root, buildCircuit: build, watchFiles: false })
+  const app = createApp({ projectsDir: root, buildCircuit: build, watchFiles: false, ...options })
   return { root, app, cleanup: async () => { await (app.locals.projectService as { close: () => Promise<void> }).close(); await rm(root, { recursive: true, force: true }) } }
 }
 
@@ -421,6 +421,60 @@ test("simulation endpoint returns retained tscircuit waveforms with net correlat
     assert.equal(result.body.status, "complete")
     assert.equal(result.body.signals[0].netId, "net1")
     assert.deepEqual(result.body.signals[0].samples, [{ x: 0, y: 0 }, { x: 1, y: 5 }])
+  } finally { await f.cleanup() }
+})
+
+const sourcedCircuit = [
+  { type: "source_component", source_component_id: "sc1", name: "R1", ftype: "simple_resistor", supplier_part_numbers: { jlcpcb: ["C25804"] } },
+  { type: "source_component", source_component_id: "sc2", name: "J1", ftype: "simple_connector" },
+]
+
+/** A sourcing client stub, so the tests never reach a real supplier index. */
+const stubSourcing = (stock = 1000, unitPriceUsd: number | undefined = 0.01) => ({
+  provider: "stub",
+  baseUrl: "https://parts.example",
+  lookup: async (part: string) => part === "C25804"
+    ? { lcscPartNumber: "C25804", manufacturerPartNumber: "0603WAF1002", package: "0603", stockQuantity: stock, unitPriceUsd, isBasicPart: true }
+    : null,
+})
+
+test("component sourcing endpoints stay off until a provider is configured", async () => {
+  const f = await fixture(async () => sourcedCircuit)
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Unsourced" }).expect(201)
+    await waitForBuild(f.app, project.id, "ready")
+    const lookup = await request(f.app).get("/api/components/C25804").expect(503)
+    assert.equal(lookup.body.configured, false)
+    const cost = await request(f.app).get(`/api/projects/${project.id}/bom-cost`).expect(200)
+    assert.equal(cost.body.configured, false)
+    assert.deepEqual(cost.body.parts.map((item: { name: string; quantity: number }) => [item.name, item.quantity]), [["R1", 1], ["J1", 1]])
+    const preflight = await request(f.app).get(`/api/projects/${project.id}/manufacturing`).expect(200)
+    const availability = preflight.body.preflight.checks.find((check: { id: string }) => check.id === "component-availability")
+    assert.equal(availability.status, "not-evaluated")
+    assert.match(availability.message, /COMPONENT_SOURCING_URL/)
+  } finally { await f.cleanup() }
+})
+
+test("configured sourcing prices the BOM and flags short stock in preflight", async () => {
+  const f = await fixture(async () => sourcedCircuit, { componentSourcing: stubSourcing(0) })
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Sourced" }).expect(201)
+    await waitForBuild(f.app, project.id, "ready")
+
+    const lookup = await request(f.app).get("/api/components/c25804").expect(200)
+    assert.equal(lookup.body.part.manufacturerPartNumber, "0603WAF1002")
+    await request(f.app).get("/api/components/RP2040").expect(400)
+    await request(f.app).get("/api/components/C999").expect(404)
+
+    const cost = await request(f.app).get(`/api/projects/${project.id}/bom-cost`).query({ boards: 10 }).expect(200)
+    assert.equal(cost.body.configured, true)
+    assert.equal(cost.body.componentCostUsd, 0.1)
+    assert.deepEqual(cost.body.unpriced, [{ name: "J1", reason: "Circuit JSON records no LCSC part number for this component." }])
+
+    const preflight = await request(f.app).get(`/api/projects/${project.id}/manufacturing`).expect(200)
+    const availability = preflight.body.preflight.checks.find((check: { id: string }) => check.id === "component-availability")
+    assert.equal(availability.status, "warning")
+    assert.match(availability.message, /C25804: 0 in stock, 1 needed/)
   } finally { await f.cleanup() }
 })
 

@@ -8,6 +8,7 @@ import { createHash } from "node:crypto"
 import { writeFile } from "node:fs/promises"
 import { getSimulationResults } from "./simulation.js"
 import { runCircuitDesignChecks, type CircuitDesignIssue } from "./circuit-design-checks.js"
+import { checkComponentAvailability, type SourcingClient } from "./component-sourcing.js"
 
 export type BuildState = { status: string; revision: string; diagnostics?: unknown[] }
 export type ManufacturingCheck = { id: string; status: "pass" | "fail" | "warning" | "not-evaluated"; message: string; issues?: CircuitDesignIssue[] }
@@ -36,7 +37,7 @@ const records = (json: unknown) => Array.isArray(json) ? json.filter(isRecord) :
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null
 
 /** Conservative checks based on build state and the Circuit JSON elements present. */
-export async function checkManufacturability(circuitJson: unknown, build: BuildState, previewRevision: string, projectRevision = previewRevision, profileId = "board-default"): Promise<ManufacturingPreflight> {
+export async function checkManufacturability(circuitJson: unknown, build: BuildState, previewRevision: string, projectRevision = previewRevision, profileId = "board-default", sourcing?: SourcingClient): Promise<ManufacturingPreflight> {
   const items = records(circuitJson)
   const boards = items.filter((item) => item.type === "pcb_board")
   const pcbComponents = items.filter((item) => item.type === "pcb_component")
@@ -71,8 +72,49 @@ export async function checkManufacturability(circuitJson: unknown, build: BuildS
     routingCheck,
     ...ruleChecks,
     checkBomData(sources),
+    await checkAvailability(items, sourcing),
   ]
   return { ready: checks.every((check) => check.status !== "fail"), profile: { id: profile.id, label: profile.label }, checks }
+}
+
+/**
+ * Report supplier stock for the design's parts. Without a configured sourcing provider the
+ * check is reported as not evaluated rather than passing.
+ */
+async function checkAvailability(items: Record<string, unknown>[], sourcing?: SourcingClient): Promise<ManufacturingCheck> {
+  if (!sourcing) return {
+    id: "component-availability",
+    status: "not-evaluated",
+    message: "No component sourcing provider is configured, so supplier stock was not checked. Set COMPONENT_SOURCING_URL to enable it.",
+  }
+  let report: Awaited<ReturnType<typeof checkComponentAvailability>>
+  try {
+    report = await checkComponentAvailability(items, sourcing)
+  } catch (error) {
+    return {
+      id: "component-availability",
+      status: "not-evaluated",
+      message: `The component sourcing provider could not be reached, so supplier stock was not checked: ${error instanceof Error ? error.message : String(error)}`,
+    }
+  }
+  if (report.outOfStock.length > 0) return {
+    id: "component-availability",
+    status: "warning",
+    message: `${report.outOfStock.length} part${report.outOfStock.length === 1 ? "" : "s"} below the quantity this design needs: ${report.outOfStock.join("; ")}.`,
+  }
+  if (report.parts.every(({ status }) => status === "unknown")) return {
+    id: "component-availability",
+    status: "not-evaluated",
+    message: `Supplier stock is unknown for every part: ${report.unknown.map(({ name, reason }) => `${name}: ${reason}`).join("; ") || "no components were found"}.`,
+  }
+  const checked = report.parts.filter(({ status }) => status === "in-stock").length
+  return {
+    id: "component-availability",
+    status: report.unknown.length > 0 ? "warning" : "pass",
+    message: report.unknown.length > 0
+      ? `${checked} part${checked === 1 ? " is" : "s are"} in stock; stock is unknown for ${report.unknown.map(({ name }) => name).join(", ")}.`
+      : `All ${checked} part${checked === 1 ? " is" : "s are"} in stock at the configured supplier.`,
+  }
 }
 
 function checkBomData(sources: Record<string, unknown>[]): ManufacturingCheck {
@@ -111,7 +153,7 @@ function checkRoutedConnections(items: Record<string, unknown>[]): Manufacturing
   return { id: "routed-connections", status: "pass", message: `All ${sourceTraces.length} logical source trace${sourceTraces.length === 1 ? " has" : "s have"} routed PCB trace geometry.` }
 }
 
-export function mountManufacturingRoutes(app: Express, service: ManufacturingService) {
+export function mountManufacturingRoutes(app: Express, service: ManufacturingService, sourcing?: SourcingClient) {
   app.get("/api/manufacturing/profiles", (_request, response) => response.json({ profiles: manufacturingRuleProfiles }))
   app.get("/api/projects/:id/manufacturing", async (request, response, next) => {
     try {
@@ -120,7 +162,7 @@ export function mountManufacturingRoutes(app: Express, service: ManufacturingSer
       const project = await service.get(request.params.id!)
       const preview = await service.preview(request.params.id!)
       response.json({ projectRevision: project.revision, previewRevision: preview.revision,
-        preflight: await checkManufacturability(preview.circuitJson, project.lastBuild ?? { status: "idle", revision: "" }, preview.revision, project.revision, profileId) })
+        preflight: await checkManufacturability(preview.circuitJson, project.lastBuild ?? { status: "idle", revision: "" }, preview.revision, project.revision, profileId, sourcing) })
     } catch (error) { next(error) }
   })
   app.get("/api/projects/:id/manufacturing.zip", async (request, response, next) => {
@@ -130,7 +172,7 @@ export function mountManufacturingRoutes(app: Express, service: ManufacturingSer
       if (!profileId) return
       const project = await service.get(request.params.id!)
       const preview = await service.preview(request.params.id!)
-      const preflight = await checkManufacturability(preview.circuitJson, project.lastBuild ?? { status: "idle", revision: "" }, preview.revision, project.revision, profileId)
+      const preflight = await checkManufacturability(preview.circuitJson, project.lastBuild ?? { status: "idle", revision: "" }, preview.revision, project.revision, profileId, sourcing)
       if (!preflight.ready) return response.status(422).json({ error: "Manufacturing preflight failed", projectRevision: project.revision, preflight })
       archive = await service.exportGerbers(request.params.id!)
       const sourceFiles = await service.getSnapshotFiles(request.params.id!)

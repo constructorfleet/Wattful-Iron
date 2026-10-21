@@ -14,6 +14,7 @@ import { createGerberArchive, mountManufacturingRoutes } from "./manufacturing.j
 import { getSimulationResults } from "./simulation.js"
 import { buildNetTraceIndex } from "./net-trace.js"
 import { analyzePower } from "./power-analysis.js"
+import { createSourcingClient, estimateBomCost, listDesignParts, normalizeLcscPartNumber, type SourcingClient } from "./component-sourcing.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
 import { runCommand } from "./build-process.js"
 import { executeRemoteBuild, type IsolatedBuildResult } from "./build-client.js"
@@ -29,7 +30,7 @@ type ProjectState = { project: ProjectData; preview?: unknown }
 type ProjectSnapshot = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes: number; files: Record<string, string> }
 type ServerEvent = "project" | "file" | "build.status" | "build.ready" | "build.failed"
 type BuildFn = (projectDir: string, entrypoint: string) => Promise<unknown>
-type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; buildExecutionMode?: "isolated" | "trusted-local"; buildRunner?: { url: string; token: string }; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string; workbenchAuthToken?: string; kicadCliPath?: string }
+type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; buildExecutionMode?: "isolated" | "trusted-local"; buildRunner?: { url: string; token: string }; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string; workbenchAuthToken?: string; kicadCliPath?: string; componentSourcing?: SourcingClient | { baseUrl: string; provider?: string } }
 
 const execFile = promisify(execFileCallback)
 
@@ -862,8 +863,33 @@ export function createApp(options: AppOptions = {}): Express {
 
   app.get("/healthz", (_request, response) => response.json({ status: "ok" }))
   const token = options.mcpAuthToken ?? process.env.MCP_AUTH_TOKEN
-  mountMcp(app, service, token)
-  mountManufacturingRoutes(app, service)
+  const sourcing = createConfiguredSourcing(options.componentSourcing)
+  mountMcp(app, service, token, sourcing)
+  mountManufacturingRoutes(app, service, sourcing)
+  app.get("/api/components/:part", async (request, response, next) => {
+    try {
+      if (!sourcing) return response.status(503).json({ configured: false, error: "No component sourcing provider is configured. Set COMPONENT_SOURCING_URL to enable supplier lookups." })
+      const part = normalizeLcscPartNumber(request.params.part)
+      if (!part) throw badRequest("Component lookups take an LCSC part number such as C2040")
+      const sourced = await sourcing.lookup(part)
+      if (!sourced) return response.status(404).json({ configured: true, error: `The supplier index returned no part for ${part}` })
+      response.json({ configured: true, provider: sourcing.provider, part: sourced })
+    } catch (error) { next(error) }
+  })
+  app.get("/api/projects/:id/bom-cost", async (request, response, next) => {
+    try {
+      const preview = await service.preview(request.params.id!)
+      if (!sourcing) return response.status(200).json({
+        configured: false,
+        revision: preview.revision,
+        parts: listDesignParts(preview.circuitJson),
+        message: "No component sourcing provider is configured, so no prices or stock were looked up. Set COMPONENT_SOURCING_URL to enable it.",
+      })
+      const boards = request.query.boards === undefined ? 1 : Number(request.query.boards)
+      if (!Number.isInteger(boards)) throw badRequest("boards must be a whole number")
+      response.json({ configured: true, provider: sourcing.provider, revision: preview.revision, ...await estimateBomCost(preview.circuitJson, sourcing, boards) })
+    } catch (error) { next(error) }
+  })
   app.get("/api/projects", async (_request, response, next) => {
     try { response.json(await service.list()) } catch (error) { next(error) }
   })
@@ -1183,6 +1209,28 @@ function cleanRelative(input: string) {
 }
 function isId(id: string) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) }
 function newRevision() { return randomUUID() }
+/**
+ * Build the supplier lookup client from an injected client, explicit options, or
+ * COMPONENT_SOURCING_URL. Sourcing stays off unless one of those is present, so the
+ * workbench makes no outbound supplier requests by default.
+ */
+function createConfiguredSourcing(option: AppOptions["componentSourcing"]): SourcingClient | undefined {
+  if (option && "lookup" in option) return option
+  const baseUrl = option?.baseUrl ?? process.env.COMPONENT_SOURCING_URL
+  if (!baseUrl) return undefined
+  const timeoutMs = Number(process.env.COMPONENT_SOURCING_TIMEOUT_MS)
+  try {
+    return createSourcingClient({
+      baseUrl,
+      provider: option?.provider ?? process.env.COMPONENT_SOURCING_PROVIDER ?? "jlcsearch",
+      ...(Number.isFinite(timeoutMs) && timeoutMs > 0 ? { timeoutMs } : {}),
+    })
+  } catch (error) {
+    console.error("Component sourcing is disabled because its configuration is invalid", error)
+    return undefined
+  }
+}
+
 function badRequest(message: string) { return Object.assign(new Error(message), { status: 400 }) }
 function digest(value: string | Buffer) { return createHash("sha256").update(value).digest("hex") }
 function safePackageName(name: string) { return name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "circuit-project" }

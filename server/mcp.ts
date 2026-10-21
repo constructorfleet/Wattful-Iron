@@ -12,6 +12,7 @@ import { parseRequirements, validateRequirements } from "./requirements.js"
 import { addComponent, connectComponents, listSourceComponents, removeComponent, setBoardDimensions, setComponentProperties } from "./circuit-source.js"
 import { checkRouting, runDesignRuleCheck, runElectricalRuleCheck } from "./rule-checks.js"
 import { analyzePower } from "./power-analysis.js"
+import { estimateBomCost, listDesignParts, normalizeLcscPartNumber, type SourcingClient } from "./component-sourcing.js"
 
 type Project = {
   id: string
@@ -44,7 +45,7 @@ const toolError = (error: unknown) => ({
   content: [{ type: "text" as const, text: error instanceof Error ? error.message : JSON.stringify(error, null, 2) ?? String(error) }],
 })
 
-export function mountMcp(app: Express, service: ProjectService, configuredToken?: string) {
+export function mountMcp(app: Express, service: ProjectService, configuredToken?: string, sourcing?: SourcingClient) {
   if (!configuredToken) {
     app.all("/mcp", (_request, response) => response.status(503).json({ error: "MCP_AUTH_TOKEN must be configured" }))
     return
@@ -62,7 +63,7 @@ export function mountMcp(app: Express, service: ProjectService, configuredToken?
     },
   }
 
-  const mcpHandler = createMcpHandler(() => createServer(service), { onerror: (error) => console.error("MCP handler failed", error) })
+  const mcpHandler = createMcpHandler(() => createServer(service, sourcing), { onerror: (error) => console.error("MCP handler failed", error) })
   const handler = toNodeHandler(mcpHandler)
   service.onClose(() => mcpHandler.close())
   const auth = requireBearerAuth({ verifier })
@@ -77,7 +78,7 @@ export function mountMcp(app: Express, service: ProjectService, configuredToken?
   })
 }
 
-function createServer(service: ProjectService): McpServer {
+function createServer(service: ProjectService, sourcing?: SourcingClient): McpServer {
   const server = new McpServer({ name: "circuits-workbench", version: "0.2.0" })
   server.registerTool("list_projects", {
     title: "List projects",
@@ -408,8 +409,38 @@ function createServer(service: ProjectService): McpServer {
         project.lastBuild ?? { status: "idle", revision: "" },
         preview.revision,
         project.revision,
+        undefined,
+        sourcing,
       ),
     }
+  }))
+
+  server.registerTool("get_component_sourcing", {
+    title: "Look up supplier data for a part",
+    description: "Read manufacturer part number, package, description, stock, unit price, and basic/preferred flags for an LCSC part number from the configured supplier index. Fails when no provider is configured.",
+    inputSchema: z.object({ part: z.string().trim().min(2).max(20) }),
+  }, async ({ part }) => safeTool(async () => {
+    if (!sourcing) throw new Error("No component sourcing provider is configured. Set COMPONENT_SOURCING_URL to enable supplier lookups.")
+    const normalized = normalizeLcscPartNumber(part)
+    if (!normalized) throw new Error(`'${part}' is not an LCSC part number such as C2040`)
+    const sourced = await sourcing.lookup(normalized)
+    if (!sourced) throw new Error(`The supplier index returned no part for ${normalized}`)
+    return { provider: sourcing.provider, part: sourced }
+  }))
+
+  server.registerTool("estimate_manufacturing_cost", {
+    title: "Estimate component cost for a board quantity",
+    description: "Price the components in the latest successful build for a board quantity using the configured supplier index. Covers component cost only: fabrication, assembly, tooling, shipping, and taxes are excluded, and parts without an LCSC part number or price are listed as unpriced.",
+    inputSchema: z.object({ projectId, boards: z.number().int().min(1).max(10000).optional() }),
+  }, async ({ projectId, boards }) => safeTool(async () => {
+    const preview = await service.preview(projectId)
+    if (!sourcing) return {
+      revision: preview.revision,
+      configured: false,
+      parts: listDesignParts(preview.circuitJson),
+      message: "No component sourcing provider is configured, so no prices or stock were looked up. Set COMPONENT_SOURCING_URL to enable it.",
+    }
+    return { revision: preview.revision, configured: true, provider: sourcing.provider, ...await estimateBomCost(preview.circuitJson, sourcing, boards ?? 1) }
   }))
 
   server.registerTool("get_manufacturing_package", {

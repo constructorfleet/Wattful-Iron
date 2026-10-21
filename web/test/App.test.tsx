@@ -24,6 +24,8 @@ const api = vi.hoisted(() => ({
   getSimulation: vi.fn(),
   getNets: vi.fn(),
   getPower: vi.fn(),
+  getBomCost: vi.fn(),
+  getComponentSourcing: vi.fn(),
   getManufacturingProfiles: vi.fn(),
   getManufacturingPreflight: vi.fn(),
   subscribeToProject: vi.fn((_id: string, _onEvent: (event: unknown) => void) => () => {}),
@@ -74,6 +76,8 @@ beforeEach(() => {
   ] })
   api.getManufacturingPreflight.mockResolvedValue({ preflight: { ready: true, profile: { id: 'board-default', label: 'Board defaults' }, checks: [{ id: 'circuit-errors', status: 'not-evaluated', message: 'Circuit JSON contains no ERC/DRC error records; no validator result confirms this check passed.' }] } })
   api.getSimulation.mockResolvedValue({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], operatingPoints: [], sweeps: [], analyses: [], diagnostics: [], notEvaluated: [] })
+  api.getBomCost.mockResolvedValue({ configured: false, revision: 'rev-1', parts: [], message: 'No component sourcing provider is configured, so no prices or stock were looked up. Set COMPONENT_SOURCING_URL to enable it.' })
+  api.getComponentSourcing.mockResolvedValue({ configured: false })
   api.getPower.mockResolvedValue({ revision: 'rev-1', status: 'not-evaluated', assumptions: ['IPC-2221 current capacity at a 10 degree Celsius temperature rise.'], traceCapacity: [], nodeVoltages: [], branchCurrents: [], componentPower: [], supplyLoads: [], traceLoads: [], notEvaluated: [{ quantity: 'Thermal rise of components and planes', reason: 'Not implemented. No thermal model or copper area analysis is performed.' }] })
   api.getNets.mockResolvedValue({ revision: 'rev-1', nets: [], uncorrelatedSimulationSignals: [], limitations: ['Nets are grouped by the Circuit JSON connectivity map emitted by the build.'] })
   api.createProject.mockResolvedValue({ ...existingProject, id: 'new-1', name: 'Sensor Board' })
@@ -425,6 +429,48 @@ describe('workbench', () => {
     expect(await screen.findByText('Net net-1 · V')).toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'OUT waveform' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Zoom in OUT' })).toBeEnabled()
+  })
+
+  it('shows supplier stock and price for a component that carries an LCSC part number', async () => {
+    api.getPreview.mockResolvedValue({ kind: 'schematic', revision: 'rev-1', circuitJson: [
+      { type: 'source_component', source_component_id: 'sc-r1', name: 'R1', ftype: 'simple_resistor', supplier_part_numbers: { jlcpcb: ['C25804'] } },
+    ] })
+    api.getComponentSourcing.mockResolvedValue({
+      configured: true, provider: 'jlcsearch',
+      part: { lcscPartNumber: 'C25804', manufacturerPartNumber: '0603WAF1002', package: '0603', stockQuantity: 912345, unitPriceUsd: 0.002, isBasicPart: true },
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Components 1/ }))
+
+    await waitFor(() => expect(api.getComponentSourcing).toHaveBeenCalledWith('C25804'))
+    const inspector = screen.getByRole('complementary', { name: 'Component inspector' })
+    expect(within(inspector).getByText('0603WAF1002')).toBeInTheDocument()
+    expect(within(inspector).getByText('912,345')).toBeInTheDocument()
+    expect(within(inspector).getByText('$0.002')).toBeInTheDocument()
+    expect(within(inspector).getByText('Basic part')).toBeInTheDocument()
+  })
+
+  it('estimates component cost for a board quantity in the manufacturing dialog', async () => {
+    api.getBomCost.mockResolvedValue({
+      configured: true, provider: 'jlcsearch', revision: 'rev-1', boards: 1,
+      lines: [{ name: 'R1, R2', quantity: 2, lcscPartNumber: 'C25804', unitPriceUsd: 0.002, extendedPriceUsd: 0.004, stockQuantity: 912345, isBasicPart: true }],
+      unpriced: [{ name: 'J1', reason: 'Circuit JSON records no LCSC part number for this component.' }],
+      componentCostUsd: 0.004,
+      limitations: ['Component cost only. Board fabrication, assembly, tooling, shipping, and taxes are not included.'],
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Rule checks · Manufacturing/ }))
+
+    expect(await screen.findByText('$0.004 for 1 board · 1 priced line')).toBeInTheDocument()
+    expect(screen.getByText('R1, R2 ×2')).toBeInTheDocument()
+    expect(screen.getByText('Circuit JSON records no LCSC part number for this component.')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Board quantity'), { target: { value: '25' } })
+    await waitFor(() => expect(api.getBomCost).toHaveBeenCalledWith('led-1', 25))
   })
 
   it('shows the DC operating point, sweeps, and power from the build', async () => {

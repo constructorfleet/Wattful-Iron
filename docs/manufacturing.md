@@ -62,3 +62,21 @@ capability, stackup, solder-mask rule, board shape, or assembly requirement. A
 passing preflight and a downloadable package do not certify electrical safety,
 manufacturability, or compatibility with a particular vendor. Review all files
 with the selected fabricator and assembler before ordering.
+
+## Component availability and cost
+
+These depend on an optional supplier index and are disabled by default; see
+[MCP component sourcing](mcp.md#component-sourcing) for the configuration.
+
+With `COMPONENT_SOURCING_URL` set, preflight adds a `component-availability`
+check that compares supplier stock with the quantity the design needs, and the
+manufacturing dialog shows a component-cost estimate for a board quantity you
+choose. Both use the LCSC part numbers Circuit JSON already records for each
+component.
+
+The estimate covers component cost only: fabrication, assembly, tooling,
+shipping, and taxes are excluded, and prices are the supplier's listed prices
+rather than a quote. Parts without an LCSC part number or price appear under
+**Unpriced** with the reason. Without a configured provider, availability
+reports `not-evaluated` and the cost panel says sourcing is not configured;
+neither blocks the export.

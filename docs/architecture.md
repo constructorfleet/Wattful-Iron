@@ -47,6 +47,13 @@ against one project volume.
   net, alongside the quantities that remain not evaluated.
 - An optional bearer-token protected Streamable HTTP MCP endpoint with project,
   build, preview, diagnostics, and simulation tools.
+- Optional JLCPCB/LCSC component sourcing, off unless
+  `COMPONENT_SOURCING_URL` is set: supplier stock, price, package, and
+  basic/preferred flags per LCSC part number, a component-cost estimate for a
+  board quantity, a `component-availability` preflight check, supplier fields
+  in the component inspector, and the cost panel in the manufacturing dialog.
+  Keyword/parameter search and substitution recommendations are not
+  implemented.
 - A `/api/projects/:id/manufacturing` preflight for current builds, supported
   tscircuit Circuit JSON design checks, emitted validation diagnostics, and a
   limited set of selected fabricator rule checks.
@@ -83,7 +90,8 @@ power-rating headroom, and thermal rise are never evaluated.
 The following capabilities in the project vision are not available in this
 slice: ACP servers, per-user authentication and authorization, full
 KiCad-equivalent ERC/DRC, highlighted net and component geometry inside the
-schematic, PCB, and 3D canvases, component datasheets and supplier/availability/cost enrichment, complete
+schematic, PCB, and 3D canvases, component datasheets, supplier
+keyword/parameter search, substitution recommendations, complete
 fabricator rule coverage, Git-backed revision history, approval states, and
 purchasing or fabrication integrations. Cross-probing moves a selection between the
 component inspector, the net inspector, the focused PCB footprint, and the
