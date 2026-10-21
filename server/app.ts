@@ -493,9 +493,14 @@ class ProjectService {
   async listHistory(id: string) {
     const snapshots = await this.readSnapshots(id)
     const commits = await this.git.listRevisions(this.projectDir(id)).catch(() => [])
-    const entries = new Map<string, { revision: string; createdAt: string; changedFiles: string[]; sizeBytes?: number; commit?: string; retainedSnapshot: boolean }>()
-    for (const commit of commits) {
+    type HistoryEntry = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes?: number; commit?: string; retainedSnapshot: boolean }
+    const entries = new Map<string, HistoryEntry>()
+    // Git log is newest first, and commit timestamps only have second resolution, so the
+    // log position breaks ties that the timestamps alone cannot.
+    const gitOrder = new Map<string, number>()
+    for (const [index, commit] of commits.entries()) {
       if (!commit.revision) continue
+      gitOrder.set(commit.revision, index)
       entries.set(commit.revision, { revision: commit.revision, createdAt: commit.createdAt, changedFiles: commit.changedFiles, commit: commit.commit, retainedSnapshot: false })
     }
     for (const snapshot of snapshots) {
@@ -509,7 +514,12 @@ class ProjectService {
         retainedSnapshot: true,
       })
     }
-    const revisions = [...entries.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    // Compare instants rather than strings: snapshots record milliseconds and UTC `Z`,
+    // while Git records whole seconds and a numeric offset.
+    const instant = (entry: HistoryEntry) => Date.parse(entry.createdAt) || 0
+    const position = (entry: HistoryEntry) => gitOrder.get(entry.revision) ?? Number.MAX_SAFE_INTEGER
+    const revisions = [...entries.values()].sort((left, right) =>
+      instant(right) - instant(left) || position(left) - position(right) || left.revision.localeCompare(right.revision))
     const designs = new Set((await readdir(path.join(this.projectDir(id), ".workbench", "designs")).catch(() => []))
       .filter((name) => name.endsWith(".json")).map((name) => name.replace(/\.json$/, "")))
     return {

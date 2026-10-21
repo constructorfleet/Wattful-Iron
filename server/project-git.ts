@@ -138,7 +138,10 @@ function gitDir(projectDir: string) {
   return path.join(projectDir, ".workbench", "git")
 }
 
-/** Run Git without reading the host's user or system configuration. */
+/**
+ * Run Git without reading the host's user or system configuration, and with timestamps in
+ * UTC so commit times are comparable with the workbench's own ISO timestamps.
+ */
 function isolatedEnv(): NodeJS.ProcessEnv {
   return {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
@@ -146,5 +149,6 @@ function isolatedEnv(): NodeJS.ProcessEnv {
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_SYSTEM: "/dev/null",
     GIT_TERMINAL_PROMPT: "0",
+    TZ: "UTC",
   }
 }

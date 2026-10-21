@@ -341,13 +341,18 @@ test("git history keeps revisions past snapshot retention and still compares the
     const { body: project } = await request(f.app).post("/api/projects").send({ name: "Retention" }).expect(201)
     const originalRevision = project.revision
     let revision = project.revision
+    const written = [originalRevision]
     for (let index = 0; index < 50; index++) {
       const result = await request(f.app).put(`/api/projects/${project.id}/files`).query({ path: project.entrypoint })
         .set("If-Match", revision).send({ content: `revision ${index}`, revision }).expect(200)
       revision = result.body.revision
+      written.push(revision)
     }
     const history = await request(f.app).get(`/api/projects/${project.id}/history`).expect(200)
     assert.equal(history.body.gitBacked, true)
+    // Ordering must follow the order the revisions were written, even though Git records
+    // whole seconds while snapshots record milliseconds.
+    assert.deepEqual(history.body.revisions.map((item: { revision: string }) => item.revision), [...written].reverse())
     assert.equal(history.body.snapshotRetention, 50)
     // Every revision stays listed even though only the newest 50 keep a snapshot.
     assert.equal(history.body.revisions.length, 51)
