@@ -178,6 +178,18 @@ points, zero area, or self-intersections. For profiles that depend on
 rectangular board dimensions, manufacturing preflight asks for manual edge
 clearance review on a polygon outline.
 
+## Read supplier stock and component cost
+
+These panels need the optional supplier index described in
+[manufacturing](manufacturing.md#component-availability-and-cost). Without it,
+the inspector says sourcing is not configured and no outbound request is made.
+
+Open **Components** and select a part that carries an LCSC part number in
+Circuit JSON; its **Supplier** section lists the manufacturer part number,
+package, stock, unit price, and whether JLCPCB treats it as a basic or extended
+part. Open **Rule checks · Manufacturing** to see the component-cost estimate,
+set the **Boards** quantity, and review which parts could not be priced and why.
+
 ## Download manufacturing files
 
 1. Build the latest source and wait until the top bar says **Ready**.

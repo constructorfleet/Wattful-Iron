@@ -83,6 +83,29 @@ export type TracedNet = {
   routing: 'routed' | 'partially-routed' | 'unrouted' | 'not-applicable'
 }
 export type NetTraceIndex = { revision: string; nets: TracedNet[]; uncorrelatedSimulationSignals: NetSimulationSignal[]; limitations: string[] }
+export type SourcedPart = {
+  lcscPartNumber: string
+  manufacturerPartNumber?: string
+  package?: string
+  description?: string
+  stockQuantity?: number
+  unitPriceUsd?: number
+  isBasicPart?: boolean
+  isPreferredPart?: boolean
+}
+export type ComponentSourcing = { configured: boolean; provider?: string; part?: SourcedPart; error?: string }
+export type BomCost = {
+  configured: boolean
+  provider?: string
+  revision: string
+  boards?: number
+  lines?: Array<{ name: string; quantity: number; lcscPartNumber?: string; unitPriceUsd?: number; extendedPriceUsd?: number; stockQuantity?: number; isBasicPart?: boolean }>
+  unpriced?: Array<{ name: string; reason: string }>
+  componentCostUsd?: number
+  limitations?: string[]
+  parts?: Array<{ name: string; quantity: number; lcscPartNumbers: string[]; manufacturerPartNumber?: string }>
+  message?: string
+}
 export type ManufacturingProfile = { id: string; label: string; description: string; rules: { minTraceWidthMm: number; minNonPlatedHoleMm: number; copperToBoardEdgeMm: number } }
 export type ManufacturingCheckIssue = { severity: 'error' | 'warning'; type: string; category: string; message: string; affectedIds: string[] }
 export type ManufacturingCheck = { id: string; status: 'pass' | 'fail' | 'warning' | 'not-evaluated'; message: string; issues?: ManufacturingCheckIssue[] }
@@ -204,6 +227,22 @@ export const getPreview = (id: string, kind: PreviewKind, fetcher?: Fetcher) => 
 )
 
 export const getSimulation = (id: string, fetcher?: Fetcher) => request<Simulation>(`/api/projects/${encodeURIComponent(id)}/simulation`, undefined, fetcher)
+
+export async function getComponentSourcing(part: string, fetcher: Fetcher = fetch): Promise<ComponentSourcing> {
+  const response = await fetcher(`/api/components/${encodeURIComponent(part)}`)
+  if (response.status === 503) return { configured: false, ...(await response.json().catch(() => ({}))) as { error?: string } }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as { error?: string }
+    return { configured: true, error: payload.error || `Supplier lookup failed (${response.status})` }
+  }
+  return response.json() as Promise<ComponentSourcing>
+}
+
+export const getBomCost = (id: string, boards = 1, fetcher?: Fetcher) => request<BomCost>(
+  `/api/projects/${encodeURIComponent(id)}/bom-cost?boards=${encodeURIComponent(String(boards))}`,
+  undefined,
+  fetcher,
+)
 
 export const getPower = (id: string, fetcher?: Fetcher) => request<PowerAnalysis>(`/api/projects/${encodeURIComponent(id)}/power`, undefined, fetcher)
 

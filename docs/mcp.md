@@ -55,6 +55,8 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `run_drc` | Run the supported placement and routing checks, and report which board checks are not evaluated. |
 | `check_routing` | Report routing findings, including unrouted and discontinuous connections. |
 | `analyze_power` | Report IPC-2221 current capacity per routed trace, and the power quantities that are not evaluated. |
+| `get_component_sourcing` | Read manufacturer part number, package, description, stock, unit price, and basic/preferred flags for an LCSC part number from the configured supplier index. |
+| `estimate_manufacturing_cost` | Price the build's components for a board quantity, listing every part that could not be priced. Component cost only. |
 | `check_manufacturability` | Run the same current-revision completeness checks used by the manufacturing download route. |
 | `get_manufacturing_package` | Return a `GET` path and `application/zip` content type for the preflight-gated manufacturing download route, optionally selecting a fabricator profile. |
 
@@ -115,6 +117,43 @@ generation. Pass `profile=jlcpcb-2layer-1oz` to apply the JLCPCB two-layer
 profile, or omit it to use board defaults. The ZIP contains Gerber/drill files,
 BOM, and pick-and-place data. These checks do not replace complete vendor rules
 or manufacturing review.
+
+## Component sourcing
+
+Supplier lookups are **off until a provider is configured**, so the workbench
+makes no outbound supplier requests by default and stays usable offline. Set
+`COMPONENT_SOURCING_URL` to a JLCPCB/LCSC part index that exposes the tscircuit
+JLCSearch `/api/search` shape — the public mirror is
+`https://jlcsearch.tscircuit.com`, or run your own — and optionally
+`COMPONENT_SOURCING_TIMEOUT_MS`.
+
+`get_component_sourcing` takes an LCSC part number such as `C2040` and returns
+the supplier's manufacturer part number, package, description, stock, unit
+price, and basic/preferred flags. Results are cached in memory for ten minutes.
+`estimate_manufacturing_cost` prices the components in the latest successful
+build for a board quantity, using the LCSC part numbers Circuit JSON already
+records in `supplier_part_numbers`. Identical parts are grouped and multiplied
+by the board count.
+
+The estimate is **component cost only**: board fabrication, assembly, tooling,
+shipping, and taxes are excluded, unit price is the supplier's listed price
+rather than a quote, and no attrition or spares are added. Parts without an
+LCSC part number, without a listed price, or that the supplier index does not
+return are listed in `unpriced` with the reason instead of being priced as
+zero. A supplier outage leaves the affected parts unpriced rather than failing
+the whole estimate.
+
+Keyword and parameter search is not implemented. The upstream index's search
+endpoint ignores keyword and value filters, so lookups are by LCSC part number
+only. Substitution recommendations are likewise not implemented: shared
+footprints do not make parts interchangeable, and no substitution data is
+available here.
+
+When a provider is configured, manufacturing preflight gains a
+`component-availability` check comparing supplier stock with the quantity the
+design needs. Without a provider the check reports `not-evaluated` rather than
+passing. The same data is available over REST at `GET /api/components/:part`
+and `GET /api/projects/:id/bom-cost?boards=N`.
 
 ## Rule checks and power
 

@@ -18,6 +18,8 @@ services:
       BUILD_RUNNER_TOKEN_FILE: /run/secrets/build_runner_token
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
       WORKBENCH_AUTH_TOKEN: ${WORKBENCH_AUTH_TOKEN:-}
+      COMPONENT_SOURCING_URL: ${COMPONENT_SOURCING_URL:-}
+      COMPONENT_SOURCING_TIMEOUT_MS: ${COMPONENT_SOURCING_TIMEOUT_MS:-}
     volumes:
       - projects:/data/projects
     secrets:
