@@ -729,7 +729,7 @@ export default function App() {
         </aside>
 
         <section className="editor-panel" aria-label="Source editor panel">
-          {review?.locked && <p className="approved-banner" role="status">This revision is approved for manufacturing and is read-only. Reopen it as a draft to edit.</p>}
+          {review?.locked && <output className="approved-banner">This revision is approved for manufacturing and is read-only. Reopen it as a draft to edit.</output>}
           <div className="panel-toolbar editor-toolbar">
             <div className="file-tab"><span className="tsx-icon">TS</span>{filePath || 'No file open'}{dirty && <span className="unsaved-dot" title="Unsaved changes" />}</div>
             <div className="save-indicator">{saving ? 'Saving…' : dirty ? 'Unsaved' : revision ? 'Saved' : ''}</div>

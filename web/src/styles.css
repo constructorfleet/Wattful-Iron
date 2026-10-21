@@ -164,7 +164,7 @@ button { color: inherit; cursor: pointer; }
 .review-button.validated { color: #a8dcc5; border-color: #3c5e4c; }
 .review-button.reviewed { color: #a9c9e0; border-color: #3a566b; }
 .review-button.manufacturing_approved { color: #72d4af; border-color: #4c6e5a; background: #16241d; }
-.approved-banner { margin: 0; padding: 7px 12px; color: #e8c37a; border-bottom: 1px solid #3a3426; background: #231f16; font-size: 10px; }
+.approved-banner { display: block; margin: 0; padding: 7px 12px; color: #e8c37a; border-bottom: 1px solid #3a3426; background: #231f16; font-size: 10px; }
 .review-dialog { max-width: 620px; }
 .review-content { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; overflow-y: auto; }
 .review-content h3 { margin: 4px 0 0; color: #cfd9de; font-size: 11px; }
