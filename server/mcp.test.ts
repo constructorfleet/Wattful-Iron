@@ -386,6 +386,31 @@ test("MCP exposes electrical, board, routing, and power reports for a build", as
     const invalid = await client.callTool({ name: "analyze_power", arguments: { projectId: project.id, temperatureRiseC: 500 } })
     assert.equal(invalid.isError, true)
 
+    const reviewBefore = readResult<{ state: string; locked: boolean; transitions: Array<{ state: string; allowed: boolean; agentAllowed: boolean }> }>(
+      await client.callTool({ name: "get_review_state", arguments: { projectId: project.id } }))
+    assert.equal(reviewBefore.state, "draft")
+    assert.equal(reviewBefore.locked, false)
+    assert.equal(reviewBefore.transitions.find(({ state }) => state === "manufacturing_approved")?.agentAllowed, false)
+
+    const projectForReview = readResult<{ revision: string }>(await client.callTool({ name: "get_project", arguments: { projectId: project.id } }))
+    const validated = readResult<{ state: string; current: { source: string; note?: string } }>(await client.callTool({
+      name: "set_review_state", arguments: { projectId: project.id, state: "validated", revision: projectForReview.revision, note: "Checked by the agent." },
+    }))
+    assert.equal(validated.state, "validated")
+    assert.equal(validated.current.source, "mcp")
+    assert.equal(validated.current.note, "Checked by the agent.")
+
+    const approvalAttempt = await client.callTool({
+      name: "set_review_state", arguments: { projectId: project.id, state: "manufacturing_approved", revision: projectForReview.revision },
+    })
+    // Approving for manufacturing is not part of the tool's schema, so the call is rejected outright.
+    assert.equal(approvalAttempt.isError, true)
+
+    const staleReview = await client.callTool({
+      name: "set_review_state", arguments: { projectId: project.id, state: "reviewed", revision: "11111111-1111-1111-1111-111111111111" },
+    })
+    assert.equal(staleReview.isError, true)
+
     const unconfiguredAssertions = readResult<{ configured: boolean; message: string }>(
       await client.callTool({ name: "check_project_assertions", arguments: { projectId: project.id } }))
     assert.equal(unconfiguredAssertions.configured, false)

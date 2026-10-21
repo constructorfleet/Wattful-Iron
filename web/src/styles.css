@@ -161,6 +161,26 @@ button { color: inherit; cursor: pointer; }
 .design-diff dd { margin: 0; color: #d5dee2; font: 10px var(--mono); }
 .design-added { color: #72d4af; }
 .design-removed { color: #e58b7b; }
+.review-button.validated { color: #a8dcc5; border-color: #3c5e4c; }
+.review-button.reviewed { color: #a9c9e0; border-color: #3a566b; }
+.review-button.manufacturing_approved { color: #72d4af; border-color: #4c6e5a; background: #16241d; }
+.approved-banner { display: block; margin: 0; padding: 7px 12px; color: #e8c37a; border-bottom: 1px solid #3a3426; background: #231f16; font-size: 10px; }
+.review-dialog { max-width: 620px; }
+.review-content { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; overflow-y: auto; }
+.review-content h3 { margin: 4px 0 0; color: #cfd9de; font-size: 11px; }
+.review-superseded { margin: 0; color: #e8c37a; font-size: 10px; }
+.review-evidence { display: grid; margin: 0; gap: 4px 12px; grid-template-columns: minmax(80px, max-content) 1fr; font-size: 10px; }
+.review-evidence dt { color: #93a0a8; }
+.review-evidence dd { margin: 0; color: #d5dee2; font: 10px var(--mono); }
+.review-note { display: flex; flex-direction: column; gap: 4px; color: #93a0a8; font-size: 10px; }
+.review-note textarea { min-height: 54px; padding: 7px 8px; color: #d9e2e6; border: 1px solid #39454a; border-radius: 4px; background: #121a1e; font: 11px var(--mono); resize: vertical; }
+.review-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.review-blocked { margin: 0; color: #9aa6ad; font-size: 10px; }
+.review-history { display: flex; margin: 0; padding: 0; flex-direction: column; gap: 7px; list-style: none; }
+.review-history li { display: grid; gap: 2px; padding: 7px 0; border-top: 1px solid #252e34; font-size: 10px; }
+.review-history strong { color: #d2ddd9; font-weight: 500; }
+.review-history span { color: #8c99a1; font: 9px var(--mono); }
+.review-history em { color: #c6d2d8; font-style: normal; }
 .assertion-results { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid #263036; }
 .assertion-results h3 { margin: 0 0 7px; color: #cfd9de; font-size: 11px; }
 .assertion-summary { margin: 0 0 7px; color: #93a0a8; font: 10px var(--mono); }

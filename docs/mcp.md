@@ -48,6 +48,8 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `get_board_properties` | Return the emitted `pcb_board` elements, including dimensions, material, stackup, and design-rule properties. |
 | `check_connectivity` | Summarize source-port links emitted in Circuit JSON, including ports with no emitted trace and trace references to missing ports. |
 | `get_project_requirements` | Read a project's revisioned `requirements.json` document, when configured. |
+| `get_review_state` | Read the current revision's design review state, history, the evidence transitions are judged against, and which states can be set. |
+| `set_review_state` | Record `validated` or `reviewed` for the current revision. Approving for manufacturing and reopening an approved revision are refused. |
 | `check_project_assertions` | Evaluate the project's `assertions.json` regression assertions against the latest successful build, reporting each as pass, fail, or not evaluated. |
 | `validate_project_requirements` | Compare supported board requirements with the latest successful build and report unsupported checks as not evaluated. |
 | `run_simulation` | Build the current source and return transient SPICE results emitted by tscircuit, when configured. |
@@ -195,6 +197,18 @@ point, total current demand, component dissipation, and trace loading are also
 reported as not evaluated rather than estimated. The same analysis is available
 over REST at `GET /api/projects/:id/power`, which accepts the same
 `temperatureRiseC` and `copperOunces` query parameters.
+
+Each revision carries a design review state: `draft`, `validated`, `reviewed`,
+or `manufacturing_approved`. `get_review_state` reports it with the evidence
+each transition needs, and `set_review_state` records `validated` or `reviewed`
+after checking that evidence. Approving a revision for manufacturing, and
+reopening an approved one, are reserved for a person and refused to agents.
+
+While a revision is approved for manufacturing, every file write and history
+restore is refused with HTTP 423, including through MCP — this is how the
+project's rule that agents must not modify approved manufacturing revisions is
+enforced. A state applies only to its own revision, so any source change returns
+the project to draft. See [design review states](review.md).
 
 Projects can also declare regression assertions in `assertions.json`:
 connected nets, required components, supply-current and dissipation limits, a

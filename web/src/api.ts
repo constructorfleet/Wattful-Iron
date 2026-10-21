@@ -129,6 +129,25 @@ export type BomCost = {
   parts?: Array<{ name: string; quantity: number; lcscPartNumbers: string[]; manufacturerPartNumber?: string }>
   message?: string
 }
+export type ReviewState = 'draft' | 'validated' | 'reviewed' | 'manufacturing_approved'
+export type ReviewEntry = {
+  state: ReviewState
+  revision: string
+  at: string
+  note?: string
+  source: 'browser' | 'mcp'
+  evidence?: { buildStatus?: string; assertions?: { passed: number; failed: number; notEvaluated: number }; preflightReady?: boolean; components?: number; nets?: number }
+}
+export type ReviewView = {
+  state: ReviewState
+  revision: string
+  current?: ReviewEntry
+  supersededFrom?: { state: ReviewState; revision: string; at: string }
+  locked: boolean
+  history: ReviewEntry[]
+  evidence: { buildStatus?: string; buildRevision?: string; projectRevision: string; assertions?: { passed: number; failed: number; notEvaluated: number }; assertionsConfigured?: boolean; preflightReady?: boolean }
+  transitions: Array<{ state: ReviewState; allowed: boolean; reason?: string; agentAllowed: boolean }>
+}
 export type AssertionResult = { id: string; status: 'pass' | 'fail' | 'not-evaluated'; message: string }
 export type AssertionCheck = {
   configured: boolean
@@ -272,6 +291,14 @@ export async function getComponentSourcing(part: string, fetcher: Fetcher = fetc
 export const getBomCost = (id: string, boards = 1, fetcher?: Fetcher) => request<BomCost>(
   `/api/projects/${encodeURIComponent(id)}/bom-cost?boards=${encodeURIComponent(String(boards))}`,
   undefined,
+  fetcher,
+)
+
+export const getReviewState = (id: string, fetcher?: Fetcher) => request<ReviewView>(`/api/projects/${encodeURIComponent(id)}/review`, undefined, fetcher)
+
+export const setReviewState = (id: string, state: ReviewState, revision: string, note?: string, fetcher?: Fetcher) => request<ReviewView>(
+  `/api/projects/${encodeURIComponent(id)}/review`,
+  { method: 'POST', headers: { 'Content-Type': 'application/json', 'If-Match': revision }, body: JSON.stringify({ state, ...(note ? { note } : {}) }) },
   fetcher,
 )
 

@@ -10,6 +10,7 @@ import { checkConnectivity, getBoardProperties, getComponent, getPinConnections,
 import { buildNetTraceIndex, findNet } from "./net-trace.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
 import type { AssertionReport } from "./assertions.js"
+import { isReviewState, type ReviewState } from "./review-state.js"
 import { addComponent, connectComponents, listSourceComponents, removeComponent, setBoardDimensions, setComponentProperties } from "./circuit-source.js"
 import { checkRouting, runDesignRuleCheck, runElectricalRuleCheck } from "./rule-checks.js"
 import { analyzePower } from "./power-analysis.js"
@@ -48,7 +49,13 @@ const toolError = (error: unknown) => ({
   content: [{ type: "text" as const, text: error instanceof Error ? error.message : JSON.stringify(error, null, 2) ?? String(error) }],
 })
 
-export function mountMcp(app: Express, service: ProjectService, configuredToken?: string, sourcing?: SourcingClient, assertions?: (id: string) => Promise<AssertionReport | undefined>) {
+/** Review access the app hands to MCP: reading status, and recording the states agents may set. */
+export type ReviewAccess = {
+  view(id: string): Promise<unknown>
+  set(id: string, target: ReviewState, expectedRevision: string, note?: string): Promise<unknown>
+}
+
+export function mountMcp(app: Express, service: ProjectService, configuredToken?: string, sourcing?: SourcingClient, assertions?: (id: string) => Promise<AssertionReport | undefined>, review?: ReviewAccess) {
   if (!configuredToken) {
     app.all("/mcp", (_request, response) => response.status(503).json({ error: "MCP_AUTH_TOKEN must be configured" }))
     return
@@ -66,7 +73,7 @@ export function mountMcp(app: Express, service: ProjectService, configuredToken?
     },
   }
 
-  const mcpHandler = createMcpHandler(() => createServer(service, sourcing, assertions), { onerror: (error) => console.error("MCP handler failed", error) })
+  const mcpHandler = createMcpHandler(() => createServer(service, sourcing, assertions, review), { onerror: (error) => console.error("MCP handler failed", error) })
   const handler = toNodeHandler(mcpHandler)
   service.onClose(() => mcpHandler.close())
   const auth = requireBearerAuth({ verifier })
@@ -81,7 +88,7 @@ export function mountMcp(app: Express, service: ProjectService, configuredToken?
   })
 }
 
-function createServer(service: ProjectService, sourcing?: SourcingClient, assertions?: (id: string) => Promise<AssertionReport | undefined>): McpServer {
+function createServer(service: ProjectService, sourcing?: SourcingClient, assertions?: (id: string) => Promise<AssertionReport | undefined>, review?: ReviewAccess): McpServer {
   const server = new McpServer({ name: "circuits-workbench", version: "0.2.0" })
   server.registerTool("list_projects", {
     title: "List projects",
@@ -315,6 +322,25 @@ function createServer(service: ProjectService, sourcing?: SourcingClient, assert
     const [file, preview] = await Promise.all([service.readFile(projectId, "requirements.json"), service.preview(projectId)])
     if (file.revision !== project.revision || preview.revision !== project.revision) return { configured: true, stale: true, revision: project.revision, previewRevision: preview.revision, checks: [], message: "The latest successful build or requirements file is for an older project revision; rebuild before validating requirements." }
     return { configured: true, stale: false, revision: project.revision, previewRevision: preview.revision, ...validateRequirements(parseRequirements(file.content), preview.circuitJson) }
+  }))
+
+  server.registerTool("get_review_state", {
+    title: "Get the project's design review state",
+    description: "Read the review state of the project's current revision (draft, validated, reviewed, or manufacturing_approved), the review history, the evidence each transition is judged against, and which states can be set now. A state applies only to the revision it was recorded against, so any source change returns the project to draft.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => {
+    if (!review) throw new Error("Design review state is unavailable on this workbench")
+    return review.view(projectId)
+  }))
+
+  server.registerTool("set_review_state", {
+    title: "Record a design review state",
+    description: "Record 'validated' or 'reviewed' for the project's current revision, passing that revision for concurrency. Both require a successful build of the current revision and, when the project declares assertions, that none of them fail. Approving a revision for manufacturing and reopening an approved revision are reserved for a person and refused here. While a revision is approved for manufacturing, all file writes are refused.",
+    inputSchema: z.object({ projectId, state: z.enum(["validated", "reviewed"]), revision, note: z.string().trim().max(2000).optional() }),
+  }, async ({ projectId, state, revision: expected, note }) => safeTool(async () => {
+    if (!review) throw new Error("Design review state is unavailable on this workbench")
+    if (!isReviewState(state)) throw new Error("state must be validated or reviewed")
+    return review.set(projectId, state, expected, note)
   }))
 
   server.registerTool("check_project_assertions", {

@@ -76,6 +76,12 @@ against one project volume.
   tscircuit's verified Gerber/drill/BOM/pick-and-place ZIP export.
 - Board-default and JLCPCB rigid two-layer, one-ounce profiles for checking
   trace width, non-plated hole diameter, and rectangular board edge clearance.
+- Design review states per revision (`draft → validated → reviewed →
+  manufacturing_approved`) with evidence-checked transitions, a retained review
+  log, and a read-only lock on an approved revision that refuses writes and
+  restores from the browser, REST, and MCP alike. Agents may record validation
+  and review; approving a revision and reopening an approved one are reserved
+  for a person.
 - Versioned `assertions.json` regression assertions with REST and MCP evaluation:
   named nets stay connected, required components exist, supply current and
   calculated dissipation stay within limits, supported design-check findings do
@@ -114,8 +120,8 @@ slice: ACP servers, per-user authentication and authorization, full
 KiCad-equivalent ERC/DRC, highlighted net and component geometry inside the
 schematic, PCB, and 3D canvases, component datasheets, supplier
 keyword/parameter search, substitution recommendations, complete
-fabricator rule coverage, approval states, rendered schematic and PCB image
-diffs, and purchasing or fabrication integrations. Cross-probing moves a selection between the
+fabricator rule coverage, rendered schematic and PCB image diffs, and
+purchasing or fabrication integrations. Cross-probing moves a selection between the
 component inspector, the net inspector, the focused PCB footprint, and the
 waveform panel, and lists the schematic wires, copper traces, vias, and
 simulation signals on a net; it does not highlight geometry inside the
@@ -123,7 +129,8 @@ schematic, PCB, or 3D canvases, and it does not edit source properties. MCP agen
 component properties, and traces structurally, but there is no equivalent
 browser affordance and no circuit-level undo beyond project source history. Optional workbench
 authentication uses a shared token for the browser and REST API; MCP has its own
-shared bearer token. There is no per-user identity or access control.
+shared bearer token. There is no per-user identity or access control, so a
+review entry records which interface recorded it rather than who did.
 Regression assertions evaluate only the
 quantities listed in [assertions](assertions.md); anything without evidence in
 the build is reported as not evaluated rather than passed. Requirements

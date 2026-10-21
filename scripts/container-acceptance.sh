@@ -382,6 +382,55 @@ assert_project_assertions() {
   ' "$preflight")"
 }
 
+assert_review_states() {
+  state=$(curl --fail --silent --show-error "$base_url/api/projects/$project_id")
+  current=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).revision)' "$state")
+  review=$(curl --fail --silent --show-error "$base_url/api/projects/$project_id/review")
+  node -e '
+    const result = JSON.parse(process.argv[1]);
+    if (result.state !== "draft") throw new Error(`Expected a draft revision, got ${result.state}`);
+    if (result.locked !== false) throw new Error("A draft revision must not be locked");
+    const approval = result.transitions.find((item) => item.state === "manufacturing_approved");
+    if (approval.allowed !== false) throw new Error("Approval must not be available straight from draft");
+    if (approval.agentAllowed !== false) throw new Error("Approval must never be available to MCP agents");
+  ' "$review"
+
+  for target in validated reviewed manufacturing_approved; do
+    recorded=$(curl --fail --silent --show-error -X POST \
+      -H 'Content-Type: application/json' -H "If-Match: $current" \
+      -d "{\"state\":\"$target\",\"note\":\"container acceptance\"}" \
+      "$base_url/api/projects/$project_id/review")
+    node -e '
+      const result = JSON.parse(process.argv[1]);
+      if (result.state !== process.argv[2]) throw new Error(`Expected ${process.argv[2]}, got ${result.state}`);
+    ' "$recorded" "$target"
+  done
+
+  # An approved revision must refuse writes through the same path the browser and MCP use.
+  file_state=$(curl --fail --silent --show-error "$base_url/api/projects/$project_id/files?path=$entrypoint")
+  file_revision=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).revision)' "$file_state")
+  write_body=$(node -e 'process.stdout.write(JSON.stringify({content: "export default () => null", revision: process.argv[1]}))' "$file_revision")
+  write_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' -X PUT \
+    -H 'Content-Type: application/json' -H "If-Match: $file_revision" \
+    -d "$write_body" \
+    "$base_url/api/projects/$project_id/files?path=$entrypoint")
+  if [ "$write_status" != 423 ]; then
+    printf 'Approved revision accepted a write with status %s instead of 423\n' "$write_status" >&2
+    return 1
+  fi
+
+  reopened=$(curl --fail --silent --show-error -X POST \
+    -H 'Content-Type: application/json' -H "If-Match: $current" \
+    -d '{"state":"draft","note":"reopening after acceptance"}' \
+    "$base_url/api/projects/$project_id/review")
+  node -e '
+    const result = JSON.parse(process.argv[1]);
+    if (result.state !== "draft" || result.locked !== false) throw new Error(`Reopening left the revision ${result.state}`);
+    if (result.history.length < 4) throw new Error(`Expected the review log to retain each state, saw ${result.history.length}`);
+  ' "$reopened"
+  printf 'Review states advanced to manufacturing approval, locked the revision, and reopened it.\n'
+}
+
 assert_live_updates
 assert_simulation_status
 assert_net_tracing "$corrected_revision"
@@ -390,5 +439,6 @@ assert_component_sourcing_disabled
 assert_history_and_design_diff
 assert_project_assertions
 assert_manufacturing_package
+assert_review_states
 
-printf 'Container acceptance passed for project %s through edit, live updates, diagnostics, preview retention, recovery, simulation status, net tracing, power analysis, disabled component sourcing, Git-backed history with design comparison, project assertions, manufacturing preflight and export, and all preview endpoints.\n' "$project_id"
+printf 'Container acceptance passed for project %s through edit, live updates, diagnostics, preview retention, recovery, simulation status, net tracing, power analysis, disabled component sourcing, Git-backed history with design comparison, project assertions, manufacturing preflight and export, review states with an approval lock, and all preview endpoints.\n' "$project_id"
