@@ -52,6 +52,7 @@ COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/web/dist ./web/dist
 COPY --from=build --chown=node:node /app/examples ./examples
+COPY --from=build --chown=node:node /app/modules ./modules
 
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
     && mkdir -p /data/projects /data/auth \

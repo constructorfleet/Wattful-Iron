@@ -1,0 +1,21 @@
+{
+  "id": "led-indicator",
+  "name": "LED indicator",
+  "component": "LedIndicator",
+  "description": "An LED with a series current-limiting resistor.",
+  "parameters": [
+    { "name": "ledRef", "type": "string", "default": "D1", "description": "Reference designator for the LED." },
+    { "name": "resistorRef", "type": "string", "default": "R1", "description": "Reference designator for the series resistor." },
+    { "name": "resistance", "type": "string", "default": "1k", "description": "Series resistance that sets the LED current." },
+    { "name": "pcbX", "type": "number", "default": "0", "description": "Module position on the board, in millimetres." },
+    { "name": "pcbY", "type": "number", "default": "0", "description": "Module position on the board, in millimetres." },
+    { "name": "schX", "type": "number", "default": "0", "description": "Module position on the schematic sheet." },
+    { "name": "schY", "type": "number", "default": "0", "description": "Module position on the schematic sheet." }
+  ],
+  "terminals": ["drive", "LED_DRIVE", "return"],
+  "usage": "<LedIndicator resistance=\"2.2k\" pcbX={-24} schX={-10} />",
+  "notes": [
+    "The series resistance is not calculated for you: pick it from the supply voltage and the LED's forward voltage and current.",
+    "The generic LED carries no manufacturer part number, so a build warns until you specify one."
+  ]
+}

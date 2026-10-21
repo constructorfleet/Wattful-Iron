@@ -12,10 +12,12 @@ import {
   exportProjectArchive,
   getManufacturingArchive,
   getManufacturingPreflight,
+  addCircuitModule,
   getAssertionCheck,
   getSession,
   login as loginApi,
   logout as logoutApi,
+  listCircuitModules,
   getReviewState,
   setReviewState,
   getBomCost,
@@ -43,9 +45,11 @@ import {
   type BuildStatus,
   type ManufacturingCheck,
   type ManufacturingPreflight,
+  type AddedModule,
   type AssertionCheck,
   type Capability,
   type SessionView,
+  type CircuitModule,
   type ReviewState as ReviewStateName,
   type ReviewView,
   type BomCost,
@@ -170,6 +174,10 @@ export default function App() {
   const [manufacturingDialogOpen, setManufacturingDialogOpen] = useState(false)
   const [bomCost, setBomCost] = useState<BomCost | null>(null)
   const [assertionCheck, setAssertionCheck] = useState<AssertionCheck | null>(null)
+  const [modulesDialogOpen, setModulesDialogOpen] = useState(false)
+  const [circuitModules, setCircuitModules] = useState<CircuitModule[]>([])
+  const [addedModule, setAddedModule] = useState<AddedModule | null>(null)
+  const [addingModule, setAddingModule] = useState('')
   const [review, setReview] = useState<ReviewView | null>(null)
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false)
   const [reviewNote, setReviewNote] = useState('')
@@ -414,6 +422,13 @@ export default function App() {
     getManufacturingPreflight(project.id, manufacturingProfile).then(({ preflight }) => { if (active) setManufacturingPreflight(preflight) }).catch(() => { if (active) setManufacturingPreflight(null) }).finally(() => { if (active) setLoadingManufacturing(false) })
     return () => { active = false }
   }, [project?.id, manufacturingProfile, build.status, build.revision])
+
+  useEffect(() => {
+    if (!modulesDialogOpen || circuitModules.length > 0) return
+    let active = true
+    listCircuitModules().then(({ modules }) => { if (active) setCircuitModules(modules) }).catch(() => undefined)
+    return () => { active = false }
+  }, [modulesDialogOpen, circuitModules.length])
 
   useEffect(() => {
     if (!project || !manufacturingDialogOpen) { setBomCost(null); setAssertionCheck(null); return }
@@ -667,6 +682,22 @@ export default function App() {
     setView('pcb')
   }
 
+  const addModule = async (moduleId: string) => {
+    if (!project) return
+    setAddingModule(moduleId)
+    setError('')
+    try {
+      const result = await addCircuitModule(project.id, moduleId, revision)
+      setAddedModule(result)
+      setRevision(result.revision)
+      setProjectFiles(await getProjectFiles(project.id))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to add the module')
+    } finally {
+      setAddingModule('')
+    }
+  }
+
   const recordReviewState = async (target: ReviewStateName) => {
     if (!project || !review) return
     setRecordingReview(true)
@@ -737,6 +768,7 @@ export default function App() {
             <button type="button" className="quiet-button" onClick={() => void signOut()}>Sign out</button>
           </div>}
           {review && <button type="button" className={`build-button review-button ${review.state}`} disabled={!project} onClick={() => setReviewDialogOpen(true)}>{reviewStateLabels[review.state]}{review.locked ? ' 🔒' : ''}</button>}
+          <button type="button" className="build-button" disabled={!project} onClick={() => setModulesDialogOpen(true)}>Modules</button>
           <button type="button" className="build-button history-button" disabled={!project} onClick={() => setHistoryDialogOpen(true)}>History</button>
           <button type="button" className="build-button" disabled={!project || exportingArchive} onClick={() => void downloadProjectArchive()}>{exportingArchive ? 'Exporting…' : 'Export project ZIP'}</button>
           <button type="button" className="build-button" disabled={!project?.referencePdfs?.length} onClick={() => setReferencePdfOpen(true)}>PDF reference</button>
@@ -920,6 +952,26 @@ export default function App() {
               </li>)}
             </ul>}
             <p className="inspector-note">A review state applies only to the revision it was recorded against: editing the source returns the project to draft. While a revision is approved for manufacturing, file writes and restores are refused. Approving a revision, and reopening an approved one, are not available to MCP agents. Recording a state does not verify the design.</p>
+          </div>
+        </section>
+      </div>}
+      {modulesDialogOpen && <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setModulesDialogOpen(false); setAddedModule(null) } }}>
+        <section className="history-dialog modules-dialog" role="dialog" aria-modal="true" aria-labelledby="modules-title">
+          <header><div><h2 id="modules-title">Circuit modules</h2><p>Reusable starting points. Adding one writes its source into the project; wire up its terminals yourself.</p></div><button type="button" aria-label="Close circuit modules" onClick={() => { setModulesDialogOpen(false); setAddedModule(null) }}>×</button></header>
+          <div className="modules-content">
+            {circuitModules.length === 0 ? <p className="history-empty">Loading modules…</p> : circuitModules.map((module) => <article className="module-card" key={module.id} aria-label={module.name}>
+              <header><h3>{module.name}</h3><button type="button" className="build-button" disabled={!project || dirty || addingModule === module.id} onClick={() => void addModule(module.id)}>{addingModule === module.id ? 'Adding…' : 'Add to project'}</button></header>
+              <p>{module.description}</p>
+              <dl>
+                <dt>Terminals</dt><dd>{module.terminals.join(', ')}</dd>
+                <dt>Parameters</dt><dd>{module.parameters.filter(({ name }) => !['pcbX', 'pcbY', 'schX', 'schY'].includes(name)).map(({ name, default: value }) => value ? `${name}=${value}` : name).join(', ') || 'position only'}</dd>
+                <dt>File</dt><dd><code>{module.path}</code></dd>
+              </dl>
+              <pre>{module.usage}</pre>
+              <ul className="module-notes">{module.notes.map((note) => <li key={note}>{note}</li>)}</ul>
+            </article>)}
+            {addedModule && <output className="module-added" aria-label="Added module">Added <code>{addedModule.path}</code>. Add <code>{addedModule.importLine}</code> and place <code>{addedModule.usage}</code> in your board.</output>}
+            {dirty && <p className="history-empty">Save or discard the editor changes before adding a module.</p>}
           </div>
         </section>
       </div>}

@@ -24,7 +24,9 @@ const api = vi.hoisted(() => ({
   getSimulation: vi.fn(),
   getNets: vi.fn(),
   getPower: vi.fn(),
+  addCircuitModule: vi.fn(),
   getAssertionCheck: vi.fn(),
+  listCircuitModules: vi.fn(),
   getReviewState: vi.fn(),
   getSession: vi.fn(),
   login: vi.fn(),
@@ -96,6 +98,15 @@ beforeEach(() => {
       { state: 'manufacturing_approved', allowed: false, reason: 'Manufacturing approved comes after Reviewed; this revision is Draft.', agentAllowed: false },
     ],
   })
+  api.listCircuitModules.mockResolvedValue({ modules: [{
+    id: 'resistor-divider', name: 'Resistor divider', component: 'ResistorDivider',
+    description: 'A two-resistor divider whose junction carries the divided output.',
+    parameters: [{ name: 'top', type: 'string', default: '10k' }, { name: 'pcbX', type: 'number', default: '0' }],
+    terminals: ['input', 'SENSE', 'return'],
+    usage: '<ResistorDivider top="22k" bottom="10k" pcbX={8} schX={3} />',
+    notes: ['The divider loads the source it measures; pick values for the source impedance.'],
+    path: 'modules/resistor-divider.tsx',
+  }] })
   api.getAssertionCheck.mockResolvedValue({ configured: false, revision: 'rev-1', message: 'This project has no assertions.json document, so no regression assertions were evaluated.' })
   api.getBomCost.mockResolvedValue({ configured: false, revision: 'rev-1', parts: [], message: 'No component sourcing provider is configured, so no prices or stock were looked up. Set COMPONENT_SOURCING_URL to enable it.' })
   api.getComponentSourcing.mockResolvedValue({ configured: false })
@@ -521,6 +532,30 @@ describe('workbench', () => {
 
     expect(await screen.findByText(/read-only access, so the editor cannot save changes/)).toBeInTheDocument()
     await waitFor(() => expect(screen.getByLabelText('TSX source editor')).toHaveAttribute('readonly'))
+  })
+
+  it('adds a circuit module and reports the import line and usage to place', async () => {
+    api.addCircuitModule.mockResolvedValue({
+      module: { id: 'resistor-divider', name: 'Resistor divider', component: 'ResistorDivider', description: '', parameters: [], terminals: [], usage: '<ResistorDivider />', notes: [], path: 'modules/resistor-divider.tsx' },
+      path: 'modules/resistor-divider.tsx',
+      revision: 'rev-2',
+      importLine: 'import { ResistorDivider } from "./modules/resistor-divider"',
+      usage: '<ResistorDivider top="22k" bottom="10k" pcbX={8} schX={3} />',
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Modules' }))
+
+    const card = await screen.findByRole('article', { name: 'Resistor divider' })
+    expect(within(card).getByText('input, SENSE, return')).toBeInTheDocument()
+    expect(within(card).getByText(/pick values for the source impedance/)).toBeInTheDocument()
+    fireEvent.click(within(card).getByRole('button', { name: 'Add to project' }))
+
+    await waitFor(() => expect(api.addCircuitModule).toHaveBeenCalledWith('led-1', 'resistor-divider', 'rev-1'))
+    const added = await screen.findByRole('status', { name: 'Added module' })
+    expect(added).toHaveTextContent('modules/resistor-divider.tsx')
+    expect(added).toHaveTextContent('import { ResistorDivider } from "./modules/resistor-divider"')
   })
 
   it('records a review state and explains the transitions it cannot take', async () => {

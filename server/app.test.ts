@@ -519,6 +519,43 @@ test("configured sourcing prices the BOM and flags short stock in preflight", as
   } finally { await f.cleanup() }
 })
 
+test("circuit modules are listed, read, and added to a project", async () => {
+  const f = await fixture(async () => circuit)
+  try {
+    const listed = await request(f.app).get("/api/modules").expect(200)
+    assert.ok(listed.body.modules.length >= 5)
+    const divider = listed.body.modules.find((module: { id: string }) => module.id === "resistor-divider")
+    assert.equal(divider.component, "ResistorDivider")
+    assert.ok(divider.notes.length > 0)
+    assert.equal(divider.path, "modules/resistor-divider.tsx")
+
+    const read = await request(f.app).get("/api/modules/resistor-divider").expect(200)
+    assert.match(read.body.source, /export const ResistorDivider/)
+    assert.equal(read.body.importLine, 'import { ResistorDivider } from "./modules/resistor-divider"')
+    await request(f.app).get("/api/modules/buck-converter").expect(404)
+    await request(f.app).get("/api/modules/..%2Fexamples").expect(400)
+
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Modules" }).expect(201)
+    await waitForBuild(f.app, project.id, "ready")
+    const current = await request(f.app).get(`/api/projects/${project.id}`).expect(200)
+    const added = await request(f.app).post(`/api/projects/${project.id}/modules/resistor-divider`)
+      .set("If-Match", current.body.revision).expect(201)
+    assert.equal(added.body.path, "modules/resistor-divider.tsx")
+    assert.equal(added.body.usage, '<ResistorDivider top="22k" bottom="10k" pcbX={8} schX={3} />')
+    assert.notEqual(added.body.revision, current.body.revision)
+
+    const file = await request(f.app).get(`/api/projects/${project.id}/files`).query({ path: "modules/resistor-divider.tsx" }).expect(200)
+    assert.match(file.body.content, /export const ResistorDivider/)
+    const files = await request(f.app).get(`/api/projects/${project.id}/file-list`).expect(200)
+    assert.ok(files.body.includes("modules/resistor-divider.tsx"))
+
+    // A stale revision is refused, as with any other project write.
+    await request(f.app).post(`/api/projects/${project.id}/modules/led-indicator`)
+      .set("If-Match", current.body.revision).expect(409)
+    await request(f.app).post(`/api/projects/${project.id}/modules/led-indicator`).expect(400)
+  } finally { await f.cleanup() }
+})
+
 test("review states advance with evidence and lock an approved revision", async () => {
   // Approval requires a preflight-ready build, so this fixture carries a board with a
   // placed, referenced component and no unrouted logical traces.

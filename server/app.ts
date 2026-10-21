@@ -16,6 +16,7 @@ import { buildNetTraceIndex } from "./net-trace.js"
 import { analyzePower } from "./power-analysis.js"
 import { createSourcingClient, estimateBomCost, listDesignParts, normalizeLcscPartNumber, type SourcingClient } from "./component-sourcing.js"
 import { createProjectGit, type ProjectGit } from "./project-git.js"
+import { listCircuitModules, moduleImportLine, readCircuitModule } from "./circuit-modules.js"
 import { designDiffUnavailable, diffDesignSummaries, summarizeDesign, type DesignSummary } from "./design-summary.js"
 import { runCircuitDesignChecks } from "./circuit-design-checks.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
@@ -59,7 +60,7 @@ type ProjectState = { project: ProjectData; preview?: unknown }
 type ProjectSnapshot = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes: number; files: Record<string, string> }
 type ServerEvent = "project" | "file" | "build.status" | "build.ready" | "build.failed"
 type BuildFn = (projectDir: string, entrypoint: string) => Promise<unknown>
-type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; buildExecutionMode?: "isolated" | "trusted-local"; buildRunner?: { url: string; token: string }; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string; workbenchAuthToken?: string; kicadCliPath?: string; componentSourcing?: SourcingClient | { baseUrl: string; provider?: string }; gitHistory?: boolean; gitPath?: string; authDir?: string; userAccounts?: boolean; sessionSecret?: string; trustProxy?: boolean; authScryptCost?: number }
+type AppOptions = { projectsDir?: string; examplesDir?: string; modulesDir?: string; buildCircuit?: BuildFn; buildExecutionMode?: "isolated" | "trusted-local"; buildRunner?: { url: string; token: string }; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string; workbenchAuthToken?: string; kicadCliPath?: string; componentSourcing?: SourcingClient | { baseUrl: string; provider?: string }; gitHistory?: boolean; gitPath?: string; authDir?: string; userAccounts?: boolean; sessionSecret?: string; trustProxy?: boolean; authScryptCost?: number }
 
 const execFile = promisify(execFileCallback)
 
@@ -1208,8 +1209,41 @@ export function createApp(options: AppOptions = {}): Express {
   const token = options.mcpAuthToken ?? process.env.MCP_AUTH_TOKEN
   const sourcing = createConfiguredSourcing(options.componentSourcing)
   const assertionReport = async (id: string) => (await checkAssertions(id).catch(() => undefined))?.report
-  mountMcp(app, service, token, sourcing, assertionReport, { view: (id: string) => reviewView(id), set: (id, target, revision, note) => setReviewState(id, target, revision, "mcp", note) })
+  const modulesDir = path.resolve(options.modulesDir ?? process.env.MODULES_DIR ?? path.join(process.cwd(), "modules"))
+  mountMcp(
+    app,
+    service,
+    token,
+    sourcing,
+    assertionReport,
+    { view: (id: string) => reviewView(id), set: (id, target, revision, note) => setReviewState(id, target, revision, "mcp", note) },
+    { list: () => listCircuitModules(modulesDir), read: (id: string) => readCircuitModule(modulesDir, id) },
+  )
   mountManufacturingRoutes(app, service, sourcing, assertionReport)
+  app.get("/api/modules", async (_request, response, next) => {
+    try { response.json({ modules: await listCircuitModules(modulesDir) }) } catch (error) { next(error) }
+  })
+  app.get("/api/modules/:id", async (request, response, next) => {
+    try {
+      const { module, source } = await readCircuitModule(modulesDir, request.params.id!)
+      response.json({ ...module, source, importLine: moduleImportLine(module) })
+    } catch (error) { next(error) }
+  })
+  app.post("/api/projects/:id/modules/:moduleId", async (request, response, next) => {
+    try {
+      const match = request.get("If-Match")?.replace(/^"|"$/g, "")
+      if (!match) throw badRequest("If-Match is required to add a circuit module")
+      const { module, source } = await readCircuitModule(modulesDir, request.params.moduleId!)
+      const saved = await service.writeFile(request.params.id!, module.path, source, match)
+      response.status(201).json({
+        module,
+        path: saved.path,
+        revision: saved.revision,
+        importLine: moduleImportLine(module),
+        usage: module.usage,
+      })
+    } catch (error) { next(error) }
+  })
   app.get("/api/components/:part", async (request, response, next) => {
     try {
       if (!sourcing) return response.status(503).json({ configured: false, error: "No component sourcing provider is configured. Set COMPONENT_SOURCING_URL to enable supplier lookups." })

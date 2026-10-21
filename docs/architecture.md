@@ -96,6 +96,13 @@ against one project volume.
   restores from the browser, REST, and MCP alike. Agents may record validation
   and review; approving a revision and reopening an approved one are reserved
   for a person.
+- A library of five parameterised circuit modules (power input, resistor
+  divider, LED indicator, RC low-pass, I2C pull-ups) with REST, MCP, and
+  browser insertion into `modules/<id>.tsx`. Each module names its terminals,
+  parameters, and limits, and a test composes every module onto one board and
+  builds it with the real tscircuit CLI. Modules that need registry-resolved
+  parts — USB-C input, ESP32 support, buck converters, level shifters — are not
+  included, because build containers have no network to resolve them.
 - Versioned `assertions.json` regression assertions with REST and MCP evaluation:
   named nets stay connected, required components exist, supply current and
   calculated dissipation stay within limits, supported design-check findings do
@@ -138,8 +145,8 @@ permissions, password reset flows, full
 KiCad-equivalent ERC/DRC, highlighted net and component geometry inside the
 schematic, PCB, and 3D canvases, component datasheets, supplier
 keyword/parameter search, substitution recommendations, complete
-fabricator rule coverage, rendered schematic and PCB image diffs, and
-purchasing or fabrication integrations. Cross-probing moves a selection between the
+fabricator rule coverage, rendered schematic and PCB image diffs, modules that
+need registry-resolved parts, and purchasing or fabrication integrations. Cross-probing moves a selection between the
 component inspector, the net inspector, the focused PCB footprint, and the
 waveform panel, and lists the schematic wires, copper traces, vias, and
 simulation signals on a net; it does not highlight geometry inside the
