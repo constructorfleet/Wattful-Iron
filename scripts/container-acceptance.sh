@@ -68,6 +68,19 @@ initial_revision=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).rev
 initial_state=$(wait_for_build "$initial_revision")
 assert_ready "$initial_state"
 
+events_log=$(mktemp)
+curl --no-buffer --silent --show-error --max-time 600 \
+  -H 'Accept: text/event-stream' \
+  "$base_url/api/projects/$project_id/events" > "$events_log" &
+events_pid=$!
+# Detach the reader so terminating it at exit does not print a job-control notice.
+disown "$events_pid" 2>/dev/null || true
+cleanup() {
+  kill "$events_pid" >/dev/null 2>&1 || true
+  rm -f "$events_log"
+}
+trap cleanup EXIT
+
 file_json=$(curl --fail --silent --show-error \
   "$base_url/api/projects/$project_id/files?path=$entrypoint")
 source=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).content)' "$file_json")
@@ -116,6 +129,23 @@ node -e '
   }
 ' "$failed_state"
 
+assert_preview_retained() {
+  retained_revision=$1
+  preview=$(curl --fail --silent --show-error \
+    "$base_url/api/projects/$project_id/preview?kind=pcb")
+  node -e '
+    const result = JSON.parse(process.argv[1]);
+    if (!Array.isArray(result.circuitJson) || !result.circuitJson.length) {
+      throw new Error("Preview data was discarded while the build was failing");
+    }
+    if (result.revision !== process.argv[2]) {
+      throw new Error(`Preview moved to ${result.revision} instead of staying on the last successful ${process.argv[2]}`);
+    }
+  ' "$preview" "$retained_revision"
+}
+
+assert_preview_retained "$edited_revision"
+
 corrected_source=$(node -e '
   const source = process.argv[1];
   if (!source.includes("resistance={")) throw new Error("Could not locate deliberate syntax error");
@@ -131,4 +161,78 @@ corrected_state=$(wait_for_build "$corrected_revision")
 assert_ready "$corrected_state"
 assert_circuit_previews "$corrected_revision"
 
-printf 'Container acceptance passed for project %s through edit, diagnostics, recovery, and all preview endpoints.\n' "$project_id"
+assert_live_updates() {
+  for attempt in $(seq 1 30); do
+    if grep -q '^event: file$' "$events_log" && grep -q '^event: build.ready$' "$events_log"; then
+      return
+    fi
+    sleep 1
+  done
+  printf 'Event stream did not deliver file and build.ready events. Received:\n' >&2
+  sort -u "$events_log" >&2
+  return 1
+}
+
+assert_simulation_status() {
+  simulation=$(curl --fail --silent --show-error "$base_url/api/projects/$project_id/simulation")
+  node -e '
+    const result = JSON.parse(process.argv[1]);
+    if (!["complete", "failed", "not_configured"].includes(result.status)) {
+      throw new Error(`Unexpected simulation status: ${JSON.stringify(result)}`);
+    }
+  ' "$simulation"
+}
+
+assert_manufacturing_package() {
+  profiles=$(curl --fail --silent --show-error "$base_url/api/manufacturing/profiles")
+  profile=$(node -e '
+    const result = JSON.parse(process.argv[1]);
+    if (!Array.isArray(result.profiles) || !result.profiles.length) throw new Error("No fabricator rule profiles are available");
+    process.stdout.write(result.profiles[0].id);
+  ' "$profiles")
+  report=$(curl --fail --silent --show-error \
+    "$base_url/api/projects/$project_id/manufacturing?profile=$profile")
+  ready=$(node -e '
+    const preflight = JSON.parse(process.argv[1]).preflight;
+    if (!Array.isArray(preflight?.checks) || !preflight.checks.length) throw new Error("Preflight returned no checks");
+    process.stdout.write(preflight.ready ? "ready" : "blocked");
+  ' "$report")
+  archive=$(mktemp)
+  status=$(curl --silent --show-error --output "$archive" --write-out '%{http_code}' \
+    "$base_url/api/projects/$project_id/manufacturing.zip?profile=$profile")
+  # The export must agree with its own preflight verdict in both directions.
+  if [ "$ready" = ready ]; then
+    if [ "$status" != 200 ]; then
+      printf 'Export returned %s even though preflight was ready\n' "$status" >&2
+      rm -f "$archive"
+      return 1
+    fi
+    node -e '
+      const { readFileSync } = require("node:fs");
+      const archive = readFileSync(process.argv[1]);
+      if (archive[0] !== 0x50 || archive[1] !== 0x4b) throw new Error("Downloaded manufacturing file is not a ZIP archive");
+      if (archive.byteLength < 1024) throw new Error(`Manufacturing archive is only ${archive.byteLength} bytes`);
+    ' "$archive"
+  else
+    if [ "$status" != 422 ]; then
+      printf 'Blocked preflight returned %s instead of 422\n' "$status" >&2
+      rm -f "$archive"
+      return 1
+    fi
+    node -e '
+      const { readFileSync } = require("node:fs");
+      const refusal = JSON.parse(readFileSync(process.argv[1], "utf8"));
+      if (!refusal.preflight?.checks?.some((check) => check.status === "fail")) {
+        throw new Error(`Refused export did not report a failing check: ${JSON.stringify(refusal)}`);
+      }
+    ' "$archive"
+  fi
+  rm -f "$archive"
+  printf 'Manufacturing preflight reported %s and the export agreed.\n' "$ready"
+}
+
+assert_live_updates
+assert_simulation_status
+assert_manufacturing_package
+
+printf 'Container acceptance passed for project %s through edit, live updates, diagnostics, preview retention, recovery, simulation status, manufacturing preflight and export, and all preview endpoints.\n' "$project_id"
