@@ -101,3 +101,11 @@ a request timeout (`COMPONENT_SOURCING_TIMEOUT_MS`, default 8000 ms), rejects
 responses larger than 512 KB, and caches results in memory for ten minutes. A
 supplier outage degrades the affected features to "not evaluated" rather than
 failing a build or a preflight.
+
+## Review states are not an authorization boundary
+
+An approved revision is read-only, and MCP agents cannot approve a revision or reopen an
+approved one. That constrains agents, not people: with no per-user identity in this slice,
+anyone holding the shared workbench token can record or reopen any state, and the review log
+records which interface recorded an entry rather than who did. Treat it as an audit trail
+and a guard against accidental edits, not as access control.

@@ -10,7 +10,7 @@ import { KicadToCircuitJsonConverter } from "kicad-to-circuit-json"
 import { convertSchematicV6 } from "easyeda2kicad6"
 import { convertCircuitJsonToTscircuit } from "circuit-json-to-tscircuit"
 import { mountMcp } from "./mcp.js"
-import { createGerberArchive, mountManufacturingRoutes } from "./manufacturing.js"
+import { checkManufacturability, createGerberArchive, mountManufacturingRoutes } from "./manufacturing.js"
 import { getSimulationResults } from "./simulation.js"
 import { buildNetTraceIndex } from "./net-trace.js"
 import { analyzePower } from "./power-analysis.js"
@@ -20,6 +20,16 @@ import { designDiffUnavailable, diffDesignSummaries, summarizeDesign, type Desig
 import { runCircuitDesignChecks } from "./circuit-design-checks.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
 import { evaluateAssertions, parseAssertions, type AssertionReport } from "./assertions.js"
+import {
+  APPROVED_WRITE_MESSAGE,
+  checkReviewTransition,
+  isReviewState,
+  resolveReviewStatus,
+  type ReviewEntry,
+  type ReviewEvidence,
+  type ReviewState,
+  type ReviewStatus,
+} from "./review-state.js"
 import { runCommand } from "./build-process.js"
 import { executeRemoteBuild, type IsolatedBuildResult } from "./build-client.js"
 import { withGeneratedPcbDraft } from "./pcb-draft.js"
@@ -55,6 +65,8 @@ const templates = [
 const PROJECT_TSCIRCUIT_VERSION = "0.0.2930"
 
 const HISTORY_RETENTION = 50
+/** Review-log entries retained per project. */
+const REVIEW_RETENTION = 200
 /** Build summaries retained per project for revision comparison. */
 const DESIGN_SUMMARY_RETENTION = 200
 
@@ -449,6 +461,7 @@ class ProjectService {
   }
 
   async writeFile(id: string, relativePath: string, content: string, expectedRevision: string) {
+    await this.assertNotApproved(id)
     return this.withWriteLock(id, async () => {
       const state = this.state(id)
       this.assertRevision(state.project, expectedRevision)
@@ -547,6 +560,7 @@ class ProjectService {
   }
 
   async restoreHistory(id: string, revision: string, expectedRevision: string) {
+    await this.assertNotApproved(id)
     return this.withWriteLock(id, async () => {
       const state = this.state(id)
       this.assertRevision(state.project, expectedRevision)
@@ -769,6 +783,46 @@ class ProjectService {
     }
   }
 
+  /** Read the project's review log, newest entries first, ignoring anything malformed. */
+  async reviewHistory(id: string): Promise<ReviewEntry[]> {
+    try {
+      const file = path.join(this.projectDir(id), ".workbench", "reviews.json")
+      const parsed = JSON.parse(await readFile(file, "utf8")) as unknown
+      if (!Array.isArray(parsed)) return []
+      return parsed.filter((entry): entry is ReviewEntry => typeof entry === "object" && entry !== null
+        && isReviewState((entry as ReviewEntry).state)
+        && typeof (entry as ReviewEntry).revision === "string"
+        && typeof (entry as ReviewEntry).at === "string")
+    } catch { return [] }
+  }
+
+  async reviewStatus(id: string): Promise<ReviewStatus> {
+    const project = (await this.get(id))
+    return resolveReviewStatus(await this.reviewHistory(id), project.revision)
+  }
+
+  /** Record a review state for the current revision once its transition has been checked. */
+  async recordReviewState(id: string, entry: Omit<ReviewEntry, "at">): Promise<ReviewStatus> {
+    return this.withWriteLock(id, async () => {
+      const history = await this.reviewHistory(id)
+      const next = [{ ...entry, at: new Date().toISOString() }, ...history].slice(0, REVIEW_RETENTION)
+      const dir = path.join(this.projectDir(id), ".workbench")
+      await mkdir(dir, { recursive: true })
+      const temporary = path.join(dir, "reviews.json." + randomUUID() + ".tmp")
+      await writeFile(temporary, JSON.stringify(next, null, 2) + "\n")
+      await rename(temporary, path.join(dir, "reviews.json"))
+      const state = this.state(id)
+      this.emit(id, "project", { project: state.project })
+      return resolveReviewStatus(next, state.project.revision)
+    })
+  }
+
+  /** Refuse edits to a revision that is approved for manufacturing. */
+  private async assertNotApproved(id: string) {
+    const status = resolveReviewStatus(await this.reviewHistory(id), this.state(id).project.revision)
+    if (status.locked) throw Object.assign(new Error(APPROVED_WRITE_MESSAGE), { status: 423 })
+  }
+
   /** The newest retained build summary for a revision other than the one given, used as a regression baseline. */
   async baselineDesignSummary(id: string, excludeRevision: string): Promise<DesignSummary | undefined> {
     const dir = path.join(this.projectDir(id), ".workbench", "designs")
@@ -977,7 +1031,7 @@ export function createApp(options: AppOptions = {}): Express {
   const token = options.mcpAuthToken ?? process.env.MCP_AUTH_TOKEN
   const sourcing = createConfiguredSourcing(options.componentSourcing)
   const assertionReport = async (id: string) => (await checkAssertions(id).catch(() => undefined))?.report
-  mountMcp(app, service, token, sourcing, assertionReport)
+  mountMcp(app, service, token, sourcing, assertionReport, { view: reviewView, set: (id, target, revision, note) => setReviewState(id, target, revision, "mcp", note) })
   mountManufacturingRoutes(app, service, sourcing, assertionReport)
   app.get("/api/components/:part", async (request, response, next) => {
     try {
@@ -1194,6 +1248,20 @@ export function createApp(options: AppOptions = {}): Express {
       response.json({ revision: preview.revision, ...buildNetTraceIndex(preview.circuitJson) })
     } catch (error) { next(error) }
   })
+  app.get("/api/projects/:id/review", async (request, response, next) => {
+    try { response.json(await reviewView(request.params.id!)) } catch (error) { next(error) }
+  })
+  app.post("/api/projects/:id/review", async (request, response, next) => {
+    try {
+      const match = request.get("If-Match")?.replace(/^"|"$/g, "")
+      if (!match) throw badRequest("If-Match is required to record a review state")
+      const target = request.body?.state
+      if (!isReviewState(target)) throw badRequest("state must be draft, validated, reviewed, or manufacturing_approved")
+      const note = request.body?.note
+      if (note !== undefined && (typeof note !== "string" || note.length > 2000)) throw badRequest("note must be a string of at most 2000 characters")
+      response.json(await setReviewState(request.params.id!, target, match, "browser", typeof note === "string" ? note : undefined))
+    } catch (error) { next(error) }
+  })
   app.get("/api/projects/:id/assertions", async (request, response, next) => {
     try {
       const files = await service.getFileList(request.params.id!)
@@ -1252,6 +1320,77 @@ export function createApp(options: AppOptions = {}): Express {
       response.json({ configured: true, stale: false, revision: project.revision, previewRevision: preview.revision, ...validation })
     } catch (error) { next(error) }
   })
+
+  /** Collect what a review transition is judged against, from the build, assertions, and preflight. */
+  async function reviewEvidence(id: string): Promise<ReviewEvidence> {
+    const project = await service.get(id)
+    const assertions = await checkAssertions(id).catch(() => undefined)
+    let preflightReady: boolean | undefined
+    try {
+      const preview = await service.preview(id)
+      const preflight = await checkManufacturability(
+        preview.circuitJson,
+        project.lastBuild ?? { status: "idle", revision: "" },
+        preview.revision,
+        project.revision,
+        "board-default",
+        sourcing,
+        assertions?.report,
+      )
+      preflightReady = preflight.ready
+    } catch { preflightReady = undefined }
+    return {
+      projectRevision: project.revision,
+      ...(project.lastBuild ? { buildStatus: project.lastBuild.status, buildRevision: project.lastBuild.revision } : {}),
+      ...(assertions?.report ? { assertions: { failed: assertions.report.failed, passed: assertions.report.passed, notEvaluated: assertions.report.notEvaluated } } : {}),
+      assertionsConfigured: assertions?.configured === true,
+      ...(preflightReady === undefined ? {} : { preflightReady }),
+    }
+  }
+
+  /** The review status plus, for each state, whether it can be set now and why not. */
+  async function reviewView(id: string) {
+    const [status, evidence] = await Promise.all([service.reviewStatus(id), reviewEvidence(id)])
+    return {
+      ...status,
+      evidence,
+      transitions: status.allowedTransitions.map((target) => {
+        const browser = checkReviewTransition(status, target, evidence, "browser")
+        const agent = checkReviewTransition(status, target, evidence, "mcp")
+        return {
+          state: target,
+          allowed: browser.allowed,
+          ...(browser.allowed ? {} : { reason: browser.reason }),
+          agentAllowed: agent.allowed,
+        }
+      }),
+    }
+  }
+
+  /** Record a review state after checking the transition against current evidence. */
+  async function setReviewState(id: string, target: ReviewState, expectedRevision: string, source: ReviewEntry["source"], note?: string) {
+    const project = await service.get(id)
+    if (project.revision !== expectedRevision) {
+      throw Object.assign(new Error("The project changed before the review state was recorded. Reload it and try again."), { status: 409, revision: project.revision })
+    }
+    const [status, evidence] = await Promise.all([service.reviewStatus(id), reviewEvidence(id)])
+    const decision = checkReviewTransition(status, target, evidence, source)
+    if (!decision.allowed) throw Object.assign(new Error(decision.reason), { status: 409 })
+    const summary = await service.baselineDesignSummary(id, "").catch(() => undefined)
+    await service.recordReviewState(id, {
+      state: target,
+      revision: project.revision,
+      source,
+      ...(note ? { note } : {}),
+      evidence: {
+        ...(evidence.buildStatus === undefined ? {} : { buildStatus: evidence.buildStatus }),
+        ...(evidence.assertions ? { assertions: evidence.assertions } : {}),
+        ...(evidence.preflightReady === undefined ? {} : { preflightReady: evidence.preflightReady }),
+        ...(summary && summary.revision === project.revision ? { components: summary.counts.components, nets: summary.counts.nets } : {}),
+      },
+    })
+    return reviewView(id)
+  }
 
   /** Evaluate a project's assertions against its latest successful build. */
   async function checkAssertions(id: string): Promise<{ configured: boolean; revision: string; previewRevision?: string; report?: AssertionReport; message?: string }> {

@@ -519,6 +519,67 @@ test("configured sourcing prices the BOM and flags short stock in preflight", as
   } finally { await f.cleanup() }
 })
 
+test("review states advance with evidence and lock an approved revision", async () => {
+  // Approval requires a preflight-ready build, so this fixture carries a board with a
+  // placed, referenced component and no unrouted logical traces.
+  const approvableCircuit = [
+    { type: "pcb_board", pcb_board_id: "b1", width: 20, height: 20, center: { x: 0, y: 0 }, thickness: 1.6, num_layers: 2, material: "fr4" },
+    { type: "source_component", source_component_id: "sc1", name: "R1", ftype: "simple_resistor", resistance: 1000, value: "1k", manufacturer_part_number: "0603WAF1001" },
+    { type: "pcb_component", pcb_component_id: "pc1", source_component_id: "sc1", center: { x: 0, y: 0 }, width: 1.6, height: 0.8, rotation: 0, layer: "top" },
+  ]
+  const f = await fixture(async () => approvableCircuit)
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Review" }).expect(201)
+    await waitForBuild(f.app, project.id, "ready")
+
+    const initial = await request(f.app).get(`/api/projects/${project.id}/review`).expect(200)
+    assert.equal(initial.body.state, "draft")
+    assert.equal(initial.body.locked, false)
+    assert.equal(initial.body.evidence.buildStatus, "ready")
+    const approvalFromDraft = initial.body.transitions.find((item: { state: string }) => item.state === "manufacturing_approved")
+    assert.equal(approvalFromDraft.allowed, false)
+    assert.match(approvalFromDraft.reason, /comes after Reviewed/)
+    // Approving and reopening are never offered to agents.
+    assert.equal(approvalFromDraft.agentAllowed, false)
+    assert.equal(initial.body.transitions.find((item: { state: string }) => item.state === "validated").agentAllowed, true)
+
+    const revision = project.revision
+    await request(f.app).post(`/api/projects/${project.id}/review`).set("If-Match", revision).send({ state: "manufacturing_approved" }).expect(409)
+    await request(f.app).post(`/api/projects/${project.id}/review`).set("If-Match", "stale-revision").send({ state: "validated" }).expect(409)
+    await request(f.app).post(`/api/projects/${project.id}/review`).set("If-Match", revision).send({ state: "shipped" }).expect(400)
+    await request(f.app).post(`/api/projects/${project.id}/review`).send({ state: "validated" }).expect(400)
+
+    const validated = await request(f.app).post(`/api/projects/${project.id}/review`).set("If-Match", revision)
+      .send({ state: "validated", note: "Checked the divider values." }).expect(200)
+    assert.equal(validated.body.state, "validated")
+    assert.equal(validated.body.current.note, "Checked the divider values.")
+    assert.equal(validated.body.current.source, "browser")
+    assert.equal(validated.body.current.evidence.buildStatus, "ready")
+
+    await request(f.app).post(`/api/projects/${project.id}/review`).set("If-Match", revision).send({ state: "reviewed" }).expect(200)
+    const approved = await request(f.app).post(`/api/projects/${project.id}/review`).set("If-Match", revision).send({ state: "manufacturing_approved" }).expect(200)
+    assert.equal(approved.body.state, "manufacturing_approved")
+    assert.equal(approved.body.locked, true)
+    assert.equal(approved.body.history.length, 3)
+
+    // An approved revision is read-only: edits and restores are refused, reads still work.
+    const file = await request(f.app).get(`/api/projects/${project.id}/files`).query({ path: project.entrypoint }).expect(200)
+    const refused = await request(f.app).put(`/api/projects/${project.id}/files`).query({ path: project.entrypoint })
+      .set("If-Match", file.body.revision).send({ content: "export default () => null", revision: file.body.revision }).expect(423)
+    assert.match(refused.body.error, /approved for manufacturing and is read-only/)
+    await request(f.app).post(`/api/projects/${project.id}/history/${revision}/restore`).set("If-Match", revision).expect(423)
+
+    // Reopening it as a draft restores editing, and the earlier approval is recorded as superseded.
+    await request(f.app).post(`/api/projects/${project.id}/review`).set("If-Match", revision).send({ state: "draft", note: "Reopening for a value change." }).expect(200)
+    const edited = await request(f.app).put(`/api/projects/${project.id}/files`).query({ path: project.entrypoint })
+      .set("If-Match", file.body.revision).send({ content: "export default () => <board width='24mm' />", revision: file.body.revision }).expect(200)
+    const afterEdit = await request(f.app).get(`/api/projects/${project.id}/review`).expect(200)
+    assert.equal(afterEdit.body.state, "draft")
+    assert.equal(afterEdit.body.revision, edited.body.revision)
+    assert.equal(afterEdit.body.supersededFrom.state, "manufacturing_approved")
+  } finally { await f.cleanup() }
+})
+
 test("assertion endpoints save a document and evaluate it against the latest build", async () => {
   const assertedCircuit = [
     { type: "source_component", source_component_id: "sc1", name: "R1", ftype: "simple_resistor", resistance: 220 },

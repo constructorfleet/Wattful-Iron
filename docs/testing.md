@@ -40,6 +40,9 @@ covers the workflow this project defines as done:
     cost budget is reported as not evaluated because sourcing is disabled, and
     that preflight does not report passing assertions as a failure.
 14. Run manufacturing preflight and confirm the export agrees with its verdict.
+15. Advance the review states to manufacturing approval, confirm approval is
+    offered neither straight from draft nor to agents, confirm an approved
+    revision refuses a file write with HTTP 423, and reopen it as a draft.
 
 The circuit covers power input, passives, an LED, a header, and multiple nets,
 and it routes completely, so step 13 exercises a ready preflight and a real

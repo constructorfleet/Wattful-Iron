@@ -13,6 +13,8 @@ import {
   getManufacturingArchive,
   getManufacturingPreflight,
   getAssertionCheck,
+  getReviewState,
+  setReviewState,
   getBomCost,
   getComponentSourcing,
   getManufacturingProfiles,
@@ -39,6 +41,8 @@ import {
   type ManufacturingCheck,
   type ManufacturingPreflight,
   type AssertionCheck,
+  type ReviewState as ReviewStateName,
+  type ReviewView,
   type BomCost,
   type ComponentSourcing,
   type ManufacturingProfile,
@@ -156,6 +160,10 @@ export default function App() {
   const [manufacturingDialogOpen, setManufacturingDialogOpen] = useState(false)
   const [bomCost, setBomCost] = useState<BomCost | null>(null)
   const [assertionCheck, setAssertionCheck] = useState<AssertionCheck | null>(null)
+  const [review, setReview] = useState<ReviewView | null>(null)
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false)
+  const [reviewNote, setReviewNote] = useState('')
+  const [recordingReview, setRecordingReview] = useState(false)
   const [boardQuantity, setBoardQuantity] = useState(1)
   const [componentSourcing, setComponentSourcing] = useState<ComponentSourcing | null>(null)
   const [loadingManufacturing, setLoadingManufacturing] = useState(false)
@@ -347,6 +355,15 @@ export default function App() {
   useEffect(() => {
     getManufacturingProfiles().then(({ profiles }) => setManufacturingProfiles(profiles)).catch(() => setManufacturingProfiles([]))
   }, [])
+
+  const refreshReview = useCallback(async (id: string) => {
+    try { setReview(await getReviewState(id)) } catch { setReview(null) }
+  }, [])
+
+  useEffect(() => {
+    if (!project) { setReview(null); return }
+    void refreshReview(project.id)
+  }, [project?.id, revision, build.status, build.revision, refreshReview])
 
   useEffect(() => {
     if (!project) { setManufacturingPreflight(null); return }
@@ -608,6 +625,20 @@ export default function App() {
     setView('pcb')
   }
 
+  const recordReviewState = async (target: ReviewStateName) => {
+    if (!project || !review) return
+    setRecordingReview(true)
+    setError('')
+    try {
+      setReview(await setReviewState(project.id, target, review.revision, reviewNote.trim() || undefined))
+      setReviewNote('')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to record the review state')
+    } finally {
+      setRecordingReview(false)
+    }
+  }
+
   const resizePanel = (index: number, amount: number) => setPanelWidths((widths) => {
     const next = [...widths]
     const min = 15
@@ -642,6 +673,7 @@ export default function App() {
         </div>
         <div className="top-actions">
           <div className={`build-state ${build.status}`} aria-live="polite"><span className="status-dot" />{statusText}</div>
+          {review && <button type="button" className={`build-button review-button ${review.state}`} disabled={!project} onClick={() => setReviewDialogOpen(true)}>{reviewStateLabels[review.state]}{review.locked ? ' 🔒' : ''}</button>}
           <button type="button" className="build-button history-button" disabled={!project} onClick={() => setHistoryDialogOpen(true)}>History</button>
           <button type="button" className="build-button" disabled={!project || exportingArchive} onClick={() => void downloadProjectArchive()}>{exportingArchive ? 'Exporting…' : 'Export project ZIP'}</button>
           <button type="button" className="build-button" disabled={!project?.referencePdfs?.length} onClick={() => setReferencePdfOpen(true)}>PDF reference</button>
@@ -697,6 +729,7 @@ export default function App() {
         </aside>
 
         <section className="editor-panel" aria-label="Source editor panel">
+          {review?.locked && <p className="approved-banner" role="status">This revision is approved for manufacturing and is read-only. Reopen it as a draft to edit.</p>}
           <div className="panel-toolbar editor-toolbar">
             <div className="file-tab"><span className="tsx-icon">TS</span>{filePath || 'No file open'}{dirty && <span className="unsaved-dot" title="Unsaved changes" />}</div>
             <div className="save-indicator">{saving ? 'Saving…' : dirty ? 'Unsaved' : revision ? 'Saved' : ''}</div>
@@ -709,7 +742,7 @@ export default function App() {
             theme="vs-dark"
             value={source}
             onChange={(value) => { setSource(value ?? ''); setDirty(true) }}
-            options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, tabSize: 2, wordWrap: 'on', padding: { top: 14 } }}
+            options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, tabSize: 2, wordWrap: 'on', padding: { top: 14 }, readOnly: review?.locked ?? false }}
           /> : <div className="empty-editor"><span className="empty-glyph">{'</>'}</span><h2>Your circuit starts here</h2><p>Create or open a project to edit its tscircuit source.</p><button type="button" className="small-primary" onClick={() => setCreating(true)}>Create project</button></div>}
         </section>
 
@@ -791,6 +824,39 @@ export default function App() {
             </div>
           </div>}
           <footer><span>Restore replaces the project files and queues a normal build.</span><button type="button" className="build-button" disabled={!revisionToRestore || revisionToRestore === revision || dirty || restoringHistory || historyLoading} onClick={() => void restoreRevision()}>{restoringHistory ? 'Restoring…' : 'Restore selected revision'}</button></footer>
+        </section>
+      </div>}
+      {reviewDialogOpen && review && <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReviewDialogOpen(false) }}>
+        <section className="history-dialog review-dialog" role="dialog" aria-modal="true" aria-labelledby="review-title">
+          <header><div><h2 id="review-title">Design review</h2><p>{reviewStateLabels[review.state]} · revision {review.revision.slice(0, 8)}{review.locked ? ' · read-only' : ''}</p></div><button type="button" aria-label="Close design review" onClick={() => setReviewDialogOpen(false)}>×</button></header>
+          <div className="review-content">
+            {review.supersededFrom && <p className="review-superseded">This revision is a draft; revision {review.supersededFrom.revision.slice(0, 8)} had reached {reviewStateLabels[review.supersededFrom.state]} before the source changed.</p>}
+            <dl className="review-evidence">
+              <dt>Build</dt><dd>{review.evidence.buildStatus ?? 'none'}{review.evidence.buildRevision === review.evidence.projectRevision ? ' (current revision)' : ' (not the current revision)'}</dd>
+              <dt>Assertions</dt><dd>{review.evidence.assertionsConfigured ? `${review.evidence.assertions?.passed ?? 0} passed · ${review.evidence.assertions?.failed ?? 0} failed · ${review.evidence.assertions?.notEvaluated ?? 0} not evaluated` : 'no assertions.json document'}</dd>
+              <dt>Preflight</dt><dd>{review.evidence.preflightReady === undefined ? 'unavailable' : review.evidence.preflightReady ? 'ready' : 'blocked'}</dd>
+            </dl>
+            <label className="review-note">Note<textarea aria-label="Review note" maxLength={2000} value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} placeholder="What was checked, and what is still unverified" /></label>
+            <div className="review-actions">
+              {review.transitions.map((transition) => <button type="button" key={transition.state} className={transition.state === 'draft' ? 'quiet-button' : 'build-button'}
+                disabled={!transition.allowed || recordingReview || dirty}
+                title={transition.allowed ? (dirty ? 'Save or discard editor changes first' : undefined) : transition.reason}
+                onClick={() => void recordReviewState(transition.state)}>
+                {transition.state === 'draft' ? 'Reopen as draft' : `Mark ${reviewStateLabels[transition.state].toLowerCase()}`}
+              </button>)}
+            </div>
+            {dirty && <p className="review-blocked">Save or discard the editor changes before recording a review state.</p>}
+            {review.transitions.filter(({ allowed, reason }) => !allowed && reason).map(({ state, reason }) => <p className="review-blocked" key={state}>{reason}</p>)}
+            <h3>History</h3>
+            {review.history.length === 0 ? <p className="review-blocked">No review states have been recorded yet.</p> : <ul className="review-history">
+              {review.history.map((entry) => <li key={`${entry.at}-${entry.state}`}>
+                <strong>{reviewStateLabels[entry.state]}</strong>
+                <span>{new Date(entry.at).toLocaleString()} · revision {entry.revision.slice(0, 8)} · by {entry.source === 'mcp' ? 'an MCP agent' : 'the workbench'}</span>
+                {entry.note && <em>{entry.note}</em>}
+              </li>)}
+            </ul>}
+            <p className="inspector-note">A review state applies only to the revision it was recorded against: editing the source returns the project to draft. While a revision is approved for manufacturing, file writes and restores are refused. Approving a revision, and reopening an approved one, are not available to MCP agents. Recording a state does not verify the design.</p>
+          </div>
         </section>
       </div>}
       {referencePdfOpen && project?.referencePdfs?.[0] && <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReferencePdfOpen(false) }}>
@@ -927,6 +993,13 @@ function formatInspectorValue(value: unknown) {
   if (typeof value === 'string') return value
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
   return JSON.stringify(value)
+}
+
+const reviewStateLabels: Record<ReviewStateName, string> = {
+  draft: 'Draft',
+  validated: 'Validated',
+  reviewed: 'Reviewed',
+  manufacturing_approved: 'Manufacturing approved',
 }
 
 const routingLabels: Record<TracedNet['routing'], string> = {

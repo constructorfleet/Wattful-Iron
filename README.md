@@ -51,7 +51,8 @@ displays transient graph data emitted by tscircuit. Treat all views as
 development previews rather than engineering approval.
 
 ACP agent interfaces, user-level authentication, and full KiCad-equivalent
-ERC/DRC are not implemented in this slice. MCP agents can run the supported
+ERC/DRC are not implemented in this slice. Revisions carry design review states,
+and an approved revision is read-only to the browser, the REST API, and MCP. MCP agents can run the supported
 electrical, board, and routing rule checks and read IPC-2221 trace current
 capacity; every report names the checks it does not evaluate. Manufacturing preflight runs the
 supported tscircuit Circuit JSON checks and a limited set of fabricator rules.
@@ -101,6 +102,7 @@ Engine and worker image. `GET /healthz` is the container health endpoint.
 - [Workbench how-tos: edit, preview, simulate, export, and connect MCP](docs/workbench-howtos.md)
 - [Architecture and feature status](docs/architecture.md)
 - [Project source history, compare, restore, and retention](docs/source-history.md)
+- [Design review states and approval](docs/review.md)
 - [Project regression assertions](docs/assertions.md)
 - [Manufacturing preflight and exports](docs/manufacturing.md)
 - [Pull request and release process](docs/releasing.md)

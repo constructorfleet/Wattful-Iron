@@ -25,6 +25,8 @@ const api = vi.hoisted(() => ({
   getNets: vi.fn(),
   getPower: vi.fn(),
   getAssertionCheck: vi.fn(),
+  getReviewState: vi.fn(),
+  setReviewState: vi.fn(),
   getBomCost: vi.fn(),
   getComponentSourcing: vi.fn(),
   getManufacturingProfiles: vi.fn(),
@@ -37,8 +39,8 @@ let projectEvent: ((event: unknown) => void) | undefined
 
 vi.mock('../src/api', () => api)
 vi.mock('@monaco-editor/react', () => ({
-  default: ({ value, onChange, language }: { value: string; onChange: (value: string) => void; language?: string }) => (
-    <textarea aria-label="TSX source editor" data-language={language} value={value} onChange={(event) => onChange(event.target.value)} />
+  default: ({ value, onChange, language, options }: { value: string; onChange: (value: string) => void; language?: string; options?: { readOnly?: boolean } }) => (
+    <textarea aria-label="TSX source editor" data-language={language} value={value} readOnly={options?.readOnly ?? false} onChange={(event) => onChange(event.target.value)} />
   ),
 }))
 vi.mock('@tscircuit/runframe', () => ({
@@ -81,6 +83,15 @@ beforeEach(() => {
   ] })
   api.getManufacturingPreflight.mockResolvedValue({ preflight: { ready: true, profile: { id: 'board-default', label: 'Board defaults' }, checks: [{ id: 'circuit-errors', status: 'not-evaluated', message: 'Circuit JSON contains no ERC/DRC error records; no validator result confirms this check passed.' }] } })
   api.getSimulation.mockResolvedValue({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], operatingPoints: [], sweeps: [], analyses: [], diagnostics: [], notEvaluated: [] })
+  api.getReviewState.mockResolvedValue({
+    state: 'draft', revision: 'rev-1', locked: false, history: [],
+    evidence: { buildStatus: 'ready', buildRevision: 'rev-1', projectRevision: 'rev-1', assertionsConfigured: false, preflightReady: true },
+    transitions: [
+      { state: 'validated', allowed: true, agentAllowed: true },
+      { state: 'reviewed', allowed: false, reason: 'Reviewed comes after Validated; this revision is Draft.', agentAllowed: false },
+      { state: 'manufacturing_approved', allowed: false, reason: 'Manufacturing approved comes after Reviewed; this revision is Draft.', agentAllowed: false },
+    ],
+  })
   api.getAssertionCheck.mockResolvedValue({ configured: false, revision: 'rev-1', message: 'This project has no assertions.json document, so no regression assertions were evaluated.' })
   api.getBomCost.mockResolvedValue({ configured: false, revision: 'rev-1', parts: [], message: 'No component sourcing provider is configured, so no prices or stock were looked up. Set COMPONENT_SOURCING_URL to enable it.' })
   api.getComponentSourcing.mockResolvedValue({ configured: false })
@@ -456,6 +467,55 @@ describe('workbench', () => {
     expect(within(inspector).getByText('912,345')).toBeInTheDocument()
     expect(within(inspector).getByText('$0.002')).toBeInTheDocument()
     expect(within(inspector).getByText('Basic part')).toBeInTheDocument()
+  })
+
+  it('records a review state and explains the transitions it cannot take', async () => {
+    api.setReviewState.mockResolvedValue({
+      state: 'validated', revision: 'rev-1', locked: false,
+      current: { state: 'validated', revision: 'rev-1', at: '2026-10-21T08:00:00.000Z', source: 'browser', note: 'Divider values checked.' },
+      history: [{ state: 'validated', revision: 'rev-1', at: '2026-10-21T08:00:00.000Z', source: 'browser', note: 'Divider values checked.' }],
+      evidence: { buildStatus: 'ready', buildRevision: 'rev-1', projectRevision: 'rev-1', assertionsConfigured: false, preflightReady: true },
+      transitions: [
+        { state: 'draft', allowed: true, agentAllowed: false },
+        { state: 'reviewed', allowed: true, agentAllowed: true },
+        { state: 'manufacturing_approved', allowed: false, reason: 'Manufacturing approved comes after Reviewed; this revision is Validated.', agentAllowed: false },
+      ],
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Draft' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Design review' })
+    expect(within(dialog).getByText(/Manufacturing approved comes after Reviewed/)).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Mark manufacturing approved' })).toBeDisabled()
+
+    fireEvent.change(within(dialog).getByLabelText('Review note'), { target: { value: 'Divider values checked.' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Mark validated' }))
+
+    await waitFor(() => expect(api.setReviewState).toHaveBeenCalledWith('led-1', 'validated', 'rev-1', 'Divider values checked.'))
+    expect(await within(dialog).findByText('Divider values checked.')).toBeInTheDocument()
+    expect(within(dialog).getByText(/by the workbench/)).toBeInTheDocument()
+  })
+
+  it('makes an approved revision read-only in the editor', async () => {
+    api.getReviewState.mockResolvedValue({
+      state: 'manufacturing_approved', revision: 'rev-1', locked: true,
+      current: { state: 'manufacturing_approved', revision: 'rev-1', at: '2026-10-21T08:00:00.000Z', source: 'browser' },
+      history: [{ state: 'manufacturing_approved', revision: 'rev-1', at: '2026-10-21T08:00:00.000Z', source: 'browser' }],
+      evidence: { buildStatus: 'ready', buildRevision: 'rev-1', projectRevision: 'rev-1', assertionsConfigured: false, preflightReady: true },
+      transitions: [{ state: 'draft', allowed: true, agentAllowed: false }],
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+
+    expect(await screen.findByText(/approved for manufacturing and is read-only/)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByLabelText('TSX source editor')).toHaveAttribute('readonly'))
+    expect(screen.getByRole('button', { name: /Manufacturing approved/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Manufacturing approved/ }))
+    const dialog = await screen.findByRole('dialog', { name: 'Design review' })
+    expect(within(dialog).getByRole('button', { name: 'Reopen as draft' })).toBeEnabled()
   })
 
   it('shows each project assertion result in the manufacturing dialog', async () => {

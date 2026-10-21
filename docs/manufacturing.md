@@ -88,3 +88,11 @@ Preflight includes a `regression-assertions` check when the project declares an
 blocking checks; assertions that cannot be evaluated warn instead, and neither a
 missing document nor an unevaluable assertion blocks anything. Each result is
 listed in the manufacturing dialog. See [project assertions](assertions.md).
+
+## Review and approval
+
+Manufacturing approval is a [design review state](review.md) on one revision, and it
+requires preflight to report ready. While a revision is approved, file writes and history
+restores are refused, so the approved source cannot drift from the package generated from
+it. Editing the source after an approval produces a new draft revision and leaves the
+earlier approval recorded against the revision it was made for.
