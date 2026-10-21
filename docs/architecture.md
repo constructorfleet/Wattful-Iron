@@ -25,6 +25,13 @@ against one project volume.
   source ports, and connected source traces by Circuit JSON IDs; selecting a
   component focuses its PCB footprint, and the PCB context menu opens the
   matching component details from its schematic action.
+- Net tracing across views: a `/api/projects/:id/nets` endpoint and browser net
+  inspector that group a build with the tscircuit connectivity map and report
+  each net's component pins, schematic wires, copper traces, vias, routing
+  state, and correlated simulation signals. Cross-probing moves between the net
+  inspector, component details, the focused PCB footprint, and the waveform
+  panel. The embedded schematic, PCB, and 3D viewers expose no highlight API,
+  so a selected net is not drawn highlighted in those canvases.
 - Live SSE updates.
 - Schematic, PCB, and 3D preview panels.
 - A simulation panel and `/api/projects/:id/simulation` results endpoint that
@@ -66,13 +73,14 @@ dissipation and total current demand are not evaluated at all.
 
 The following capabilities in the project vision are not available in this
 slice: ACP servers, per-user authentication and authorization, full
-KiCad-equivalent ERC/DRC, interactive cross-view connectivity tracing,
-simultaneous resizable views, component datasheets and supplier/availability/cost enrichment, complete
+KiCad-equivalent ERC/DRC, highlighted net and component geometry inside the
+schematic, PCB, and 3D canvases, component datasheets and supplier/availability/cost enrichment, complete
 fabricator rule coverage, Git-backed revision history, approval states, and
-purchasing or fabrication integrations. Component cross-probing currently
-focuses PCB footprints and opens matching schematic component details; it does
-not highlight schematic/3D geometry, trace nets, vias, or simulation signals,
-or edit source properties. MCP agents can edit board dimensions, components,
+purchasing or fabrication integrations. Cross-probing moves a selection between the
+component inspector, the net inspector, the focused PCB footprint, and the
+waveform panel, and lists the schematic wires, copper traces, vias, and
+simulation signals on a net; it does not highlight geometry inside the
+schematic, PCB, or 3D canvases, and it does not edit source properties. MCP agents can edit board dimensions, components,
 component properties, and traces structurally, but there is no equivalent
 browser affordance and no circuit-level undo beyond project source history. Optional workbench
 authentication uses a shared token for the browser and REST API; MCP has its own

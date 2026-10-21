@@ -13,6 +13,7 @@ import {
   getManufacturingArchive,
   getManufacturingPreflight,
   getManufacturingProfiles,
+  getNets,
   getPreview,
   getProject,
   getProjectFile,
@@ -34,10 +35,12 @@ import {
   type ManufacturingCheck,
   type ManufacturingPreflight,
   type ManufacturingProfile,
+  type NetTraceIndex,
   type PreviewKind,
   type Project,
   type ProjectTemplate,
   type ProjectEvent,
+  type TracedNet,
   type ProjectRevision,
   type RevisionComparison,
   type Simulation,
@@ -107,6 +110,9 @@ export default function App() {
   const [boardOutlineError, setBoardOutlineError] = useState('')
   const [selectedComponentId, setSelectedComponentId] = useState('')
   const [simulation, setSimulation] = useState<Simulation | null>(null)
+  const [netIndex, setNetIndex] = useState<NetTraceIndex | null>(null)
+  const [netInspectorOpen, setNetInspectorOpen] = useState(false)
+  const [selectedNetId, setSelectedNetId] = useState('')
   const [build, setBuild] = useState<BuildStatus>(initialBuild)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -143,6 +149,8 @@ export default function App() {
   const restoringHistoryRef = useRef(false)
   const pendingNavigationRef = useRef<(() => Promise<void>) | null>(null)
   const inspectedComponents = getInspectedComponents(preview)
+  const tracedNets = netIndex?.nets ?? []
+  const selectedNet = tracedNets.find(({ id }) => id === selectedNetId) ?? tracedNets[0]
   const selectedComponent = inspectedComponents.find(({ id }) => id === selectedComponentId) ?? inspectedComponents[0]
 
   useEffect(() => { sourceRef.current = source }, [source])
@@ -154,6 +162,8 @@ export default function App() {
       if (kind === view && kind !== 'simulation') setPreview(result.circuitJson)
       const sim = await getSimulation(id)
       if (sim.revision === result.revision) setSimulation(sim)
+      const nets = await getNets(id)
+      if (nets.revision === result.revision) setNetIndex(nets)
     } catch {
       if (kind === view) setPreview(null)
     }
@@ -164,6 +174,8 @@ export default function App() {
     setReferencePdfOpen(false)
     setPreview(null)
     setSimulation(null)
+    setNetIndex(null)
+    setSelectedNetId('')
     setBuild(initialBuild)
     try {
       const opened = await getProject(listedProject.id)
@@ -543,6 +555,20 @@ export default function App() {
   const statusText = build.status === 'idle' ? 'Idle' : build.step || build.status[0].toUpperCase() + build.status.slice(1)
   const hasPcbPreview = hasPcbPreviewData(preview)
 
+  const traceNetForPort = (sourcePortId: string) => {
+    const net = tracedNets.find((item) => item.pins.some((pin) => pin.sourcePortId === sourcePortId))
+    if (!net) return
+    setSelectedNetId(net.id)
+    setNetInspectorOpen(true)
+  }
+
+  const focusNetPin = (sourceComponentId?: string) => {
+    if (!sourceComponentId) return
+    setSelectedComponentId(sourceComponentId)
+    setShowAllViews(false)
+    setView('pcb')
+  }
+
   const resizePanel = (index: number, amount: number) => setPanelWidths((widths) => {
     const next = [...widths]
     const min = 15
@@ -657,6 +683,7 @@ export default function App() {
             <span className="preview-meta">{preview ? `Revision ${build.revision || revision}` : 'Live preview'}</span>
             {view === 'pcb' && project && <button type="button" className="outline-button" onClick={openBoardOutlineEditor}>Board outline</button>}
             {view !== 'simulation' && inspectedComponents.length > 0 && <button type="button" className={`inspector-toggle ${componentInspectorOpen ? 'active' : ''}`} aria-expanded={componentInspectorOpen} aria-controls="component-inspector" onClick={() => setComponentInspectorOpen((open) => !open)}>Components <span>{inspectedComponents.length}</span></button>}
+            {tracedNets.length > 0 && <button type="button" className={`inspector-toggle ${netInspectorOpen ? 'active' : ''}`} aria-expanded={netInspectorOpen} aria-controls="net-inspector" onClick={() => setNetInspectorOpen((open) => !open)}>Nets <span>{tracedNets.length}</span></button>}
           </div>
           <div className="preview-content">
             {showAllViews ? <div className="multiview-grid" style={{ gridTemplateColumns: `minmax(0, ${panelWidths[0]}fr) 10px minmax(0, ${panelWidths[1]}fr) 10px minmax(0, ${panelWidths[2]}fr)` }}>
@@ -686,10 +713,11 @@ export default function App() {
                 <div className="inspector-section"><h3>Identity</h3><dl><dt>Name</dt><dd>{selectedComponent.name}</dd><dt>Source ID</dt><dd><code>{selectedComponent.id}</code></dd></dl></div>
                 <div className="inspector-section"><h3>Properties</h3>{selectedComponent.properties.length ? <dl>{selectedComponent.properties.map(([key, value]) => <Fragment key={key}><dt>{key}</dt><dd>{formatInspectorValue(value)}</dd></Fragment>)}</dl> : <p>No additional source properties.</p>}</div>
                 <div className="inspector-section"><h3>PCB placement</h3>{selectedComponent.placement ? <dl>{(['center', 'rotation', 'layer', 'width', 'height'] as const).filter((key) => selectedComponent.placement?.[key] !== undefined).map((key) => <Fragment key={key}><dt>{key}</dt><dd>{formatInspectorValue(selectedComponent.placement?.[key])}</dd></Fragment>)}</dl> : <p>No PCB placement in this build.</p>}</div>
-                <div className="inspector-section"><h3>Pins and nets</h3>{selectedComponent.pins.length ? selectedComponent.pins.map((pin) => <div className="inspector-pin" key={pin.id || pin.name}><strong>{pin.name}</strong><code>{pin.id || 'No source port ID'}</code><span>{pin.connections.length ? pin.connections.join(', ') : 'No source trace connection found'}</span></div>) : <p>No source ports were found for this component.</p>}</div>
-                <p className="inspector-note">Details reflect the latest successful build. Selecting a component focuses its PCB footprint; use that footprint’s context menu to open it here from the PCB. Schematic and 3D canvas highlighting are not available yet.</p>
+                <div className="inspector-section"><h3>Pins and nets</h3>{selectedComponent.pins.length ? selectedComponent.pins.map((pin) => <div className="inspector-pin" key={pin.id || pin.name}><strong>{pin.name}</strong><code>{pin.id || 'No source port ID'}</code><span>{pin.connections.length ? pin.connections.join(', ') : 'No source trace connection found'}</span>{pin.id && tracedNets.some((net) => net.pins.some((item) => item.sourcePortId === pin.id)) && <button type="button" className="quiet-button pin-trace-button" onClick={() => traceNetForPort(pin.id)}>Trace net</button>}</div>) : <p>No source ports were found for this component.</p>}</div>
+                <p className="inspector-note">Details reflect the latest successful build. Selecting a component focuses its PCB footprint; use that footprint’s context menu to open it here from the PCB. <strong>Trace net</strong> opens the net inspector for that pin. Schematic and 3D canvas highlighting are not available yet.</p>
               </>}
             </aside>}
+            {netInspectorOpen && <NetInspector nets={tracedNets} index={netIndex} selected={selectedNet} onSelect={setSelectedNetId} onFocusPin={focusNetPin} onViewSignals={() => { setShowAllViews(false); setView('simulation') }} onClose={() => setNetInspectorOpen(false)} />}
           </div>
           {build.status === 'failed' && !preview && build.diagnostics?.length ? null : build.status !== 'failed' && build.status !== 'ready' && <div className="preview-footer"><span className="pulse-dot" />Previews update when source changes</div>}
         </section>
@@ -803,6 +831,51 @@ function formatInspectorValue(value: unknown) {
   if (typeof value === 'string') return value
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
   return JSON.stringify(value)
+}
+
+const routingLabels: Record<TracedNet['routing'], string> = {
+  routed: 'Routed',
+  'partially-routed': 'Partially routed',
+  unrouted: 'Unrouted',
+  'not-applicable': 'No routing required',
+}
+
+function NetInspector({ nets, index, selected, onSelect, onFocusPin, onViewSignals, onClose }: {
+  nets: TracedNet[]
+  index: NetTraceIndex | null
+  selected?: TracedNet
+  onSelect: (netId: string) => void
+  onFocusPin: (sourceComponentId?: string) => void
+  onViewSignals: () => void
+  onClose: () => void
+}) {
+  return <aside id="net-inspector" className="component-inspector net-inspector" aria-label="Net inspector">
+    <header><div><h2>Nets</h2><span>{nets.length} from build data</span></div><button type="button" aria-label="Close net inspector" onClick={onClose}>×</button></header>
+    {!selected ? <p className="inspector-empty">No connected nets were found in this build.</p> : <>
+      <label className="inspector-select">Net<select aria-label="Select net" value={selected.id} onChange={(event) => onSelect(event.target.value)}>{nets.map((net) => <option key={net.id} value={net.id}>{net.name}</option>)}</select></label>
+      <div className="inspector-section"><h3>Identity</h3><dl>
+        <dt>Name</dt><dd>{selected.names.join(', ') || selected.name}</dd>
+        <dt>Net ID</dt><dd><code>{selected.id}</code></dd>
+        <dt>Routing</dt><dd><span className={`net-routing ${selected.routing}`}>{routingLabels[selected.routing]}</span></dd>
+        <dt>Source traces</dt><dd>{selected.sourceTraceIds.length}</dd>
+      </dl></div>
+      <div className="inspector-section"><h3>Component pins</h3>{selected.pins.length ? selected.pins.map((pin) => <div className="inspector-pin net-pin" key={pin.sourcePortId}>
+        <strong>{pin.componentName ?? 'Unnamed component'} · {pin.pinName}</strong>
+        <code>{pin.sourcePortId}</code>
+        <span>{pin.pcbPortId ? pin.routed ? 'Reached by copper on this net' : 'Placed but not reached by copper' : 'No PCB port in this build'}</span>
+        {pin.sourceComponentId && <button type="button" className="quiet-button pin-trace-button" onClick={() => onFocusPin(pin.sourceComponentId)}>Focus footprint</button>}
+      </div>) : <p>This net has no source ports.</p>}</div>
+      <div className="inspector-section"><h3>Schematic wires</h3>{selected.schematicTraces.length ? <dl>{selected.schematicTraces.map((trace) => <Fragment key={trace.schematicTraceId}><dt><code>{trace.schematicTraceId}</code></dt><dd>{trace.edgeCount} segments</dd></Fragment>)}</dl> : <p>No schematic wires were emitted for this net.</p>}</div>
+      <div className="inspector-section"><h3>Copper and vias</h3>{selected.copperTraces.length ? <dl>{selected.copperTraces.map((trace) => <Fragment key={trace.pcbTraceId}><dt><code>{trace.pcbTraceId}</code></dt><dd>{trace.lengthMm} mm · {trace.layers.join(', ') || 'no layer'}{trace.widthMm ? ` · ${trace.widthMm} mm wide` : ''}</dd></Fragment>)}</dl> : <p>No copper traces carry this net in this build.</p>}
+        {selected.vias.length ? <p className="net-vias">{selected.vias.length} via{selected.vias.length === 1 ? '' : 's'}: {selected.vias.map((via) => `${via.pcbViaId} (${via.x}, ${via.y}) ${via.fromLayer ?? '?'}→${via.toLayer ?? '?'}`).join('; ')}</p> : null}</div>
+      <div className="inspector-section"><h3>Simulation signals</h3>{selected.simulationSignals.length ? <>
+        <dl>{selected.simulationSignals.map((signal) => <Fragment key={signal.id}><dt>{signal.name}</dt><dd>{signal.unit}</dd></Fragment>)}</dl>
+        <button type="button" className="quiet-button" onClick={onViewSignals}>Open waveforms</button>
+      </> : <p>No probe on this net produced a waveform in this build.</p>}
+        {index?.uncorrelatedSimulationSignals.length ? <p className="inspector-note">{index.uncorrelatedSimulationSignals.length} simulation signal(s) could not be correlated with a net.</p> : null}</div>
+      <p className="inspector-note">Nets come from the build's connectivity map. Pins, wires, copper, and vias are listed by ID; the schematic, PCB, and 3D canvases expose no highlight API, so a selected net is not drawn highlighted. Connectivity tracing is not signal propagation.</p>
+    </>}
+  </aside>
 }
 
 function SimulationPanel({ simulation, build, canRun, onRun }: { simulation: Simulation | null; build: BuildStatus; canRun: boolean; onRun: () => void }) {

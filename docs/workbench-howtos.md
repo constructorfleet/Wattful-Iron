@@ -136,10 +136,29 @@ Open **Components** and select a component to focus its footprint in the PCB
 viewer. To move from a footprint back to its source component details, open the
 PCB component's context menu and choose its **on Schematic** action. This
 switches to the schematic view and selects that component in the inspector.
-The schematic and 3D canvases do not yet draw selection highlights, and net
-tracing does not yet highlight wires or copper.
+The schematic and 3D canvases do not draw selection highlights.
 
 ![PCB preview showing the manufacturing example board and components](images/workbench-pcb.png)
+
+## Trace a net across views
+
+Open **Nets** in the preview toolbar, or choose **Trace net** beside a pin in
+the component inspector. The net inspector lists, for the selected net:
+
+- every component pin on the net, and whether copper on that net reaches it,
+- the schematic wires that carry it,
+- its copper traces with length, layers, and width, plus any vias,
+- the simulation signals whose probes reference it.
+
+Nets come from the connectivity map in the build, so source traces that share a
+port appear as one net. **Focus footprint** moves to the PCB view and focuses
+that pin's component; **Open waveforms** switches to the simulation panel.
+
+Simulation signals whose probes carry no net reference are counted as
+uncorrelated at the bottom of the panel. The schematic, PCB, and 3D viewers
+expose no highlight API, so a selected net is reported by ID and geometry rather
+than drawn highlighted. Connectivity tracing is not signal propagation: a routed
+net says nothing about its electrical behavior.
 
 ## Draw or import a custom board outline
 

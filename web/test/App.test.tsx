@@ -22,6 +22,7 @@ const api = vi.hoisted(() => ({
   generatePcbDraft: vi.fn(),
   getPreview: vi.fn(),
   getSimulation: vi.fn(),
+  getNets: vi.fn(),
   getManufacturingProfiles: vi.fn(),
   getManufacturingPreflight: vi.fn(),
   subscribeToProject: vi.fn((_id: string, _onEvent: (event: unknown) => void) => () => {}),
@@ -72,6 +73,7 @@ beforeEach(() => {
   ] })
   api.getManufacturingPreflight.mockResolvedValue({ preflight: { ready: true, profile: { id: 'board-default', label: 'Board defaults' }, checks: [{ id: 'circuit-errors', status: 'not-evaluated', message: 'Circuit JSON contains no ERC/DRC error records; no validator result confirms this check passed.' }] } })
   api.getSimulation.mockResolvedValue({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], diagnostics: [] })
+  api.getNets.mockResolvedValue({ revision: 'rev-1', nets: [], uncorrelatedSimulationSignals: [], limitations: ['Nets are grouped by the Circuit JSON connectivity map emitted by the build.'] })
   api.createProject.mockResolvedValue({ ...existingProject, id: 'new-1', name: 'Sensor Board' })
   api.duplicateProject.mockResolvedValue({ ...existingProject, id: 'copy-1', name: 'LED Board copy', revision: 'copy-rev-1' })
   api.importPdfReference.mockResolvedValue({ ...existingProject, id: 'pdf-1', name: 'Shim reference', referencePdfs: [{ id: 'ref-1', name: 'shim.pdf' }] })
@@ -301,6 +303,79 @@ describe('workbench', () => {
     expect(screen.getByText('VCC')).toBeInTheDocument()
     expect(screen.getByText('{"x":2,"y":3}')).toBeInTheDocument()
     expect(screen.getByText(/Selecting a component focuses its PCB footprint/)).toBeInTheDocument()
+  })
+
+  it('traces a net from a component pin to its wires, copper, vias, and waveforms', async () => {
+    api.getPreview.mockResolvedValue({ kind: 'pcb', revision: 'rev-1', circuitJson: [
+      { type: 'source_component', source_component_id: 'sc-r1', name: 'R1', ftype: 'simple_resistor' },
+      { type: 'source_port', source_port_id: 'sp-r1-2', source_component_id: 'sc-r1', name: 'pin2' },
+      { type: 'source_trace', source_trace_id: 'st-sense', name: 'SENSE', connected_source_port_ids: ['sp-r1-2'] },
+      { type: 'pcb_component', pcb_component_id: 'pcb-r1', source_component_id: 'sc-r1' },
+    ] })
+    api.getNets.mockResolvedValue({
+      revision: 'rev-1',
+      nets: [{
+        id: 'net1', name: 'SENSE', names: ['SENSE'], sourceTraceIds: ['st-sense'],
+        pins: [
+          { sourcePortId: 'sp-r1-2', pinName: 'pin2', sourceComponentId: 'sc-r1', componentName: 'R1', pcbPortId: 'pp-1', routed: true },
+          { sourcePortId: 'sp-r2-1', pinName: 'pin1', sourceComponentId: 'sc-r2', componentName: 'R2', pcbPortId: 'pp-2', routed: false },
+        ],
+        schematicTraces: [{ schematicTraceId: 'scht-1', edgeCount: 3 }],
+        copperTraces: [{ pcbTraceId: 'pt-1', layers: ['top'], widthMm: 0.2, lengthMm: 4.25, connectedPcbPortIds: ['pp-1'] }],
+        vias: [{ pcbViaId: 'pv-1', x: 1, y: -0.8, fromLayer: 'top', toLayer: 'bottom' }],
+        simulationSignals: [{ id: 'g1', name: 'SENSE probe', unit: 'V' }],
+        routing: 'partially-routed',
+      }],
+      uncorrelatedSimulationSignals: [{ id: 'g2', name: 'FLOATING', unit: 'V' }],
+      limitations: ['Nets are grouped by the Circuit JSON connectivity map emitted by the build.'],
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Components 1/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Trace net' }))
+
+    const inspector = screen.getByRole('complementary', { name: 'Net inspector' })
+    expect(inspector).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Select net' })).toHaveValue('net1')
+    expect(screen.getByText('Partially routed')).toBeInTheDocument()
+    expect(screen.getByText('R1 · pin2')).toBeInTheDocument()
+    expect(screen.getByText('Reached by copper on this net')).toBeInTheDocument()
+    expect(screen.getByText('Placed but not reached by copper')).toBeInTheDocument()
+    expect(screen.getByText('3 segments')).toBeInTheDocument()
+    expect(screen.getByText('4.25 mm · top · 0.2 mm wide')).toBeInTheDocument()
+    expect(screen.getByText(/1 via: pv-1 \(1, -0.8\) top→bottom/)).toBeInTheDocument()
+    expect(screen.getByText('1 simulation signal(s) could not be correlated with a net.')).toBeInTheDocument()
+    expect(screen.getByText(/expose no highlight API/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open waveforms' }))
+    expect(screen.getByRole('tab', { name: 'Simulation' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('focuses a net pin footprint on the PCB from the net inspector', async () => {
+    api.getPreview.mockResolvedValue({ kind: 'pcb', revision: 'rev-1', circuitJson: [
+      { type: 'source_component', source_component_id: 'sc-r1', name: 'R1' },
+      { type: 'pcb_component', pcb_component_id: 'pcb-r1', source_component_id: 'sc-r1' },
+    ] })
+    api.getNets.mockResolvedValue({
+      revision: 'rev-1',
+      nets: [{
+        id: 'net1', name: 'SENSE', names: ['SENSE'], sourceTraceIds: ['st-sense'],
+        pins: [{ sourcePortId: 'sp-r1-2', pinName: 'pin2', sourceComponentId: 'sc-r1', componentName: 'R1', pcbPortId: 'pp-1', routed: true }],
+        schematicTraces: [], copperTraces: [], vias: [], simulationSignals: [], routing: 'not-applicable',
+      }],
+      uncorrelatedSimulationSignals: [],
+      limitations: [],
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Nets 1/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Focus footprint' }))
+
+    expect(screen.getByRole('tab', { name: 'PCB' })).toHaveAttribute('aria-selected', 'true')
+    await screen.findByTestId('pcb-viewer')
+    await waitFor(() => expect(pcbViewer.focusPcbComponent).toHaveBeenCalledWith('pcb-r1'))
   })
 
   it('focuses the selected PCB footprint and opens component details from the PCB cross-probe action', async () => {

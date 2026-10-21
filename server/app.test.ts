@@ -424,6 +424,44 @@ test("simulation endpoint returns retained tscircuit waveforms with net correlat
   } finally { await f.cleanup() }
 })
 
+test("nets endpoint traces connectivity across schematic wires, copper, and simulation", async () => {
+  const tracedCircuit = [
+    { type: "source_component", source_component_id: "sc1", name: "R1", ftype: "simple_resistor" },
+    { type: "source_component", source_component_id: "sc2", name: "R2", ftype: "simple_resistor" },
+    { type: "source_port", source_port_id: "sp1", source_component_id: "sc1", name: "pin2", pin_number: 2, subcircuit_connectivity_map_key: "net1" },
+    { type: "source_port", source_port_id: "sp2", source_component_id: "sc2", name: "pin1", pin_number: 1, subcircuit_connectivity_map_key: "net1" },
+    { type: "source_trace", source_trace_id: "st1", name: "SENSE", connected_source_port_ids: ["sp1", "sp2"], connected_source_net_ids: [], subcircuit_connectivity_map_key: "net1" },
+    { type: "pcb_port", pcb_port_id: "pp1", source_port_id: "sp1", layers: ["top"], x: 0, y: 0 },
+    { type: "pcb_port", pcb_port_id: "pp2", source_port_id: "sp2", layers: ["top"], x: 4, y: 0 },
+    { type: "pcb_trace", pcb_trace_id: "pt1", connection_name: "st1", connectsTo: ["pp1", "pp2"], route: [
+      { route_type: "wire", x: 0, y: 0, width: 0.2, layer: "top", start_pcb_port_id: "pp1" },
+      { route_type: "wire", x: 4, y: 0, width: 0.2, layer: "top", end_pcb_port_id: "pp2" },
+    ] },
+    { type: "schematic_trace", schematic_trace_id: "scht1", source_trace_id: "schematic_port_1-schematic_port_2", edges: [{ from: { x: 0, y: 0 }, to: { x: 2, y: 0 } }], subcircuit_connectivity_map_key: "net1" },
+    { type: "simulation_experiment", simulation_experiment_id: "e1", name: "Transient", experiment_type: "transient" },
+    { type: "simulation_voltage_probe", simulation_voltage_probe_id: "p1", name: "SENSE", signal_input_source_net_id: "net1" },
+    { type: "simulation_transient_voltage_graph", simulation_transient_voltage_graph_id: "g1", simulation_experiment_id: "e1", timestamps_ms: [0, 1], voltage_levels: [0, 2], time_per_step: 1, start_time_ms: 0 },
+    { type: "simulation_oscilloscope_trace", simulation_oscilloscope_trace_id: "t1", simulation_transient_voltage_graph_id: "g1", simulation_voltage_probe_id: "p1" },
+  ]
+  const f = await fixture(async () => tracedCircuit)
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Net tracing" }).expect(201)
+    await waitForBuild(f.app, project.id, "ready")
+    const result = await request(f.app).get(`/api/projects/${project.id}/nets`).expect(200)
+    assert.equal(result.body.revision, project.revision)
+    assert.equal(result.body.nets.length, 1)
+    const [net] = result.body.nets
+    assert.equal(net.name, "SENSE")
+    assert.equal(net.routing, "routed")
+    assert.deepEqual(net.pins.map((pin: { componentName: string; pinName: string; routed: boolean }) => [pin.componentName, pin.pinName, pin.routed]), [["R1", "pin2", true], ["R2", "pin1", true]])
+    assert.deepEqual(net.schematicTraces, [{ schematicTraceId: "scht1", edgeCount: 1 }])
+    assert.equal(net.copperTraces[0].lengthMm, 4)
+    assert.deepEqual(net.simulationSignals, [{ id: "g1", name: "SENSE", unit: "V" }])
+    assert.deepEqual(result.body.uncorrelatedSimulationSignals, [])
+    assert.ok(result.body.limitations.some((item: string) => item.includes("no highlight API")))
+  } finally { await f.cleanup() }
+})
+
 test("new projects build Circuit JSON through the documented tscircuit CLI", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "circuits-cli-integration-"))
   const app = createApp({ projectsDir: root, watchFiles: false, buildExecutionMode: "trusted-local" })

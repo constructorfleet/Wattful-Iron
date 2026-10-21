@@ -113,6 +113,21 @@ test("MCP exposes read-only inspection of components, nets, pins, routes, and bo
     const trace = readResult<Array<{ sourceTrace: { source_trace_id: string }; pcbTraces: unknown[] }>>(await client.callTool({ name: "trace_net", arguments: { projectId: project.id, net: "VCC" } }))
     assert.equal(trace[0]?.sourceTrace.source_trace_id, "source_trace_0")
     assert.equal(trace[0]?.pcbTraces.length, 1)
+    const netIndex = readResult<{ revision: string; nets: Array<{ name: string; pins: Array<{ componentName: string; pinName: string }>; copperTraces: unknown[]; routing: string }>; limitations: string[] }>(await client.callTool({
+      name: "get_net_trace", arguments: { projectId: project.id },
+    }))
+    assert.deepEqual(netIndex.nets.map(({ name }) => name), ["GND", "VCC"])
+    assert.equal(netIndex.revision, rawCircuit.revision)
+    assert.ok(netIndex.limitations.length > 0)
+    const vccTrace = readResult<{ net: { name: string; pins: Array<{ componentName: string; pinName: string }>; copperTraces: Array<{ pcbTraceId: string }>; routing: string } }>(await client.callTool({
+      name: "get_net_trace", arguments: { projectId: project.id, net: "VCC" },
+    }))
+    assert.deepEqual(vccTrace.net.pins.map(({ componentName, pinName }) => `${componentName}.${pinName}`).sort(), ["J1.VCC", "R1.pin1"])
+    assert.deepEqual(vccTrace.net.copperTraces.map(({ pcbTraceId }) => pcbTraceId), ["pcb_trace_0"])
+    // The fixture's copper route names no endpoint ports, so no pin counts as reached by copper.
+    assert.equal(vccTrace.net.routing, "partially-routed")
+    const missingNet = await client.callTool({ name: "get_net_trace", arguments: { projectId: project.id, net: "SPI_MISO" } })
+    assert.equal(missingNet.isError, true)
     const pins = readResult<Array<{ name: string; connectedNets: string[] }>>(await client.callTool({ name: "get_pin_connections", arguments: { projectId: project.id, component: "R1" } }))
     assert.deepEqual(pins.map(({ name, connectedNets }) => [name, connectedNets]), [["pin1", ["VCC"]], ["pin2", ["GND"]]])
     const board = readResult<Array<{ width: number; height: number; num_layers: number }>>(await client.callTool({ name: "get_board_properties", arguments: { projectId: project.id } }))
