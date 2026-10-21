@@ -27,12 +27,27 @@ tag. The release workflow builds and publishes multi-architecture container
 images tagged with the full version and `major.minor` version. The normal
 `main` build continues to publish `latest`.
 
+A release tag points at the `main` commit the release PR was squash-merged
+into, and the `Container` workflow validates that commit on push: lint, tests,
+build, container acceptance, and the image vulnerability scan. The release
+workflow therefore waits for that run to finish for the released commit and
+fails the release if it did not succeed, so no release image is published from
+a commit that failed validation. It waits rather than re-running the suite,
+because the commit is the same one `main` already validated.
+
 The first release uses the existing `0.1.0` package version as its baseline and
 starts collecting changes after the bootstrap commit recorded in
-`release-please-config.json`. Release PRs are created by GitHub Actions, whose
-token does not start the usual `pull_request` workflows. The release workflow
-therefore dispatches the container validation workflow directly and reports
-the release PR's title check itself.
+`release-please-config.json`.
+
+Release PRs and release tags are both created with the Actions token, and
+GitHub does not start workflows for events raised by that token. The release
+workflow therefore reports the release PR's `Conventional PR title` status
+itself and dispatches `Container` for the PR's head branch, skipping the
+dispatch when a run already exists for that commit. Both happen on every push
+to `main`, not only when the release PR is first created: an updated release PR
+has a new head commit, and `main` requires the `Conventional PR title` and
+`Build container image` checks, so without this an updated release PR could not
+be merged.
 
 This repository is not published as an npm package; the release artifacts are
 the GitHub release and container images.

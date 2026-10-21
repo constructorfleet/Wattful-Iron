@@ -24,14 +24,26 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+      # Release PRs are authored by GITHUB_TOKEN, so pull_request workflows never
+      # start for them. Report their required checks here, on every push to main
+      # rather than only on creation: an updated release PR has a new head commit
+      # that needs its own checks before it can be merged.
       - name: Validate release PR title and dispatch its checks
-        if: steps.release.outputs.prs_created == 'true'
         uses: actions/github-script@v9
-        env:
-          RELEASE_PRS: ${{ steps.release.outputs.prs }}
         with:
           script: |
-            const prs = JSON.parse(process.env.RELEASE_PRS || '[]')
+            const open = await github.paginate(github.rest.pulls.list, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              base: context.payload.repository.default_branch,
+              per_page: 100,
+            })
+            const prs = open.filter((pr) => pr.labels.some((label) => label.name === 'autorelease: pending'))
+            if (!prs.length) {
+              core.info('No open release pull request to report checks for.')
+              return
+            }
             const titlePattern = /^[a-z][a-z0-9-]*(\([A-Za-z0-9._\/-]+\))?(!)?: .+$/
             for (const pr of prs) {
               const valid = titlePattern.test(pr.title)
@@ -44,6 +56,17 @@ jobs:
                 description: valid ? 'Release PR title follows Conventional Commit format.' : 'Release PR title must use Conventional Commit format.',
                 target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               })
+              const existing = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'container.yml',
+                head_sha: pr.head.sha,
+                per_page: 1,
+              })
+              if (existing.data.total_count > 0) {
+                core.info(`Container validation already ran for ${pr.head.sha}; not dispatching again.`)
+                continue
+              }
               await github.rest.actions.createWorkflowDispatch({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -52,9 +75,61 @@ jobs:
               })
             }
 
-  prepare-release-image:
+  # The release tag points at the main commit that the container workflow already
+  # validates on push: lint, tests, build, container acceptance, and the image
+  # scan. Require that run to have succeeded for this exact commit before any
+  # release image is published, rather than re-running the suite or publishing
+  # an unvalidated image.
+  verify-release-validation:
     if: needs.release-please.outputs.release_created == 'true'
     needs: release-please
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Require a successful container run for the released commit
+        uses: actions/github-script@v9
+        env:
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        with:
+          script: |
+            const tag = process.env.RELEASE_TAG
+            const ref = await github.rest.git.getRef({ owner: context.repo.owner, repo: context.repo.repo, ref: `tags/${tag}` })
+            let sha = ref.data.object.sha
+            if (ref.data.object.type === 'tag') {
+              const annotated = await github.rest.git.getTag({ owner: context.repo.owner, repo: context.repo.repo, tag_sha: sha })
+              sha = annotated.data.object.sha
+            }
+            core.info(`${tag} resolves to ${sha}`)
+            const deadline = Date.now() + 55 * 60 * 1000
+            while (Date.now() < deadline) {
+              const runs = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'container.yml',
+                head_sha: sha,
+                per_page: 100,
+              })
+              const finished = runs.data.workflow_runs.filter((run) => run.status === 'completed')
+              if (finished.some((run) => run.conclusion === 'success')) {
+                core.info(`Container validation succeeded for ${sha}.`)
+                return
+              }
+              if (finished.length && finished.every((run) => run.conclusion !== 'success')) {
+                core.setFailed(`Container validation did not succeed for ${sha}: ${finished.map((run) => `${run.conclusion} (${run.html_url})`).join(', ')}`)
+                return
+              }
+              if (!runs.data.total_count) {
+                core.info(`No container run has started for ${sha} yet; waiting.`)
+              } else {
+                core.info(`Container validation for ${sha} is still running; waiting.`)
+              }
+              await new Promise((resolve) => setTimeout(resolve, 30_000))
+            }
+            core.setFailed(`Timed out waiting for container validation of ${sha}.`)
+
+  prepare-release-image:
+    if: needs.release-please.outputs.release_created == 'true'
+    needs: [release-please, verify-release-validation]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -72,7 +147,7 @@ jobs:
 
   publish-release-image:
     if: needs.release-please.outputs.release_created == 'true'
-    needs: [release-please, prepare-release-image]
+    needs: [release-please, verify-release-validation, prepare-release-image]
     strategy:
       fail-fast: false
       matrix:
