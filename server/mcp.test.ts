@@ -128,6 +128,24 @@ test("MCP exposes read-only inspection of components, nets, pins, routes, and bo
     assert.equal(vccTrace.net.routing, "partially-routed")
     const missingNet = await client.callTool({ name: "get_net_trace", arguments: { projectId: project.id, net: "SPI_MISO" } })
     assert.equal(missingNet.isError, true)
+    const moduleList = readResult<{ modules: Array<{ id: string; component: string; notes: string[] }> }>(
+      await client.callTool({ name: "list_circuit_modules", arguments: {} }))
+    assert.ok(moduleList.modules.length >= 5)
+    assert.ok(moduleList.modules.every(({ notes }) => notes.length > 0), "every module must carry its notes")
+    const projectForModule = readResult<{ revision: string }>(await client.callTool({ name: "get_project", arguments: { projectId: project.id } }))
+    const addedModule = readResult<{ path: string; importLine: string; usage: string; revision: string }>(await client.callTool({
+      name: "add_circuit_module", arguments: { projectId: project.id, module: "rc-low-pass", revision: projectForModule.revision },
+    }))
+    assert.equal(addedModule.path, "modules/rc-low-pass.tsx")
+    assert.equal(addedModule.importLine, 'import { RcLowPass } from "./modules/rc-low-pass"')
+    const moduleFile = readResult<{ content: string }>(await client.callTool({
+      name: "read_project_file", arguments: { projectId: project.id, path: "modules/rc-low-pass.tsx" },
+    }))
+    assert.match(moduleFile.content, /export const RcLowPass/)
+    const unknownModule = await client.callTool({ name: "add_circuit_module", arguments: { projectId: project.id, module: "buck-converter", revision: addedModule.revision } })
+    assert.equal(unknownModule.isError, true)
+    await waitForToolStatus(client, project.id, "ready")
+
     const revisions = readResult<{ gitBacked: boolean; revisions: Array<{ revision: string; commit?: string; retainedSnapshot: boolean; hasDesignSummary: boolean }> }>(
       await client.callTool({ name: "list_project_revisions", arguments: { projectId: project.id } }))
     assert.ok(revisions.revisions.length >= 1)

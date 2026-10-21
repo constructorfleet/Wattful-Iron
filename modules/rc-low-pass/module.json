@@ -1,0 +1,22 @@
+{
+  "id": "rc-low-pass",
+  "name": "RC low-pass filter",
+  "component": "RcLowPass",
+  "description": "A single-pole RC low-pass filter with a corner at 1 / (2 pi R C).",
+  "parameters": [
+    { "name": "resistorRef", "type": "string", "default": "R1", "description": "Reference designator for the series resistor." },
+    { "name": "capacitorRef", "type": "string", "default": "C1", "description": "Reference designator for the shunt capacitor." },
+    { "name": "resistance", "type": "string", "default": "10k", "description": "Series resistance." },
+    { "name": "capacitance", "type": "string", "default": "100nF", "description": "Shunt capacitance." },
+    { "name": "pcbX", "type": "number", "default": "0", "description": "Module position on the board, in millimetres." },
+    { "name": "pcbY", "type": "number", "default": "0", "description": "Module position on the board, in millimetres." },
+    { "name": "schX", "type": "number", "default": "0", "description": "Module position on the schematic sheet." },
+    { "name": "schY", "type": "number", "default": "0", "description": "Module position on the schematic sheet." }
+  ],
+  "terminals": ["input", "FILTERED", "return"],
+  "usage": "<RcLowPass resistance=\"1k\" capacitance=\"1uF\" pcbX={-6} />",
+  "notes": [
+    "One pole only: attenuation above the corner is 20 dB per decade.",
+    "The corner frequency is not verified by a build. Add an analog simulation with an AC sweep to measure it."
+  ]
+}

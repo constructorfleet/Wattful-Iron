@@ -1,0 +1,23 @@
+{
+  "id": "i2c-pullups",
+  "name": "I2C bus header with pull-ups",
+  "component": "I2cPullups",
+  "description": "A four-pin I2C header with a pull-up resistor on SDA and SCL.",
+  "parameters": [
+    { "name": "connectorRef", "type": "string", "default": "J1", "description": "Reference designator for the bus header." },
+    { "name": "sdaRef", "type": "string", "default": "R1", "description": "Reference designator for the SDA pull-up." },
+    { "name": "sclRef", "type": "string", "default": "R2", "description": "Reference designator for the SCL pull-up." },
+    { "name": "resistance", "type": "string", "default": "4.7k", "description": "Pull-up resistance on both lines." },
+    { "name": "pcbX", "type": "number", "default": "0", "description": "Module position on the board, in millimetres." },
+    { "name": "pcbY", "type": "number", "default": "0", "description": "Module position on the board, in millimetres." },
+    { "name": "schX", "type": "number", "default": "0", "description": "Module position on the schematic sheet." },
+    { "name": "schY", "type": "number", "default": "0", "description": "Module position on the schematic sheet." }
+  ],
+  "terminals": ["VCC", "GND", "SDA", "SCL"],
+  "usage": "<I2cPullups resistance=\"2.2k\" pcbX={18} schX={9} />",
+  "notes": [
+    "One pull-up pair per bus: adding this module twice on one bus halves the pull-up resistance.",
+    "4.7k suits a 100 kHz bus with light capacitance. Faster buses or longer traces need lower values.",
+    "The header uses the built-in pinrow4 footprint, which a build may report as differing from the supplier footprint."
+  ]
+}

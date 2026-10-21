@@ -33,6 +33,8 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `remove_component` | Remove a component and every trace that references it. |
 | `set_component_properties` | Set, replace, or remove properties on a named component. |
 | `connect_components` | Add a trace between two tscircuit selectors. |
+| `list_circuit_modules` | List the reusable circuit modules, with each one's parameters, terminals, usage, target file, and the notes naming its limits. |
+| `add_circuit_module` | Write a module's source into a project at `modules/<id>.tsx` and return the import line and usage to place in the circuit source. |
 | `list_project_revisions` | List the project's revision history with Git commit, timestamp, changed files, and whether a snapshot and build summary are retained. |
 | `compare_project_revisions` | Compare two revisions: changed source files with before/after content, plus the design comparison of what each build produced. |
 | `build_project` | Run the CLI build and return its result or diagnostics. |
@@ -217,6 +219,11 @@ point, total current demand, component dissipation, and trace loading are also
 reported as not evaluated rather than estimated. The same analysis is available
 over REST at `GET /api/projects/:id/power`, which accepts the same
 `temperatureRiseC` and `copperOunces` query parameters.
+
+`list_circuit_modules` and `add_circuit_module` expose the module library. A
+module is a starting point rather than a verified design: values are defaults,
+terminals are left unconnected for you to wire, and each module's `notes` say
+what it does not do. See [circuit modules](modules.md).
 
 Each revision carries a design review state: `draft`, `validated`, `reviewed`,
 or `manufacturing_approved`. `get_review_state` reports it with the evidence

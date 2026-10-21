@@ -1,0 +1,22 @@
+{
+  "id": "resistor-divider",
+  "name": "Resistor divider",
+  "component": "ResistorDivider",
+  "description": "A two-resistor divider whose junction carries the divided output.",
+  "parameters": [
+    { "name": "topRef", "type": "string", "default": "R1", "description": "Reference designator for the high-side resistor." },
+    { "name": "bottomRef", "type": "string", "default": "R2", "description": "Reference designator for the low-side resistor." },
+    { "name": "top", "type": "string", "default": "10k", "description": "High-side resistance." },
+    { "name": "bottom", "type": "string", "default": "10k", "description": "Low-side resistance." },
+    { "name": "pcbX", "type": "number", "default": "0", "description": "Module position on the board, in millimetres." },
+    { "name": "pcbY", "type": "number", "default": "0", "description": "Module position on the board, in millimetres." },
+    { "name": "schX", "type": "number", "default": "0", "description": "Module position on the schematic sheet." },
+    { "name": "schY", "type": "number", "default": "0", "description": "Module position on the schematic sheet." }
+  ],
+  "terminals": ["input", "SENSE", "return"],
+  "usage": "<ResistorDivider top=\"22k\" bottom=\"10k\" pcbX={8} schX={3} />",
+  "notes": [
+    "The divider loads the source it measures; pick values for the source impedance and the current you can spend.",
+    "Resistor power rating is not checked. analyze_power reports dissipation only when a build emits a DC operating point."
+  ]
+}

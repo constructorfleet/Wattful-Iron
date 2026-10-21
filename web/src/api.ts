@@ -106,6 +106,20 @@ export type TracedNet = {
   routing: 'routed' | 'partially-routed' | 'unrouted' | 'not-applicable'
 }
 export type NetTraceIndex = { revision: string; nets: TracedNet[]; uncorrelatedSimulationSignals: NetSimulationSignal[]; limitations: string[] }
+export type CircuitModuleParameter = { name: string; type: string; default?: string; description?: string }
+export type CircuitModule = {
+  id: string
+  name: string
+  component: string
+  description: string
+  parameters: CircuitModuleParameter[]
+  terminals: string[]
+  usage: string
+  notes: string[]
+  path: string
+}
+export type AddedModule = { module: CircuitModule; path: string; revision: string; importLine: string; usage: string }
+
 export type SourcedPart = {
   lcscPartNumber: string
   manufacturerPartNumber?: string
@@ -358,6 +372,14 @@ export const setReviewState = (id: string, state: ReviewState, revision: string,
 )
 
 export const getAssertionCheck = (id: string, fetcher?: Fetcher) => request<AssertionCheck>(`/api/projects/${encodeURIComponent(id)}/assertions/check`, undefined, fetcher)
+
+export const listCircuitModules = (fetcher?: Fetcher) => request<{ modules: CircuitModule[] }>('/api/modules', undefined, fetcher)
+
+export const addCircuitModule = (id: string, moduleId: string, revision: string, fetcher?: Fetcher) => request<AddedModule>(
+  `/api/projects/${encodeURIComponent(id)}/modules/${encodeURIComponent(moduleId)}`,
+  { method: 'POST', headers: { 'If-Match': revision } },
+  fetcher,
+)
 
 export const getPower = (id: string, fetcher?: Fetcher) => request<PowerAnalysis>(`/api/projects/${encodeURIComponent(id)}/power`, undefined, fetcher)
 

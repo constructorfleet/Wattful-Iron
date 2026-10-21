@@ -11,6 +11,7 @@ import { buildNetTraceIndex, findNet } from "./net-trace.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
 import type { AssertionReport } from "./assertions.js"
 import { isReviewState, type ReviewState } from "./review-state.js"
+import { moduleImportLine, type CircuitModule } from "./circuit-modules.js"
 import { addComponent, connectComponents, listSourceComponents, removeComponent, setBoardDimensions, setComponentProperties } from "./circuit-source.js"
 import { checkRouting, runDesignRuleCheck, runElectricalRuleCheck } from "./rule-checks.js"
 import { analyzePower } from "./power-analysis.js"
@@ -55,7 +56,13 @@ export type ReviewAccess = {
   set(id: string, target: ReviewState, expectedRevision: string, note?: string): Promise<unknown>
 }
 
-export function mountMcp(app: Express, service: ProjectService, configuredToken?: string, sourcing?: SourcingClient, assertions?: (id: string) => Promise<AssertionReport | undefined>, review?: ReviewAccess) {
+/** The module library the app hands to MCP. */
+export type ModuleAccess = {
+  list(): Promise<CircuitModule[]>
+  read(id: string): Promise<{ module: CircuitModule; source: string }>
+}
+
+export function mountMcp(app: Express, service: ProjectService, configuredToken?: string, sourcing?: SourcingClient, assertions?: (id: string) => Promise<AssertionReport | undefined>, review?: ReviewAccess, modules?: ModuleAccess) {
   if (!configuredToken) {
     app.all("/mcp", (_request, response) => response.status(503).json({ error: "MCP_AUTH_TOKEN must be configured" }))
     return
@@ -73,7 +80,7 @@ export function mountMcp(app: Express, service: ProjectService, configuredToken?
     },
   }
 
-  const mcpHandler = createMcpHandler(() => createServer(service, sourcing, assertions, review), { onerror: (error) => console.error("MCP handler failed", error) })
+  const mcpHandler = createMcpHandler(() => createServer(service, sourcing, assertions, review, modules), { onerror: (error) => console.error("MCP handler failed", error) })
   const handler = toNodeHandler(mcpHandler)
   service.onClose(() => mcpHandler.close())
   const auth = requireBearerAuth({ verifier })
@@ -88,7 +95,7 @@ export function mountMcp(app: Express, service: ProjectService, configuredToken?
   })
 }
 
-function createServer(service: ProjectService, sourcing?: SourcingClient, assertions?: (id: string) => Promise<AssertionReport | undefined>, review?: ReviewAccess): McpServer {
+function createServer(service: ProjectService, sourcing?: SourcingClient, assertions?: (id: string) => Promise<AssertionReport | undefined>, review?: ReviewAccess, modules?: ModuleAccess): McpServer {
   const server = new McpServer({ name: "circuits-workbench", version: "0.2.0" })
   server.registerTool("list_projects", {
     title: "List projects",
@@ -211,6 +218,26 @@ function createServer(service: ProjectService, sourcing?: SourcingClient, assert
     description: "Compare two revisions: the changed source files with their before and after contents, plus a design comparison of what each revision's build produced (board dimensions, components, nets, routing counts, simulation results). The design comparison is unavailable, with a reason, when either revision has no retained build summary. Rendered images are not compared.",
     inputSchema: z.object({ projectId, from: revision, to: revision }),
   }, async ({ projectId, from, to }) => safeTool(async () => service.compareHistory(projectId, from, to)))
+
+  server.registerTool("list_circuit_modules", {
+    title: "List reusable circuit modules",
+    description: "List the reusable circuit modules this workbench ships: each one's parameters, terminals, the file it lands at, example usage, and the notes naming what it does not do.",
+    inputSchema: z.object({}),
+  }, async () => safeTool(async () => {
+    if (!modules) throw new Error("The circuit module library is unavailable on this workbench")
+    return { modules: await modules.list() }
+  }))
+
+  server.registerTool("add_circuit_module", {
+    title: "Add a reusable circuit module to a project",
+    description: "Write a module's source into the project at modules/<id>.tsx and return the import line and example usage to place in the circuit source. Pass the current project revision for concurrency. The module is a starting point, not a verified design: read its notes.",
+    inputSchema: z.object({ projectId, module: z.string().trim().min(1).max(50), revision }),
+  }, async ({ projectId, module: moduleId, revision: expected }) => safeTool(async () => {
+    if (!modules) throw new Error("The circuit module library is unavailable on this workbench")
+    const { module, source } = await modules.read(moduleId)
+    const saved = await service.writeFile(projectId, module.path, source, expected)
+    return { module, path: saved.path, revision: saved.revision, importLine: moduleImportLine(module), usage: module.usage }
+  }))
 
   server.registerTool("build_project", {
     title: "Build project",

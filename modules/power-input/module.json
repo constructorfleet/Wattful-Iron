@@ -1,0 +1,21 @@
+{
+  "id": "power-input",
+  "name": "Power input header",
+  "component": "PowerInput",
+  "description": "A two-pin power input header with a bulk capacitor across the rails.",
+  "parameters": [
+    { "name": "connectorRef", "type": "string", "default": "J1", "description": "Reference designator for the header." },
+    { "name": "capacitorRef", "type": "string", "default": "C1", "description": "Reference designator for the bulk capacitor." },
+    { "name": "capacitance", "type": "string", "default": "10uF", "description": "Bulk capacitance across the input." },
+    { "name": "pcbX", "type": "number", "default": "0", "description": "Module position on the board, in millimetres." },
+    { "name": "pcbY", "type": "number", "default": "0", "description": "Module position on the board, in millimetres." },
+    { "name": "schX", "type": "number", "default": "0", "description": "Module position on the schematic sheet." },
+    { "name": "schY", "type": "number", "default": "0", "description": "Module position on the schematic sheet." }
+  ],
+  "terminals": ["VIN", "GND"],
+  "usage": "<PowerInput pcbX={-14} schX={-8} capacitance=\"22uF\" />",
+  "notes": [
+    "The header uses the built-in pinrow2 footprint so it resolves without network access; its supplier footprint may differ.",
+    "No reverse-polarity or overcurrent protection is included."
+  ]
+}
