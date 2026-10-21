@@ -31,6 +31,8 @@ type ProjectService = {
   readFile(id: string, relativePath: string): Promise<{ path: string; content: string; revision: string }>
   writeFile(id: string, relativePath: string, content: string, revision: string): Promise<{ path: string; revision: string }>
   requestBuild(id: string): { buildId: string; status: string }
+  listHistory(id: string): Promise<unknown>
+  compareHistory(id: string, from: string, to: string): Promise<unknown>
   preview(id: string): Promise<{ revision: string; circuitJson: unknown }>
   onClose(close: () => Promise<void>): void
 }
@@ -189,6 +191,18 @@ function createServer(service: ProjectService, sourcing?: SourcingClient): McpSe
     }),
   }, async ({ projectId, revision, from, to, name }) =>
     safeTool(() => editSource(service, projectId, revision, (source) => connectComponents(source, { from, to, name }))))
+
+  server.registerTool("list_project_revisions", {
+    title: "List project revisions",
+    description: "List the project's revision history newest first: revision, Git commit when the project is Git-backed, timestamp, changed files, whether a source snapshot is still retained, and whether a build summary exists for comparison.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => service.listHistory(projectId)))
+
+  server.registerTool("compare_project_revisions", {
+    title: "Compare two project revisions",
+    description: "Compare two revisions: the changed source files with their before and after contents, plus a design comparison of what each revision's build produced (board dimensions, components, nets, routing counts, simulation results). The design comparison is unavailable, with a reason, when either revision has no retained build summary. Rendered images are not compared.",
+    inputSchema: z.object({ projectId, from: revision, to: revision }),
+  }, async ({ projectId, from, to }) => safeTool(async () => service.compareHistory(projectId, from, to)))
 
   server.registerTool("build_project", {
     title: "Build project",

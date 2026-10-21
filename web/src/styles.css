@@ -153,6 +153,14 @@ button { color: inherit; cursor: pointer; }
 .power-totals dd { margin: 0 0 0 6px; color: #72d4af; }
 .trace-load { margin: 4px 0; color: #c6d2d8; font: 10px var(--mono); }
 .trace-load.over-capacity { color: #e58b7b; }
+.design-diff { margin: 0 0 14px; padding: 10px 12px; border: 1px solid #2c363c; border-radius: 6px; background: #161d21; }
+.design-diff h3 { margin: 0 0 7px; color: #cfd9de; font-size: 11px; }
+.design-diff p { margin: 4px 0; color: #c6d2d8; font-size: 10px; }
+.design-diff dl { display: grid; margin: 5px 0; gap: 3px 12px; grid-template-columns: minmax(80px, max-content) 1fr; font-size: 10px; }
+.design-diff dt { color: #93a0a8; }
+.design-diff dd { margin: 0; color: #d5dee2; font: 10px var(--mono); }
+.design-added { color: #72d4af; }
+.design-removed { color: #e58b7b; }
 .bom-cost { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid #263036; }
 .bom-cost-heading { display: flex; align-items: center; justify-content: space-between; }
 .bom-cost-heading h3 { margin: 0; color: #cfd9de; font-size: 11px; }

@@ -9,8 +9,31 @@ export type Project = {
 export type ProjectTemplate = { id: string; name: string; description: string }
 
 export type ProjectFile = { path: string; content: string; revision: string }
-export type ProjectRevision = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes: number }
-export type RevisionComparison = { from: string; to: string; files: Array<{ path: string; before: string | null; after: string | null }> }
+export type ProjectRevision = {
+  revision: string
+  createdAt: string
+  changedFiles: string[]
+  sizeBytes?: number
+  commit?: string
+  retainedSnapshot: boolean
+  hasDesignSummary: boolean
+}
+export type ProjectHistory = { gitBacked: boolean; snapshotRetention: number; revisions: ProjectRevision[] }
+export type DesignComponentSummary = { name: string; ftype?: string; value?: string; manufacturerPartNumber?: string; footprint?: string; pinCount: number }
+export type DesignNetSummary = { name: string; pinCount: number; routing: string }
+export type DesignChange = { name: string; changes: Array<{ property: string; before?: string | number; after?: string | number }> }
+export type DesignDiff =
+  | {
+    available: true
+    board: Array<{ property: string; before?: number; after?: number }>
+    components: { added: DesignComponentSummary[]; removed: DesignComponentSummary[]; changed: DesignChange[] }
+    nets: { added: DesignNetSummary[]; removed: DesignNetSummary[]; changed: DesignChange[] }
+    counts: Array<{ metric: string; before: number; after: number }>
+    simulation: Array<{ property: string; before: string | number; after: string | number }>
+    limitations: string[]
+  }
+  | { available: false; reason: string }
+export type RevisionComparison = { from: string; to: string; files: Array<{ path: string; before: string | null; after: string | null }>; design: DesignDiff }
 export type BuildStatus = {
   buildId?: string
   revision?: string
@@ -198,7 +221,7 @@ export const saveProjectFile = (id: string, path: string, content: string, revis
   body: JSON.stringify({ content, revision }),
 }, fetcher)
 
-export const getProjectHistory = (id: string, fetcher?: Fetcher) => request<{ revisions: ProjectRevision[] }>(`/api/projects/${encodeURIComponent(id)}/history`, undefined, fetcher)
+export const getProjectHistory = (id: string, fetcher?: Fetcher) => request<ProjectHistory>(`/api/projects/${encodeURIComponent(id)}/history`, undefined, fetcher)
 
 export const compareProjectRevisions = (id: string, from: string, to: string, fetcher?: Fetcher) => request<RevisionComparison>(
   `/api/projects/${encodeURIComponent(id)}/history/compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,

@@ -15,6 +15,8 @@ import { getSimulationResults } from "./simulation.js"
 import { buildNetTraceIndex } from "./net-trace.js"
 import { analyzePower } from "./power-analysis.js"
 import { createSourcingClient, estimateBomCost, listDesignParts, normalizeLcscPartNumber, type SourcingClient } from "./component-sourcing.js"
+import { createProjectGit, type ProjectGit } from "./project-git.js"
+import { designDiffUnavailable, diffDesignSummaries, summarizeDesign, type DesignSummary } from "./design-summary.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
 import { runCommand } from "./build-process.js"
 import { executeRemoteBuild, type IsolatedBuildResult } from "./build-client.js"
@@ -30,7 +32,7 @@ type ProjectState = { project: ProjectData; preview?: unknown }
 type ProjectSnapshot = { revision: string; createdAt: string; changedFiles: string[]; sizeBytes: number; files: Record<string, string> }
 type ServerEvent = "project" | "file" | "build.status" | "build.ready" | "build.failed"
 type BuildFn = (projectDir: string, entrypoint: string) => Promise<unknown>
-type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; buildExecutionMode?: "isolated" | "trusted-local"; buildRunner?: { url: string; token: string }; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string; workbenchAuthToken?: string; kicadCliPath?: string; componentSourcing?: SourcingClient | { baseUrl: string; provider?: string } }
+type AppOptions = { projectsDir?: string; examplesDir?: string; buildCircuit?: BuildFn; buildExecutionMode?: "isolated" | "trusted-local"; buildRunner?: { url: string; token: string }; watchFiles?: boolean; webDist?: string; mcpAuthToken?: string; workbenchAuthToken?: string; kicadCliPath?: string; componentSourcing?: SourcingClient | { baseUrl: string; provider?: string }; gitHistory?: boolean; gitPath?: string }
 
 const execFile = promisify(execFileCallback)
 
@@ -44,6 +46,8 @@ const templates = [
 ] as const
 
 const HISTORY_RETENTION = 50
+/** Build summaries retained per project for revision comparison. */
+const DESIGN_SUMMARY_RETENTION = 200
 
 class ProjectService {
   readonly root: string
@@ -61,6 +65,7 @@ class ProjectService {
   readonly queuedBuilds = new Map<string, { buildId: string; revision: string }>()
   readonly deletingProjects = new Set<string>()
   readonly writeQueues = new Map<string, Promise<void>>()
+  readonly git: ProjectGit
   readonly ownFileHashes = new Map<string, string>()
   readonly ownFileDeletes = new Set<string>()
   readonly closeHandlers: Array<() => Promise<void>> = []
@@ -80,6 +85,10 @@ class ProjectService {
     this.watchFiles = options.watchFiles ?? true
     this.kicadCliPath = options.kicadCliPath ?? process.env.KICAD_CLI_PATH ?? "kicad-cli"
     this.appNodeModules = path.resolve(process.cwd(), "node_modules")
+    this.git = createProjectGit({
+      ...(options.gitPath ?? process.env.GIT_PATH ? { gitPath: options.gitPath ?? process.env.GIT_PATH } : {}),
+      enabled: options.gitHistory ?? process.env.GIT_HISTORY !== "false",
+    })
     this.ready = this.initialize()
   }
 
@@ -475,17 +484,47 @@ class ProjectService {
   }
 
   async listHistory(id: string) {
-    return (await this.readSnapshots(id)).map(({ revision, createdAt, changedFiles, sizeBytes }) => ({ revision, createdAt, changedFiles, sizeBytes }))
+    const snapshots = await this.readSnapshots(id)
+    const commits = await this.git.listRevisions(this.projectDir(id)).catch(() => [])
+    const entries = new Map<string, { revision: string; createdAt: string; changedFiles: string[]; sizeBytes?: number; commit?: string; retainedSnapshot: boolean }>()
+    for (const commit of commits) {
+      if (!commit.revision) continue
+      entries.set(commit.revision, { revision: commit.revision, createdAt: commit.createdAt, changedFiles: commit.changedFiles, commit: commit.commit, retainedSnapshot: false })
+    }
+    for (const snapshot of snapshots) {
+      const existing = entries.get(snapshot.revision)
+      entries.set(snapshot.revision, {
+        revision: snapshot.revision,
+        createdAt: snapshot.createdAt,
+        changedFiles: snapshot.changedFiles,
+        sizeBytes: snapshot.sizeBytes,
+        ...(existing?.commit ? { commit: existing.commit } : {}),
+        retainedSnapshot: true,
+      })
+    }
+    const revisions = [...entries.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    const designs = new Set((await readdir(path.join(this.projectDir(id), ".workbench", "designs")).catch(() => []))
+      .filter((name) => name.endsWith(".json")).map((name) => name.replace(/\.json$/, "")))
+    return {
+      gitBacked: await this.git.isAvailable(),
+      snapshotRetention: HISTORY_RETENTION,
+      revisions: revisions.map((entry) => ({ ...entry, hasDesignSummary: designs.has(entry.revision) })),
+    }
   }
 
   async compareHistory(id: string, from: string, to: string) {
-    const snapshots = await this.readSnapshots(id)
-    const before = snapshots.find((snapshot) => snapshot.revision === from)
-    const after = snapshots.find((snapshot) => snapshot.revision === to)
-    if (!before || !after) throw Object.assign(new Error("Project revision not found in retained history"), { status: 404 })
+    const [before, after] = await Promise.all([this.readRevisionFiles(id, from), this.readRevisionFiles(id, to)])
+    if (!before || !after) throw Object.assign(new Error("Project revision not found in project history"), { status: 404 })
     const changedPaths = [...new Set([...Object.keys(before.files), ...Object.keys(after.files)])]
       .filter((file) => before.files[file] !== after.files[file]).sort()
-    return { from: before.revision, to: after.revision, files: changedPaths.map((file) => ({ path: file, before: before.files[file] ?? null, after: after.files[file] ?? null })) }
+    const [beforeDesign, afterDesign] = await Promise.all([this.readDesignSummary(id, before.revision), this.readDesignSummary(id, after.revision)])
+    const missing = [...(beforeDesign ? [] : [before.revision]), ...(afterDesign ? [] : [after.revision])]
+    return {
+      from: before.revision,
+      to: after.revision,
+      files: changedPaths.map((file) => ({ path: file, before: before.files[file] ?? null, after: after.files[file] ?? null })),
+      design: beforeDesign && afterDesign ? diffDesignSummaries(beforeDesign, afterDesign) : designDiffUnavailable(missing),
+    }
   }
 
   async restoreHistory(id: string, revision: string, expectedRevision: string) {
@@ -493,8 +532,8 @@ class ProjectService {
       const state = this.state(id)
       this.assertRevision(state.project, expectedRevision)
       await rm(path.join(this.projectDir(id), ".workbench", "imported-circuit.json"), { force: true })
-      const snapshot = (await this.readSnapshots(id)).find((item) => item.revision === revision)
-      if (!snapshot) throw Object.assign(new Error("Project revision not found in retained history"), { status: 404 })
+      const snapshot = await this.readRevisionFiles(id, revision)
+      if (!snapshot) throw Object.assign(new Error("Project revision not found in project history"), { status: 404 })
       const currentFiles = await this.getFileList(id)
       const currentContent = new Map<string, string>()
       for (const relative of currentFiles) currentContent.set(relative, await readFile(await this.safeFile(id, relative, false), "utf8"))
@@ -682,6 +721,49 @@ class ProjectService {
     await rename(temporary, path.join(historyDir, revision + ".json"))
     const retained = await this.readSnapshots(id)
     for (const old of retained.slice(HISTORY_RETENTION)) await rm(path.join(historyDir, old.revision + ".json"), { force: true })
+    try {
+      await this.git.commitRevision(this.projectDir(id), revision, snapshot.changedFiles)
+    } catch (error) {
+      // History stays readable from snapshots when Git is unavailable or fails.
+      console.error(`Git history commit failed for project ${id}`, error)
+    }
+  }
+
+  /** Retain what a successful build produced, so two revisions can be compared later. */
+  private async storeDesignSummary(id: string, revision: string, circuitJson: unknown) {
+    try {
+      const dir = path.join(this.projectDir(id), ".workbench", "designs")
+      await mkdir(dir, { recursive: true })
+      const summary = summarizeDesign(circuitJson, revision)
+      const temporary = path.join(dir, revision + ".json." + randomUUID() + ".tmp")
+      await writeFile(temporary, JSON.stringify(summary))
+      await rename(temporary, path.join(dir, revision + ".json"))
+      const names = (await readdir(dir)).filter((name) => name.endsWith(".json")).sort()
+      if (names.length > DESIGN_SUMMARY_RETENTION) {
+        const summaries = await Promise.all(names.map(async (name) => ({ name, summary: await this.readDesignSummary(id, name.replace(/\.json$/, "")) })))
+        const ordered = summaries.filter((item) => item.summary).sort((left, right) => (right.summary!.createdAt).localeCompare(left.summary!.createdAt))
+        for (const old of ordered.slice(DESIGN_SUMMARY_RETENTION)) await rm(path.join(dir, old.name), { force: true })
+      }
+    } catch (error) {
+      console.error(`Design summary could not be retained for project ${id}`, error)
+    }
+  }
+
+  private async readDesignSummary(id: string, revision: string): Promise<DesignSummary | undefined> {
+    try {
+      const file = path.join(this.projectDir(id), ".workbench", "designs", revision + ".json")
+      const summary = JSON.parse(await readFile(file, "utf8")) as DesignSummary
+      return summary && Array.isArray(summary.components) ? summary : undefined
+    } catch { return undefined }
+  }
+
+  /** Read a revision's files from its retained snapshot, or from Git when the snapshot has aged out. */
+  private async readRevisionFiles(id: string, revision: string): Promise<{ revision: string; files: Record<string, string> } | undefined> {
+    const snapshot = (await this.readSnapshots(id)).find((item) => item.revision === revision)
+    if (snapshot) return { revision: snapshot.revision, files: snapshot.files }
+    const commit = await this.git.resolveRevision(this.projectDir(id), revision)
+    if (!commit) return undefined
+    return { revision, files: await this.git.filesAt(this.projectDir(id), commit) }
   }
 
   private async readSnapshots(id: string): Promise<ProjectSnapshot[]> {
@@ -789,6 +871,7 @@ class ProjectService {
       await rename(temporary, previewFile)
       const record: BuildRecord = { buildId, revision, status: "ready", diagnostics: buildDiagnostics, updatedAt: new Date().toISOString() }
       state.project.lastBuild = record
+      await this.storeDesignSummary(id, revision, circuitJson)
       await this.persist(state)
       this.emit(id, "build.ready", { buildId, revision, artifacts: { circuitJsonUrl: `/api/projects/${id}/preview?kind=pcb` } })
     } catch (error) {
@@ -1020,7 +1103,7 @@ export function createApp(options: AppOptions = {}): Express {
     try { response.json(await service.getFileList(request.params.id!)) } catch (error) { next(error) }
   })
   app.get("/api/projects/:id/history", async (request, response, next) => {
-    try { response.json({ revisions: await service.listHistory(request.params.id!) }) } catch (error) { next(error) }
+    try { response.json(await service.listHistory(request.params.id!)) } catch (error) { next(error) }
   })
   app.get("/api/projects/:id/history/compare", async (request, response, next) => {
     try {

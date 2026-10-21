@@ -335,7 +335,7 @@ test("history restore writes a new current revision and rejects stale restores",
   } finally { await f.cleanup() }
 })
 
-test("history retains the newest 50 snapshots and reports per-revision storage size", async () => {
+test("git history keeps revisions past snapshot retention and still compares them", async () => {
   const f = await fixture(async () => circuit)
   try {
     const { body: project } = await request(f.app).post("/api/projects").send({ name: "Retention" }).expect(201)
@@ -347,8 +347,44 @@ test("history retains the newest 50 snapshots and reports per-revision storage s
       revision = result.body.revision
     }
     const history = await request(f.app).get(`/api/projects/${project.id}/history`).expect(200)
-    assert.equal(history.body.revisions.length, 50)
+    assert.equal(history.body.gitBacked, true)
+    assert.equal(history.body.snapshotRetention, 50)
+    // Every revision stays listed even though only the newest 50 keep a snapshot.
+    assert.equal(history.body.revisions.length, 51)
     assert.equal(history.body.revisions[0].revision, revision)
+    assert.ok(history.body.revisions.every((item: { commit?: string }) => typeof item.commit === "string"))
+    const oldest = history.body.revisions.at(-1)
+    assert.equal(oldest.revision, originalRevision)
+    assert.equal(oldest.retainedSnapshot, false)
+    assert.equal(oldest.sizeBytes, undefined)
+    assert.ok(history.body.revisions.filter((item: { retainedSnapshot: boolean }) => item.retainedSnapshot).every((item: { sizeBytes: number }) => item.sizeBytes > 0))
+
+    // The aged-out revision is still readable from Git, so the comparison works.
+    const compared = await request(f.app).get(`/api/projects/${project.id}/history/compare`).query({ from: originalRevision, to: revision }).expect(200)
+    assert.equal(compared.body.files.length, 1)
+    assert.match(compared.body.files[0].before, /20mm/)
+    assert.equal(compared.body.files[0].after, "revision 49")
+
+    // Restoring a revision whose snapshot aged out works from Git too.
+    const restored = await request(f.app).post(`/api/projects/${project.id}/history/${originalRevision}/restore`).set("If-Match", revision).expect(200)
+    assert.deepEqual(restored.body.changedFiles, [project.entrypoint])
+  } finally { await f.cleanup() }
+})
+
+test("snapshot-only history stays bounded when git is unavailable", async () => {
+  const f = await fixture(async () => circuit, { gitHistory: false })
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "No git" }).expect(201)
+    const originalRevision = project.revision
+    let revision = project.revision
+    for (let index = 0; index < 50; index++) {
+      const result = await request(f.app).put(`/api/projects/${project.id}/files`).query({ path: project.entrypoint })
+        .set("If-Match", revision).send({ content: `revision ${index}`, revision }).expect(200)
+      revision = result.body.revision
+    }
+    const history = await request(f.app).get(`/api/projects/${project.id}/history`).expect(200)
+    assert.equal(history.body.gitBacked, false)
+    assert.equal(history.body.revisions.length, 50)
     assert.equal(history.body.revisions.some((item: { revision: string }) => item.revision === originalRevision), false)
     assert.ok(history.body.revisions.every((item: { sizeBytes: number }) => item.sizeBytes > 0))
     await request(f.app).get(`/api/projects/${project.id}/history/compare`).query({ from: originalRevision, to: revision }).expect(404)

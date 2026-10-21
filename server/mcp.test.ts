@@ -128,6 +128,16 @@ test("MCP exposes read-only inspection of components, nets, pins, routes, and bo
     assert.equal(vccTrace.net.routing, "partially-routed")
     const missingNet = await client.callTool({ name: "get_net_trace", arguments: { projectId: project.id, net: "SPI_MISO" } })
     assert.equal(missingNet.isError, true)
+    const revisions = readResult<{ gitBacked: boolean; revisions: Array<{ revision: string; commit?: string; retainedSnapshot: boolean; hasDesignSummary: boolean }> }>(
+      await client.callTool({ name: "list_project_revisions", arguments: { projectId: project.id } }))
+    assert.ok(revisions.revisions.length >= 1)
+    assert.equal(revisions.revisions.at(-1)?.retainedSnapshot, true)
+    const comparison = readResult<{ from: string; to: string; files: unknown[]; design: { available: boolean; reason?: string } }>(
+      await client.callTool({ name: "compare_project_revisions", arguments: { projectId: project.id, from: revisions.revisions.at(-1)!.revision, to: revisions.revisions[0]!.revision } }))
+    assert.equal(comparison.to, revisions.revisions[0]!.revision)
+    assert.ok(Array.isArray(comparison.files))
+    assert.equal(typeof comparison.design.available, "boolean")
+
     const pins = readResult<Array<{ name: string; connectedNets: string[] }>>(await client.callTool({ name: "get_pin_connections", arguments: { projectId: project.id, component: "R1" } }))
     assert.deepEqual(pins.map(({ name, connectedNets }) => [name, connectedNets]), [["pin1", ["VCC"]], ["pin2", ["GND"]]])
     const board = readResult<Array<{ width: number; height: number; num_layers: number }>>(await client.callTool({ name: "get_board_properties", arguments: { projectId: project.id } }))
