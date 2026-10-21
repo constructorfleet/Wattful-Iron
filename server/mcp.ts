@@ -7,6 +7,7 @@ import { z } from "zod4"
 import { getSimulationResults } from "./simulation.js"
 import { checkManufacturability } from "./manufacturing.js"
 import { checkConnectivity, getBoardProperties, getComponent, getPinConnections, listComponents, listNets, traceNet } from "./circuit-inspection.js"
+import { buildNetTraceIndex, findNet } from "./net-trace.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
 import { addComponent, connectComponents, listSourceComponents, removeComponent, setBoardDimensions, setComponentProperties } from "./circuit-source.js"
 import { checkRouting, runDesignRuleCheck, runElectricalRuleCheck } from "./rule-checks.js"
@@ -244,6 +245,17 @@ function createServer(service: ProjectService): McpServer {
     description: "Inspect source_trace elements matching a net name or source_trace_id, their connected ports and components, and matching PCB routes.",
     inputSchema: z.object({ projectId, net: z.string().trim().min(1) }),
   }, async ({ projectId, net }) => safeTool(async () => traceNet((await service.preview(projectId)).circuitJson, net)))
+
+  server.registerTool("get_net_trace", {
+    title: "Trace a net across schematic, PCB, and simulation views",
+    description: "Group the latest successful build into connectivity-map nets and report each net's component pins, schematic wires, copper traces, vias, routing state, and correlated simulation signals. Pass a net name, net ID, or source_trace_id to trace one net. Every response names what it does not evaluate.",
+    inputSchema: z.object({ projectId, net: z.string().trim().min(1).optional() }),
+  }, async ({ projectId, net }) => safeTool(async () => {
+    const preview = await service.preview(projectId)
+    const index = buildNetTraceIndex(preview.circuitJson)
+    if (!net) return { revision: preview.revision, ...index }
+    return { revision: preview.revision, net: findNet(index, net), limitations: index.limitations }
+  }))
 
   server.registerTool("get_pin_connections", {
     title: "Get component pin connections",

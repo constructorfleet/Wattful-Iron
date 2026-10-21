@@ -133,6 +133,16 @@ button { color: inherit; cursor: pointer; }
 .inspector-pin span { color: #72d4af; font: 9px var(--mono); overflow-wrap: anywhere; }
 .inspector-note { padding: 10px 12px; line-height: 1.5; }
 .inspector-empty { padding: 16px 12px; }
+.net-inspector { right: 10px; }
+.net-pin { grid-template-columns: 1fr auto; align-items: start; }
+.net-pin strong,.net-pin code,.net-pin span { grid-column: 1; }
+.pin-trace-button { grid-column: 2; grid-row: 1 / span 3; align-self: center; padding: 3px 7px; font-size: 9px; }
+.net-routing { font: 9px var(--mono); }
+.net-routing.routed { color: #72d4af; }
+.net-routing.partially-routed { color: #e8c37a; }
+.net-routing.unrouted { color: #e58b7b; }
+.net-routing.not-applicable { color: #8c99a1; }
+.net-vias { margin: 7px 0 0; color: #a9b8bc; font: 9px var(--mono); overflow-wrap: anywhere; }
 .circuit-preview [role="tablist"] { display: none; }
 .pcb-preview { min-height: 620px; height: 100%; overflow: hidden; }
 .preview-loading { display: grid; height: 100%; place-items: center; color: #87918c; font: 11px var(--mono); }

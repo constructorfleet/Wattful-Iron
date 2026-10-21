@@ -34,6 +34,24 @@ export type Simulation = {
   signals: Array<{ id: string; name: string; unit: 'V' | 'A'; netId?: string; samples: Array<{ x: number; y: number }> }>
   diagnostics: Array<{ message: string; severity: 'error' }>
 }
+export type NetPin = { sourcePortId: string; pinName: string; pinNumber?: number; sourceComponentId?: string; componentName?: string; pcbPortId?: string; routed: boolean }
+export type NetCopperTrace = { pcbTraceId: string; layers: string[]; widthMm?: number; lengthMm: number; connectedPcbPortIds: string[] }
+export type NetVia = { pcbViaId: string; x: number; y: number; fromLayer?: string; toLayer?: string }
+export type NetSimulationSignal = { id: string; name: string; unit: 'V' | 'A' }
+export type TracedNet = {
+  id: string
+  name: string
+  names: string[]
+  connectivityKey?: string
+  sourceTraceIds: string[]
+  pins: NetPin[]
+  schematicTraces: Array<{ schematicTraceId: string; edgeCount: number }>
+  copperTraces: NetCopperTrace[]
+  vias: NetVia[]
+  simulationSignals: NetSimulationSignal[]
+  routing: 'routed' | 'partially-routed' | 'unrouted' | 'not-applicable'
+}
+export type NetTraceIndex = { revision: string; nets: TracedNet[]; uncorrelatedSimulationSignals: NetSimulationSignal[]; limitations: string[] }
 export type ManufacturingProfile = { id: string; label: string; description: string; rules: { minTraceWidthMm: number; minNonPlatedHoleMm: number; copperToBoardEdgeMm: number } }
 export type ManufacturingCheckIssue = { severity: 'error' | 'warning'; type: string; category: string; message: string; affectedIds: string[] }
 export type ManufacturingCheck = { id: string; status: 'pass' | 'fail' | 'warning' | 'not-evaluated'; message: string; issues?: ManufacturingCheckIssue[] }
@@ -155,6 +173,8 @@ export const getPreview = (id: string, kind: PreviewKind, fetcher?: Fetcher) => 
 )
 
 export const getSimulation = (id: string, fetcher?: Fetcher) => request<Simulation>(`/api/projects/${encodeURIComponent(id)}/simulation`, undefined, fetcher)
+
+export const getNets = (id: string, fetcher?: Fetcher) => request<NetTraceIndex>(`/api/projects/${encodeURIComponent(id)}/nets`, undefined, fetcher)
 
 export const getManufacturingProfiles = (fetcher?: Fetcher) => request<{ profiles: ManufacturingProfile[] }>('/api/manufacturing/profiles', undefined, fetcher)
 

@@ -12,6 +12,7 @@ import { convertCircuitJsonToTscircuit } from "circuit-json-to-tscircuit"
 import { mountMcp } from "./mcp.js"
 import { createGerberArchive, mountManufacturingRoutes } from "./manufacturing.js"
 import { getSimulationResults } from "./simulation.js"
+import { buildNetTraceIndex } from "./net-trace.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
 import { runCommand } from "./build-process.js"
 import { executeRemoteBuild, type IsolatedBuildResult } from "./build-client.js"
@@ -1029,6 +1030,12 @@ export function createApp(options: AppOptions = {}): Express {
     try {
       const preview = await service.preview(request.params.id!)
       response.json({ revision: preview.revision, ...getSimulationResults(preview.circuitJson) })
+    } catch (error) { next(error) }
+  })
+  app.get("/api/projects/:id/nets", async (request, response, next) => {
+    try {
+      const preview = await service.preview(request.params.id!)
+      response.json({ revision: preview.revision, ...buildNetTraceIndex(preview.circuitJson) })
     } catch (error) { next(error) }
   })
   app.get("/api/projects/:id/requirements", async (request, response, next) => {
