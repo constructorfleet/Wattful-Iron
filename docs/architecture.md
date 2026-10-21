@@ -25,6 +25,15 @@ against one project volume.
   (board, components, nets, routing and simulation counts) from retained build
   summaries alongside the source-file comparison. Rendered image comparison is
   not implemented.
+- Project duplication, rename, deletion, and ZIP archive import/export with a
+  versioned manifest and traversal/symlink/size limits.
+- KiCad `.kicad_sch` and EasyEDA Standard schematic import, converted to
+  editable tscircuit source with converter notes; PDF schematics are retained
+  as a visual reference only, with no connectivity reconstructed.
+- A provisional PCB draft generator for imported schematics that have no
+  placements, and a board-outline editor that writes a polygon to the source.
+- Simultaneous resizable schematic, PCB, and 3D panels with keyboard-accessible
+  dividers, alongside the single-view tabs.
 - tscircuit build execution and build diagnostics.
 - Generated Circuit JSON retained for preview.
 - A read-only component inspector that joins source components to PCB placements,

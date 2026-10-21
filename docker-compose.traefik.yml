@@ -1,0 +1,40 @@
+# Traefik integration overlay. Use it with the base Compose file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d
+#
+# It expects an existing Traefik instance attached to the external network named
+# by TRAEFIK_NETWORK, with an HTTPS entrypoint (TRAEFIK_ENTRYPOINT) and a
+# certificate resolver (TRAEFIK_CERT_RESOLVER) already configured. This overlay
+# does not deploy Traefik and does not change the app's own security model: the
+# shared tokens remain the only access control the workbench itself applies.
+services:
+  circuits:
+    # Traefik reaches the container over the proxy network, so the published
+    # host port is dropped. Remove this override to keep a loopback port too.
+    ports: !override []
+    networks:
+      - backend
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${TRAEFIK_NETWORK:-traefik}
+      traefik.http.routers.wattful-iron.rule: Host(`${WORKBENCH_HOST:?set WORKBENCH_HOST to the public hostname}`)
+      traefik.http.routers.wattful-iron.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.wattful-iron.tls: "true"
+      traefik.http.routers.wattful-iron.tls.certresolver: ${TRAEFIK_CERT_RESOLVER:-letsencrypt}
+      traefik.http.routers.wattful-iron.middlewares: wattful-iron-headers
+      traefik.http.services.wattful-iron.loadbalancer.server.port: "3000"
+      # Server-sent events must not be buffered, and build streams stay open.
+      traefik.http.services.wattful-iron.loadbalancer.responseforwarding.flushinterval: "-1"
+      traefik.http.services.wattful-iron.loadbalancer.healthcheck.path: /healthz
+      traefik.http.services.wattful-iron.loadbalancer.healthcheck.interval: 30s
+      traefik.http.middlewares.wattful-iron-headers.headers.stsSeconds: "31536000"
+      traefik.http.middlewares.wattful-iron-headers.headers.stsIncludeSubdomains: "true"
+      traefik.http.middlewares.wattful-iron-headers.headers.contentTypeNosniff: "true"
+      traefik.http.middlewares.wattful-iron-headers.headers.frameDeny: "true"
+      traefik.http.middlewares.wattful-iron-headers.headers.referrerPolicy: same-origin
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik}
