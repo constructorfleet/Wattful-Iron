@@ -63,6 +63,19 @@ passing preflight and a downloadable package do not certify electrical safety,
 manufacturability, or compatibility with a particular vendor. Review all files
 with the selected fabricator and assembler before ordering.
 
+## Via geometry
+
+The JLCPCB two-layer profile checks each via's drilled hole (0.3 mm minimum),
+finished diameter (0.6 mm minimum), and annular ring (0.1 mm minimum), computed
+as half the difference between the outer and hole diameters. Board defaults
+check nothing, and a via that omits either diameter is reported as unmeasurable
+rather than compliant.
+
+tscircuit's autorouter currently emits 0.2 mm hole / 0.3 mm outer vias, which
+are below that profile's published minimums, so autorouted boards fail this
+check under the JLCPCB profile until the design specifies larger vias. That is a
+real manufacturability limit, not a workbench defect.
+
 ## Component availability and cost
 
 These depend on an optional supplier index and are disabled by default; see

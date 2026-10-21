@@ -75,7 +75,15 @@ against one project volume.
 - A preflight-gated `/api/projects/:id/manufacturing.zip` download using
   tscircuit's verified Gerber/drill/BOM/pick-and-place ZIP export.
 - Board-default and JLCPCB rigid two-layer, one-ounce profiles for checking
-  trace width, non-plated hole diameter, and rectangular board edge clearance.
+  trace width, non-plated hole diameter, rectangular board edge clearance, and
+  via hole, via diameter, and annular ring. tscircuit's autorouter emits 0.2 mm
+  via holes by default, which the JLCPCB profile reports as below its published
+  0.3 mm minimum.
+- Rule-check reports name the checks they run and where each comes from, so a
+  pass states what it proves. Clearance, overlap, keepout, trace-style and
+  via-placement checks come from tscircuit's suite; voltage compatibility is
+  reported with the caveat that it is silent unless pins declare voltage
+  attributes.
 - Design review states per revision (`draft → validated → reviewed →
   manufacturing_approved`) with evidence-checked transitions, a retained review
   log, and a read-only lock on an approved revision that refuses writes and
@@ -107,7 +115,10 @@ manufacturing sign-off.
 
 Electrical and board rule checks run tscircuit's own check suite and report
 findings by category, alongside trace current capacity derived from board
-geometry. Every report names the checks it does not evaluate. This is not
+geometry. Every report names both the checks it runs and the checks it does not
+evaluate. Voltage-domain conflicts and output driver conflicts are not
+evaluated: they need pin attributes that Circuit JSON omits for components that
+do not declare them. This is not
 KiCad-equivalent ERC/DRC. Operating-point quantities such as component
 dissipation, supply current, and trace loading are reported only when the build
 emits a DC operating point to calculate them from; regulator loading, resistor

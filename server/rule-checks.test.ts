@@ -11,15 +11,45 @@ test("reports non-circuit input as not evaluated instead of passing", async () =
   }
 })
 
+test("each report names the checks it covers and where they come from", async () => {
+  const circuit = [{ type: "source_component", name: "R1" }]
+  const erc = await runElectricalRuleCheck(circuit)
+  assert.ok(erc.coverage.length > 5)
+  assert.ok(erc.coverage.every((item) => ["tscircuit-checks", "fabricator-profile", "workbench"].includes(item.source)))
+  // A voltage compatibility pass must carry its caveat, because most builds emit no pin attributes.
+  const voltage = erc.coverage.find(({ check }) => check.includes("voltage compatibility"))
+  assert.equal(voltage?.source, "tscircuit-checks")
+  assert.match(voltage?.caveat ?? "", /emits no pin attributes/)
+
+  const drc = await runDesignRuleCheck(circuit)
+  // Clearance checks are run by the upstream suite, so they must not be listed as unevaluated.
+  assert.ok(drc.coverage.some(({ check }) => check.includes("Pad-to-pad and pad-to-trace clearance")))
+  assert.ok(drc.coverage.some(({ check }) => check.includes("Via-to-pad, via-to-trace, and different-net via spacing")))
+  assert.ok(!drc.notEvaluated.some(({ check }) => /clearance/i.test(check)))
+  const profileChecks = drc.coverage.find(({ source }) => source === "fabricator-profile")
+  assert.match(profileChecks?.check ?? "", /via hole, via diameter, and annular ring/)
+
+  const routing = await checkRouting(circuit)
+  assert.ok(routing.coverage.some(({ check }) => check.includes("Trace contiguity")))
+  assert.ok(routing.coverage.some(({ source }) => source === "workbench"))
+})
+
 test("each report names the checks it does not evaluate with a reason", async () => {
   const erc = await runElectricalRuleCheck([{ type: "source_component", name: "R1" }])
   assert.deepEqual(erc.categories, ["netlist", "pin_specification", "source"])
   assert.ok(erc.notEvaluated.some((item) => item.check === "Component rating violations"))
+  // Voltage domains and driver conflicts need pin attributes Circuit JSON omits, and the
+  // reason has to say that rather than implying the check exists.
+  const domains = erc.notEvaluated.find(({ check }) => check.includes("Voltage-domain conflicts"))
+  assert.match(domains?.reason ?? "", /pin voltage attributes/)
+  assert.ok(erc.notEvaluated.some(({ check }) => check === "Output driver conflicts"))
+  assert.ok(erc.notEvaluated.some(({ reason }) => /not used here rather than parsed heuristically/.test(reason)))
   for (const item of erc.notEvaluated) assert.ok(item.reason.length > 20, item.check)
 
   const drc = await runDesignRuleCheck([{ type: "source_component", name: "R1" }])
   assert.deepEqual(drc.categories, ["placement", "routing"])
   assert.ok(drc.notEvaluated.some((item) => item.check.includes("Footprint compatibility")))
+  assert.ok(drc.notEvaluated.some((item) => item.check.includes("Soldermask and silkscreen")))
 
   const routing = await checkRouting([{ type: "source_component", name: "R1" }])
   assert.deepEqual(routing.categories, ["routing"])
