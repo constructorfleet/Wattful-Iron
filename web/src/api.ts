@@ -156,7 +156,19 @@ export type AssertionCheck = {
   message?: string
   report?: { results: AssertionResult[]; passed: number; failed: number; notEvaluated: number; baselineRevision?: string }
 }
-export type ManufacturingProfile = { id: string; label: string; description: string; rules: { minTraceWidthMm: number; minNonPlatedHoleMm: number; copperToBoardEdgeMm: number } }
+export type ManufacturingProfile = {
+  id: string
+  label: string
+  description: string
+  rules: {
+    minTraceWidthMm: number
+    minNonPlatedHoleMm: number
+    copperToBoardEdgeMm: number
+    minViaHoleMm: number
+    minViaDiameterMm: number
+    minAnnularRingMm: number
+  }
+}
 export type ManufacturingCheckIssue = { severity: 'error' | 'warning'; type: string; category: string; message: string; affectedIds: string[] }
 export type ManufacturingCheck = { id: string; status: 'pass' | 'fail' | 'warning' | 'not-evaluated'; message: string; issues?: ManufacturingCheckIssue[] }
 export type ManufacturingPreflight = { ready: boolean; profile: Pick<ManufacturingProfile, 'id' | 'label'>; checks: ManufacturingCheck[] }

@@ -165,11 +165,31 @@ and `GET /api/projects/:id/bom-cost?boards=N`.
 `run_erc`, `run_drc`, and `check_routing` run tscircuit's own check suite over
 the latest successful build and split its findings by category: netlist, pin
 specification, and source findings are electrical; placement and routing
-findings are board-level. Every report lists the checks it does **not**
-evaluate, with the reason, so a passing report is not mistaken for full
-coverage. Fabricator limits such as minimum trace width and hole size are
-checked against a selected profile by `check_manufacturability` instead. These
-reports are not KiCad-equivalent ERC/DRC.
+findings are board-level.
+
+Each report carries a `coverage` list naming the checks it actually runs and
+where each one comes from (`tscircuit-checks`, `fabricator-profile`, or
+`workbench`), plus a `notEvaluated` list with reasons. The coverage entries were
+taken from the installed check suite, so the reports name real checks rather
+than categories: pad-to-pad, pad-to-trace, via-to-pad, via-to-trace,
+hole-to-trace and different-net via clearances, copper-to-board-edge clearance,
+copper pour shorts, courtyard and footprint overlap, components and traces off
+the board or over cutouts, keepout violations, vias in pads, trace contiguity
+and self-shorts, trace style, length and via-count limits, bus length skew,
+test point accessibility, dangling traces, and unconnected PCB ports.
+
+Two caveats are reported rather than left implicit. The suite's source-pin
+voltage compatibility check compares only pins that declare voltage attributes,
+and tscircuit emits no pin attributes for components that do not declare them,
+so on most designs it is silent and a pass does not mean voltage domains were
+verified. For the same reason, output driver conflicts cannot be detected.
+Component ratings are absent from Circuit JSON, and the supplier's unstructured
+description text is deliberately not parsed for them.
+
+Fabricator limits — minimum trace width, non-plated hole size, copper-to-edge
+clearance, and via hole, via diameter and annular ring — are checked against a
+selected profile by `check_manufacturability`. These reports are not
+KiCad-equivalent ERC/DRC.
 
 `analyze_power` calculates how much current each routed trace can carry using
 the IPC-2221 curves, from the narrowest segment width, the layer the segment is

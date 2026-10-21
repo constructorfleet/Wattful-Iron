@@ -18,12 +18,31 @@ export type ManufacturingRuleProfile = {
   id: string
   label: string
   description: string
-  rules: { minTraceWidthMm: number; minNonPlatedHoleMm: number; copperToBoardEdgeMm: number }
+  rules: {
+    minTraceWidthMm: number
+    minNonPlatedHoleMm: number
+    copperToBoardEdgeMm: number
+    /** Minimum drilled via hole, finished via diameter, and annular ring. Zero means unchecked. */
+    minViaHoleMm: number
+    minViaDiameterMm: number
+    minAnnularRingMm: number
+  }
   board?: { layers: number; material: string }
 }
 export const manufacturingRuleProfiles: ManufacturingRuleProfile[] = [
-  { id: "board-default", label: "Board defaults", description: "Use the design rules declared by the board.", rules: { minTraceWidthMm: 0, minNonPlatedHoleMm: 0, copperToBoardEdgeMm: 0 } },
-  { id: "jlcpcb-2layer-1oz", label: "JLCPCB rigid PCB, 2-layer, 1 oz", description: "Published baseline limits for standard rigid two-layer, one-ounce copper boards.", board: { layers: 2, material: "fr4" }, rules: { minTraceWidthMm: 0.1, minNonPlatedHoleMm: 0.5, copperToBoardEdgeMm: 0.2 } },
+  {
+    id: "board-default",
+    label: "Board defaults",
+    description: "Use the design rules declared by the board.",
+    rules: { minTraceWidthMm: 0, minNonPlatedHoleMm: 0, copperToBoardEdgeMm: 0, minViaHoleMm: 0, minViaDiameterMm: 0, minAnnularRingMm: 0 },
+  },
+  {
+    id: "jlcpcb-2layer-1oz",
+    label: "JLCPCB rigid PCB, 2-layer, 1 oz",
+    description: "Published baseline limits for standard rigid two-layer, one-ounce copper boards.",
+    board: { layers: 2, material: "fr4" },
+    rules: { minTraceWidthMm: 0.1, minNonPlatedHoleMm: 0.5, copperToBoardEdgeMm: 0.2, minViaHoleMm: 0.3, minViaDiameterMm: 0.6, minAnnularRingMm: 0.1 },
+  },
 ]
 type ManufacturingProject = { id?: string; name?: string; entrypoint?: string; revision: string; previewRevision?: string; lastBuild?: BuildState }
 type ManufacturingService = {
@@ -300,6 +319,17 @@ function checkProfileRules(items: Record<string, unknown>[], profile: Manufactur
   const traces = items.filter((item) => item.type === "pcb_trace")
   const wireWidths = traces.flatMap((trace) => Array.isArray(trace.route) ? trace.route.filter(isRecord).filter((point) => point.route_type === "wire" && typeof point.width === "number").map((point) => point.width as number) : [])
   const holes = items.filter((item) => item.type === "pcb_hole").map((item) => item.hole_diameter).filter((diameter): diameter is number => typeof diameter === "number")
+  const vias = items.filter((item) => item.type === "pcb_via")
+  const viaGeometry = vias.flatMap((via) => {
+    const hole = typeof via.hole_diameter === "number" ? via.hole_diameter : undefined
+    const outer = typeof via.outer_diameter === "number" ? via.outer_diameter : undefined
+    if (hole === undefined || outer === undefined) return []
+    return [{ id: typeof via.pcb_via_id === "string" ? via.pcb_via_id : "via", hole, outer, ring: (outer - hole) / 2 }]
+  })
+  const unmeasurableVias = vias.length - viaGeometry.length
+  const smallHoles = viaGeometry.filter((via) => via.hole < profile.rules.minViaHoleMm)
+  const smallVias = viaGeometry.filter((via) => via.outer < profile.rules.minViaDiameterMm)
+  const thinRings = viaGeometry.filter((via) => via.ring < profile.rules.minAnnularRingMm)
   const tooNarrow = wireWidths.filter((width) => width < profile.rules.minTraceWidthMm)
   const tooSmall = holes.filter((diameter) => diameter < profile.rules.minNonPlatedHoleMm)
   const isDefault = profile.id === "board-default"
@@ -336,6 +366,29 @@ function checkProfileRules(items: Record<string, unknown>[], profile: Manufactur
       : tooSmall.length
         ? { id: "hole-size", status: "fail", message: `${tooSmall.length} non-plated hole${tooSmall.length === 1 ? "" : "s"} fall below the ${profile.rules.minNonPlatedHoleMm} mm minimum.` }
         : { id: "hole-size", status: "pass", message: `All measured non-plated holes meet the ${profile.rules.minNonPlatedHoleMm} mm minimum.` },
+    isDefault
+      ? { id: "via-geometry", status: "warning", message: "Select a fabricator profile to check via hole, via diameter, and annular ring." }
+      : vias.length === 0
+        ? { id: "via-geometry", status: "pass", message: "This build has no vias to check." }
+        : viaGeometry.length === 0
+          ? { id: "via-geometry", status: "warning", message: `${vias.length} via${vias.length === 1 ? "" : "s"} omit hole or outer diameter, so via geometry could not be checked.` }
+          : smallHoles.length || smallVias.length || thinRings.length
+            ? {
+              id: "via-geometry",
+              status: "fail",
+              message: [
+                smallHoles.length ? `${smallHoles.length} via hole${smallHoles.length === 1 ? "" : "s"} below the ${profile.rules.minViaHoleMm} mm minimum (${smallHoles.map((via) => `${via.id}: ${via.hole} mm`).join(", ")})` : "",
+                smallVias.length ? `${smallVias.length} via diameter${smallVias.length === 1 ? "" : "s"} below the ${profile.rules.minViaDiameterMm} mm minimum` : "",
+                thinRings.length ? `${thinRings.length} annular ring${thinRings.length === 1 ? "" : "s"} below the ${profile.rules.minAnnularRingMm} mm minimum` : "",
+              ].filter(Boolean).join("; ") + ".",
+            }
+            : {
+              id: "via-geometry",
+              status: unmeasurableVias > 0 ? "warning" : "pass",
+              message: unmeasurableVias > 0
+                ? `${viaGeometry.length} via${viaGeometry.length === 1 ? "" : "s"} meet the profile's via limits; ${unmeasurableVias} omit hole or outer diameter and were not checked.`
+                : `All ${viaGeometry.length} via${viaGeometry.length === 1 ? "" : "s"} meet the ${profile.rules.minViaHoleMm} mm hole, ${profile.rules.minViaDiameterMm} mm diameter, and ${profile.rules.minAnnularRingMm} mm annular ring minimums.`,
+            },
     isDefault
       ? { id: "board-edge-clearance", status: "warning", message: "Select a fabricator profile to check copper-to-board-edge clearance." }
       : edgeClearances === undefined

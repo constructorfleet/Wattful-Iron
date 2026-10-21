@@ -47,6 +47,39 @@ test("BOM preflight passes when source components have values and supplier part 
   assert.equal(result.checks.find(({ id }) => id === "bom-data")?.status, "pass")
 })
 
+test("fabricator profile blocks vias below its published hole, diameter, and annular ring minima", async () => {
+  const autoroutedVia = { type: "pcb_via", pcb_via_id: "pcb_via_0", x: 1, y: -0.8, hole_diameter: 0.2, outer_diameter: 0.3, layers: ["top", "bottom"] }
+  const blocked = await checkManufacturability([...elements, autoroutedVia], { status: "ready", revision: "rev-1" }, "rev-1", "rev-1", "jlcpcb-2layer-1oz")
+  const viaCheck = blocked.checks.find(({ id }) => id === "via-geometry")
+  assert.equal(viaCheck?.status, "fail")
+  // The autorouter's default 0.2 mm hole and 0.05 mm ring are both under the profile.
+  assert.match(viaCheck?.message ?? "", /1 via hole below the 0.3 mm minimum \(pcb_via_0: 0.2 mm\)/)
+  assert.match(viaCheck?.message ?? "", /annular ring below the 0.1 mm minimum/)
+  assert.equal(blocked.ready, false)
+
+  const compliant = await checkManufacturability([
+    ...elements,
+    { ...autoroutedVia, hole_diameter: 0.3, outer_diameter: 0.6 },
+  ], { status: "ready", revision: "rev-1" }, "rev-1", "rev-1", "jlcpcb-2layer-1oz")
+  assert.equal(compliant.checks.find(({ id }) => id === "via-geometry")?.status, "pass")
+
+  // A build with no vias has nothing to measure, and board defaults check nothing.
+  const noVias = await checkManufacturability(elements, { status: "ready", revision: "rev-1" }, "rev-1", "rev-1", "jlcpcb-2layer-1oz")
+  assert.equal(noVias.checks.find(({ id }) => id === "via-geometry")?.status, "pass")
+  assert.match(noVias.checks.find(({ id }) => id === "via-geometry")?.message ?? "", /no vias to check/)
+  const defaults = await checkManufacturability([...elements, autoroutedVia], { status: "ready", revision: "rev-1" }, "rev-1")
+  assert.equal(defaults.checks.find(({ id }) => id === "via-geometry")?.status, "warning")
+
+  // A via that omits its geometry is reported as unmeasurable rather than compliant.
+  const unmeasured = await checkManufacturability([
+    ...elements,
+    { type: "pcb_via", pcb_via_id: "pcb_via_1", x: 0, y: 0, layers: ["top", "bottom"] },
+  ], { status: "ready", revision: "rev-1" }, "rev-1", "rev-1", "jlcpcb-2layer-1oz")
+  const unmeasuredCheck = unmeasured.checks.find(({ id }) => id === "via-geometry")
+  assert.equal(unmeasuredCheck?.status, "warning")
+  assert.match(unmeasuredCheck?.message ?? "", /omit hole or outer diameter/)
+})
+
 test("fabricator profile blocks traces and non-plated holes below its published minima", async () => {
   const result = await checkManufacturability([
     ...elements,
