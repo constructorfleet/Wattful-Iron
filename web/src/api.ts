@@ -27,12 +27,43 @@ export type ProjectEvent =
 
 export type Preview = { revision: string; kind: PreviewKind; circuitJson: unknown }
 export type PreviewKind = 'schematic' | 'pcb' | '3d'
+export type SimulationOperatingPoint = { id: string; name: string; unit: 'V' | 'A'; value: number; netId?: string; sourceComponentId?: string; experimentId?: string }
+export type SimulationSweep = {
+  id: string
+  name: string
+  kind: 'dc' | 'ac'
+  unit: 'V' | 'A'
+  xLabel: string
+  netId?: string
+  samples: Array<{ x: number; y: number }>
+  magnitudeDb?: Array<{ x: number; y: number }>
+  phaseDeg?: Array<{ x: number; y: number }>
+}
 export type Simulation = {
   revision: string
   status: 'complete' | 'failed' | 'not_configured'
   experiments: Array<{ id: string; name: string; type: string }>
   signals: Array<{ id: string; name: string; unit: 'V' | 'A'; netId?: string; samples: Array<{ x: number; y: number }> }>
+  operatingPoints: SimulationOperatingPoint[]
+  sweeps: SimulationSweep[]
+  analyses: Array<{ type: string; experiments: number; resultCount: number }>
   diagnostics: Array<{ message: string; severity: 'error' }>
+  notEvaluated: Array<{ analysis: string; reason: string }>
+}
+export type PowerAnalysis = {
+  revision: string
+  status: 'complete' | 'partial' | 'not-evaluated'
+  assumptions: string[]
+  traceCapacity: Array<{ pcbTraceId?: string; widthMm: number; layers: string[]; maxCurrentA: number }>
+  narrowestTrace?: { pcbTraceId?: string; widthMm: number; layers: string[]; maxCurrentA: number }
+  nodeVoltages: Array<{ name: string; voltageV: number; netId?: string }>
+  branchCurrents: Array<{ name: string; currentA: number; netId?: string; sourceComponentId?: string; componentName?: string }>
+  componentPower: Array<{ sourceComponentId: string; name: string; ftype?: string; dissipationW: number; method: 'I2R' | 'V2R' }>
+  supplyLoads: Array<{ sourceComponentId?: string; name: string; currentA: number; voltageV?: number; powerW?: number }>
+  traceLoads: Array<{ pcbTraceId?: string; netId?: string; netName?: string; currentA: number; maxCurrentA: number; utilization: number; status: 'ok' | 'over-capacity' }>
+  totalSupplyCurrentA?: number
+  totalDissipationW?: number
+  notEvaluated: Array<{ quantity: string; reason: string }>
 }
 export type NetPin = { sourcePortId: string; pinName: string; pinNumber?: number; sourceComponentId?: string; componentName?: string; pcbPortId?: string; routed: boolean }
 export type NetCopperTrace = { pcbTraceId: string; layers: string[]; widthMm?: number; lengthMm: number; connectedPcbPortIds: string[] }
@@ -173,6 +204,8 @@ export const getPreview = (id: string, kind: PreviewKind, fetcher?: Fetcher) => 
 )
 
 export const getSimulation = (id: string, fetcher?: Fetcher) => request<Simulation>(`/api/projects/${encodeURIComponent(id)}/simulation`, undefined, fetcher)
+
+export const getPower = (id: string, fetcher?: Fetcher) => request<PowerAnalysis>(`/api/projects/${encodeURIComponent(id)}/power`, undefined, fetcher)
 
 export const getNets = (id: string, fetcher?: Fetcher) => request<NetTraceIndex>(`/api/projects/${encodeURIComponent(id)}/nets`, undefined, fetcher)
 

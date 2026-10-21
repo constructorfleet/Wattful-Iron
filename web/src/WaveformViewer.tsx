@@ -3,9 +3,11 @@ import { useState, type MouseEvent } from 'react'
 type Signal = {
   id: string
   name: string
-  unit: 'V' | 'A'
+  unit: string
   netId?: string
   samples: Array<{ x: number; y: number }>
+  /** Unit of the x axis. Transient waveforms use milliseconds; sweeps use volts, amps, or hertz. */
+  xUnit?: string
 }
 
 const plot = { left: 40, right: 580, top: 12, bottom: 122 }
@@ -18,6 +20,8 @@ export function WaveformViewer({ signals }: { signals: Signal[] }) {
 }
 
 function Waveform({ signal, visible, onVisibilityChange }: { signal: Signal; visible: boolean; onVisibilityChange: (visible: boolean) => void }) {
+  const xUnit = signal.xUnit ?? 'ms'
+  const timeDomain = xUnit === 'ms'
   const xs = signal.samples.map(({ x }) => x)
   const ys = signal.samples.map(({ y }) => y)
   const fullStart = xs.length ? xs.reduce((minimum, x) => Math.min(minimum, x), Infinity) : 0
@@ -71,14 +75,14 @@ function Waveform({ signal, visible, onVisibilityChange }: { signal: Signal; vis
   const secondValue = secondCursor === null ? null : sampleValue(secondCursor)
   const deltaTime = firstCursor === null || secondCursor === null ? null : Math.abs(secondCursor - firstCursor)
   const deltaValue = firstValue === null || secondValue === null ? null : Math.abs(secondValue - firstValue)
-  const frequency = deltaTime && deltaTime > 0 ? 1000 / deltaTime : null
+  const frequency = timeDomain && deltaTime && deltaTime > 0 ? 1000 / deltaTime : null
   const measurement = firstValue === null
     ? 'Click the plot to place a measurement cursor'
     : secondValue === null
-      ? `${placingSecondCursor ? 'Cursor A' : 'Cursor'}: ${formatTime(firstCursor!)} ms · ${formatValue(firstValue)} ${signal.unit}${placingSecondCursor ? ' · Click the plot to place cursor B' : ''}`
-      : `Δt: ${formatTime(deltaTime!)} ms · Δ${signal.unit}: ${formatValue(deltaValue!)} ${signal.unit} · ${frequency === null ? 'Frequency unavailable' : formatFrequency(frequency)}`
+      ? `${placingSecondCursor ? 'Cursor A' : 'Cursor'}: ${formatTime(firstCursor!)} ${xUnit} · ${formatValue(firstValue)} ${signal.unit}${placingSecondCursor ? ' · Click the plot to place cursor B' : ''}`
+      : `${timeDomain ? 'Δt' : `Δ${xUnit}`}: ${formatTime(deltaTime!)} ${xUnit} · Δ${signal.unit}: ${formatValue(deltaValue!)} ${signal.unit}${timeDomain ? ` · ${frequency === null ? 'Frequency unavailable' : formatFrequency(frequency)}` : ''}`
   const downloadCsv = () => {
-    const rows = [`time_ms,value_${signal.unit}`, ...signal.samples.map(({ x, y }) => `${csvValue(x)},${csvValue(y)}`)]
+    const rows = [`${timeDomain ? 'time_ms' : `x_${xUnit}`},value_${signal.unit}`, ...signal.samples.map(({ x, y }) => `${csvValue(x)},${csvValue(y)}`)]
     const blob = new Blob([`${rows.join('\n')}\n`], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -102,7 +106,7 @@ function Waveform({ signal, visible, onVisibilityChange }: { signal: Signal; vis
       <button type="button" title="Place cursor B" aria-label={`Place second cursor for ${signal.name}`} aria-pressed={placingSecondCursor} disabled={firstCursor === null} onClick={() => setPlacingSecondCursor(true)}>B</button>
       <button type="button" aria-label={`Download ${signal.name} CSV`} onClick={downloadCsv}>CSV</button>
       <button type="button" onClick={() => { setRange([fullStart, fullEnd]); setFirstCursor(null); setSecondCursor(null); setPlacingSecondCursor(false) }}>Reset</button>
-      <output className="waveform-range" aria-label={`Time range for ${signal.name}`}>{formatTime(range[0])}–{formatTime(range[1])} ms</output>
+      <output className="waveform-range" aria-label={`${timeDomain ? 'Time' : 'X'} range for ${signal.name}`}>{formatTime(range[0])}–{formatTime(range[1])} {xUnit}</output>
     </div>
     {visible && <>
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: placing the first cursor has no keyboard equivalent yet; tracked in docs/linting.md */}
@@ -112,7 +116,7 @@ function Waveform({ signal, visible, onVisibilityChange }: { signal: Signal; vis
         {firstCursor !== null && firstCursor >= range[0] && firstCursor <= range[1] && <path className="waveform-cursor" d={`M${plot.left + ((firstCursor - range[0]) / span) * (plot.right - plot.left)} ${plot.top}V${plot.bottom}`} />}
         {secondCursor !== null && secondCursor >= range[0] && secondCursor <= range[1] && <path className="waveform-cursor waveform-cursor-secondary" d={`M${plot.left + ((secondCursor - range[0]) / span) * (plot.right - plot.left)} ${plot.top}V${plot.bottom}`} />}
       </svg>
-      <div className="waveform-axis"><span>{formatTime(range[0])} ms</span><span>{formatTime(range[1])} ms</span><span>{signal.unit}</span></div>
+      <div className="waveform-axis"><span>{formatTime(range[0])} {xUnit}</span><span>{formatTime(range[1])} {xUnit}</span><span>{signal.unit}</span></div>
       <output className="waveform-measurement" aria-live="polite">{measurement}</output>
     </>}
   </section>

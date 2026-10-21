@@ -14,6 +14,7 @@ import {
   getManufacturingPreflight,
   getManufacturingProfiles,
   getNets,
+  getPower,
   getPreview,
   getProject,
   getProjectFile,
@@ -36,6 +37,7 @@ import {
   type ManufacturingPreflight,
   type ManufacturingProfile,
   type NetTraceIndex,
+  type PowerAnalysis,
   type PreviewKind,
   type Project,
   type ProjectTemplate,
@@ -44,6 +46,7 @@ import {
   type ProjectRevision,
   type RevisionComparison,
   type Simulation,
+  type SimulationSweep,
 } from './api'
 
 const views: Array<{ kind: PreviewKind | 'simulation'; label: string; tab: 'schematic' | 'pcb' | 'cad' | 'simulation' }> = [
@@ -111,6 +114,7 @@ export default function App() {
   const [selectedComponentId, setSelectedComponentId] = useState('')
   const [simulation, setSimulation] = useState<Simulation | null>(null)
   const [netIndex, setNetIndex] = useState<NetTraceIndex | null>(null)
+  const [power, setPower] = useState<PowerAnalysis | null>(null)
   const [netInspectorOpen, setNetInspectorOpen] = useState(false)
   const [selectedNetId, setSelectedNetId] = useState('')
   const [build, setBuild] = useState<BuildStatus>(initialBuild)
@@ -164,6 +168,8 @@ export default function App() {
       if (sim.revision === result.revision) setSimulation(sim)
       const nets = await getNets(id)
       if (nets.revision === result.revision) setNetIndex(nets)
+      const powerAnalysis = await getPower(id)
+      if (powerAnalysis.revision === result.revision) setPower(powerAnalysis)
     } catch {
       if (kind === view) setPreview(null)
     }
@@ -175,6 +181,7 @@ export default function App() {
     setPreview(null)
     setSimulation(null)
     setNetIndex(null)
+    setPower(null)
     setSelectedNetId('')
     setBuild(initialBuild)
     try {
@@ -694,7 +701,7 @@ export default function App() {
               {renderPreviewCard('3d')}
             </div> : <>
             {build.status === 'failed' && view !== 'simulation' && <div className="build-errors" role="alert"><div className="error-title"><span>!</span> Build failed</div>{build.diagnostics?.length ? build.diagnostics.map((diagnostic, index) => { const path = diagnostic.path || diagnostic.file; return <div className="diagnostic" key={`${path}-${diagnostic.line}-${index}`}><strong>{path}{diagnostic.line ? `:${diagnostic.line}` : ''}</strong><span>{diagnostic.message}</span></div> }) : <p>Check the source and build output for details.</p>}</div>}
-            {view === 'simulation' ? <SimulationPanel simulation={simulation} build={build} canRun={Boolean(project)} onRun={() => { setSimulation(null); void runBuild() }} /> : preview && (view === 'schematic' || hasPcbPreview) ? view === 'pcb' ? <Suspense fallback={<div className="preview-loading">Loading PCB preview…</div>}><PcbPreview circuitJson={preview as PcbCircuitJson} selectedSourceComponentId={selectedComponentId} onViewSchematicComponent={(event) => { setSelectedComponentId(event.source_component_id); setComponentInspectorOpen(true); setView('schematic') }} /></Suspense> : <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview className="circuit-preview" key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={view === '3d' ? 'cad' : view} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : preview ? <div className="preview-placeholder">
+            {view === 'simulation' ? <SimulationPanel simulation={simulation} power={power} build={build} canRun={Boolean(project)} onRun={() => { setSimulation(null); void runBuild() }} /> : preview && (view === 'schematic' || hasPcbPreview) ? view === 'pcb' ? <Suspense fallback={<div className="preview-loading">Loading PCB preview…</div>}><PcbPreview circuitJson={preview as PcbCircuitJson} selectedSourceComponentId={selectedComponentId} onViewSchematicComponent={(event) => { setSelectedComponentId(event.source_component_id); setComponentInspectorOpen(true); setView('schematic') }} /></Suspense> : <Suspense fallback={<div className="preview-loading">Loading tscircuit preview…</div>}><CircuitJsonPreview className="circuit-preview" key={`${view}-${build.revision || revision}`} circuitJson={preview} defaultActiveTab={view === '3d' ? 'cad' : view} showCodeTab={false} showImportAndFormatButtons={false} /></Suspense> : preview ? <div className="preview-placeholder">
               <div className="placeholder-board"><span className="board-edge edge-a" /><span className="board-edge edge-b" /><span className="board-chip chip-a" /><span className="board-chip chip-b" /><span className="board-pad pad-a" /><span className="board-pad pad-b" /><span className="board-route route-a" /><span className="board-route route-b" /></div>
               <h2>{view === 'pcb' ? 'No PCB layout in this project' : 'No PCB data for 3D preview'}</h2>
               <p>This schematic has no PCB placements. Generate a draft layout, then review footprints, component models, pin mappings, and routing before fabrication.</p>
@@ -878,13 +885,56 @@ function NetInspector({ nets, index, selected, onSelect, onFocusPin, onViewSigna
   </aside>
 }
 
-function SimulationPanel({ simulation, build, canRun, onRun }: { simulation: Simulation | null; build: BuildStatus; canRun: boolean; onRun: () => void }) {
+/** Present a DC or AC sweep as waveform-viewer signals; AC sweeps split into magnitude and phase. */
+function sweepSignals(sweep: SimulationSweep) {
+  const xUnit = sweep.kind === 'ac' ? 'Hz' : sweep.xLabel.replace(/^.*\(|\)$/g, '')
+  if (sweep.kind !== 'ac') return [{ id: sweep.id, name: sweep.name, unit: sweep.unit, netId: sweep.netId, samples: sweep.samples, xUnit }]
+  return [
+    { id: `${sweep.id}-magnitude`, name: `${sweep.name} magnitude`, unit: 'dB', netId: sweep.netId, samples: sweep.magnitudeDb ?? sweep.samples, xUnit },
+    { id: `${sweep.id}-phase`, name: `${sweep.name} phase`, unit: '°', netId: sweep.netId, samples: sweep.phaseDeg ?? [], xUnit },
+  ]
+}
+
+function PowerSummary({ power }: { power: PowerAnalysis }) {
+  const measured = power.nodeVoltages.length > 0 || power.branchCurrents.length > 0
+  return <section className="power-summary" aria-label="Power analysis">
+    <div className="simulation-heading"><h2>Power</h2><span>{measured ? 'From the DC operating point in this build' : 'Board geometry only'}</span></div>
+    {power.totalSupplyCurrentA !== undefined || power.totalDissipationW !== undefined ? <dl className="power-totals">
+      {power.totalSupplyCurrentA !== undefined && <><dt>Supply current</dt><dd>{power.totalSupplyCurrentA} A</dd></>}
+      {power.totalDissipationW !== undefined && <><dt>Dissipation</dt><dd>{power.totalDissipationW} W</dd></>}
+    </dl> : null}
+    {power.nodeVoltages.length > 0 && <div className="power-section"><h3>Node voltages</h3><dl>{power.nodeVoltages.map((node) => <Fragment key={node.name}><dt>{node.name}</dt><dd>{node.voltageV} V{node.netId ? ` · net ${node.netId}` : ''}</dd></Fragment>)}</dl></div>}
+    {power.branchCurrents.length > 0 && <div className="power-section"><h3>Branch currents</h3><dl>{power.branchCurrents.map((branch) => <Fragment key={branch.name}><dt>{branch.name}</dt><dd>{branch.currentA} A{branch.componentName ? ` · ${branch.componentName}` : ''}</dd></Fragment>)}</dl></div>}
+    {power.componentPower.length > 0 && <div className="power-section"><h3>Component dissipation</h3><dl>{power.componentPower.map((component) => <Fragment key={component.sourceComponentId}><dt>{component.name}</dt><dd>{component.dissipationW} W · {component.method === 'I2R' ? 'I²R' : 'V²/R'}</dd></Fragment>)}</dl></div>}
+    {power.traceLoads.length > 0 && <div className="power-section"><h3>Trace loading</h3>{power.traceLoads.map((load) => <p className={`trace-load ${load.status}`} key={`${load.pcbTraceId}-${load.netId}`}>
+      <strong>{load.netName ?? load.netId}</strong> {load.currentA} A of {load.maxCurrentA} A ({Math.round(load.utilization * 100)}%){load.status === 'over-capacity' ? ' · over capacity' : ''}
+    </p>)}</div>}
+    {power.narrowestTrace && <div className="power-section"><h3>Narrowest routed trace</h3><p>{power.narrowestTrace.widthMm} mm on {power.narrowestTrace.layers.join(', ') || 'unknown layer'} carries up to {power.narrowestTrace.maxCurrentA} A.</p></div>}
+    <div className="power-section"><h3>Not evaluated</h3><dl>{power.notEvaluated.map((item) => <Fragment key={item.quantity}><dt>{item.quantity}</dt><dd>{item.reason}</dd></Fragment>)}</dl></div>
+    <p className="inspector-note">{power.assumptions.join(' ')}</p>
+  </section>
+}
+
+function SimulationPanel({ simulation, power, build, canRun, onRun }: { simulation: Simulation | null; power: PowerAnalysis | null; build: BuildStatus; canRun: boolean; onRun: () => void }) {
   const building = ['running', 'compiling', 'validating', 'routing', 'rendering'].includes(build.status)
   return <div className="simulation-results">
     <div className="simulation-heading"><div><h2>Simulation</h2><span>Runs tscircuit's configured analog simulation</span></div><button type="button" className="build-button" disabled={!canRun || building} onClick={onRun}>{building ? 'Running simulation…' : 'Run simulation'}</button></div>
     {building ? <p className="simulation-message" aria-live="polite">Building with tscircuit…</p> : build.status === 'failed' ? <div className="simulation-message" role="alert"><strong>Build failed</strong>{build.diagnostics?.length ? build.diagnostics.map((item, index) => <p key={`${item.path ?? item.file}-${item.line}-${index}`}>{item.path || item.file}{item.line ? `:${item.line}` : ''}{item.path || item.file ? ': ' : ''}{item.message}</p>) : <p>Check the project source and build output for details.</p>}</div> : simulation?.status === 'failed' ? <div className="simulation-message" role="alert"><strong>Simulation failed</strong>{simulation.diagnostics.map((item) => <p key={item.message}>{item.message}</p>)}</div> : !simulation ? <p className="simulation-message">Run the current source to inspect its simulation results.</p> : simulation.status === 'not_configured' ? <div className="simulation-message"><strong>No simulation configured</strong><p>Add tscircuit <code>&lt;analogsimulation /&gt;</code> and voltage/current probes to the circuit source.</p></div> : <>
-      <div className="simulation-heading"><h2>{simulation.experiments.map((item) => item.name).join(', ') || 'Simulation results'}</h2><span>{simulation.signals.length} signals · build {simulation.revision.slice(0, 8)}</span></div>
-      <WaveformViewer key={simulation.revision} signals={simulation.signals} />
+      <div className="simulation-heading"><h2>{simulation.experiments.map((item) => item.name).join(', ') || 'Simulation results'}</h2><span>{simulation.signals.length} waveforms · {simulation.operatingPoints.length} operating-point values · {simulation.sweeps.length} sweeps · build {simulation.revision.slice(0, 8)}</span></div>
+      {simulation.operatingPoints.length > 0 && <section className="operating-point" aria-label="DC operating point">
+        <h3>DC operating point</h3>
+        <dl>{simulation.operatingPoints.map((point) => <Fragment key={point.id}><dt>{point.name}</dt><dd>{point.value} {point.unit}{point.netId ? ` · net ${point.netId}` : ''}</dd></Fragment>)}</dl>
+      </section>}
+      {simulation.signals.length > 0 && <WaveformViewer key={`${simulation.revision}-transient`} signals={simulation.signals} />}
+      {simulation.sweeps.map((sweep) => <section className="sweep" aria-label={`${sweep.name} ${sweep.kind === 'ac' ? 'AC' : 'DC'} sweep`} key={sweep.id}>
+        <h3>{sweep.name} · {sweep.kind === 'ac' ? 'AC sweep' : 'DC sweep'} · {sweep.xLabel}</h3>
+        <WaveformViewer signals={sweepSignals(sweep)} />
+      </section>)}
+      {power && <PowerSummary power={power} />}
+      {simulation.notEvaluated.length > 0 && <section className="simulation-not-evaluated" aria-label="Analyses not evaluated">
+        <h3>Not evaluated</h3>
+        <dl>{simulation.notEvaluated.map((item) => <Fragment key={item.analysis}><dt>{item.analysis}</dt><dd>{item.reason}</dd></Fragment>)}</dl>
+      </section>}
     </>}
   </div>
 }

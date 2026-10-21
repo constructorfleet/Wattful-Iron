@@ -13,6 +13,7 @@ import { mountMcp } from "./mcp.js"
 import { createGerberArchive, mountManufacturingRoutes } from "./manufacturing.js"
 import { getSimulationResults } from "./simulation.js"
 import { buildNetTraceIndex } from "./net-trace.js"
+import { analyzePower } from "./power-analysis.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
 import { runCommand } from "./build-process.js"
 import { executeRemoteBuild, type IsolatedBuildResult } from "./build-client.js"
@@ -1030,6 +1031,22 @@ export function createApp(options: AppOptions = {}): Express {
     try {
       const preview = await service.preview(request.params.id!)
       response.json({ revision: preview.revision, ...getSimulationResults(preview.circuitJson) })
+    } catch (error) { next(error) }
+  })
+  app.get("/api/projects/:id/power", async (request, response, next) => {
+    try {
+      const numeric = (value: unknown, label: string) => {
+        if (value === undefined) return undefined
+        const parsed = Number(value)
+        if (!Number.isFinite(parsed)) throw badRequest(`${label} must be a number`)
+        return parsed
+      }
+      const preview = await service.preview(request.params.id!)
+      const analysis = analyzePower(preview.circuitJson, {
+        temperatureRiseC: numeric(request.query.temperatureRiseC, "temperatureRiseC"),
+        copperOunces: numeric(request.query.copperOunces, "copperOunces"),
+      })
+      response.json({ revision: preview.revision, ...analysis })
     } catch (error) { next(error) }
   })
   app.get("/api/projects/:id/nets", async (request, response, next) => {
