@@ -344,7 +344,7 @@ class ProjectService {
   }
 
   async exportGerbers(id: string) {
-    const project = this.state(id).project
+    this.state(id)
     return createGerberArchive(this.projectDir(id), ".workbench/circuit.json")
   }
 
@@ -536,7 +536,10 @@ class ProjectService {
   subscribe(id: string, response: Response) {
     this.state(id)
     let clients = this.eventClients.get(id)
-    if (!clients) this.eventClients.set(id, (clients = new Set()))
+    if (!clients) {
+      clients = new Set()
+      this.eventClients.set(id, clients)
+    }
     clients.add(response)
     response.on("close", () => clients?.delete(response))
     this.send(response, "project", { project: this.state(id).project })
@@ -876,7 +879,7 @@ export function createApp(options: AppOptions = {}): Express {
     try {
       const name = typeof request.body?.name === "string" ? request.body.name.trim() : ""
       if (!name || name.length > 100) throw badRequest("Project name must contain 1 to 100 characters")
-      const revision = request.get("If-Match")?.replace(/^\"|\"$/g, "") ?? ""
+      const revision = request.get("If-Match")?.replace(/^"|"$/g, "") ?? ""
       response.status(201).json(await service.duplicateProject(request.params.id!, name, revision))
     } catch (error) { next(error) }
   })
@@ -1147,6 +1150,7 @@ function isIsolatedBuildResult(value: unknown): value is IsolatedBuildResult {
 }
 
 function cleanRelative(input: string) {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters in a project path is the point of this check
   if (typeof input !== "string" || !input || /[\u0000-\u001f\u007f]/.test(input) || input.includes("\\") || input.startsWith("/") || /^[a-zA-Z]:/.test(input)) throw badRequest("Invalid project file path")
   const pieces = input.split("/")
   if (pieces.some((part) => !part || part === "." || part === ".." || part.startsWith("."))) throw badRequest("Invalid project file path")

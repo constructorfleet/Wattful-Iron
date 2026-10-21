@@ -1,4 +1,4 @@
-type Item = Record<string, any>
+type Item = Record<string, unknown>
 
 const refPattern = /^[A-Z]+\d+$/
 
@@ -22,7 +22,8 @@ export function withGeneratedPcbDraft(input: unknown): { circuitJson: Item[]; pl
   components.forEach((component, index) => {
     const id = String(component.source_component_id)
     const prefix = component.ftype === "simple_resistor" ? "R" : component.ftype === "simple_capacitor" ? "C" : component.ftype === "simple_diode" ? "D" : "U"
-    const ref = refPattern.test(component.name ?? "") ? component.name : `${prefix}${index + 1}`
+    const name = String(component.name ?? "")
+    const ref = refPattern.test(name) ? name : `${prefix}${index + 1}`
     refdesBySourceId.set(id, ref)
     const pcbId = `generated_pcb_component_${index}`
     pcbIds.set(id, pcbId)

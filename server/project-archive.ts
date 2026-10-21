@@ -92,6 +92,7 @@ function inspectCentralDirectory(archive: Buffer): Array<{ name: string; origina
     const rawName = archive.subarray(offset + 46, offset + 46 + nameLength)
     let name: string
     try { name = utf8.decode(rawName) } catch { throw new Error("Project archive filenames must be UTF-8") }
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters in an archive entry name is the point of this check
     if (!name || /[\u0000-\u001f\u007f]/.test(name) || name.includes("\\") || name.includes(":") || name.startsWith("/") || name.split("/").some((part) => part === ".." || part === "." || part === "" && !name.endsWith("/"))) {
       throw new Error("Project archive contains an unsafe path")
     }

@@ -51,6 +51,8 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.3
+      - name: Lint source
+        run: npm run lint
       - name: Run server and browser tests
         run: npm test
       - name: Build application
