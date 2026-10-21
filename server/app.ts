@@ -17,7 +17,9 @@ import { analyzePower } from "./power-analysis.js"
 import { createSourcingClient, estimateBomCost, listDesignParts, normalizeLcscPartNumber, type SourcingClient } from "./component-sourcing.js"
 import { createProjectGit, type ProjectGit } from "./project-git.js"
 import { designDiffUnavailable, diffDesignSummaries, summarizeDesign, type DesignSummary } from "./design-summary.js"
+import { runCircuitDesignChecks } from "./circuit-design-checks.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
+import { evaluateAssertions, parseAssertions, type AssertionReport } from "./assertions.js"
 import { runCommand } from "./build-process.js"
 import { executeRemoteBuild, type IsolatedBuildResult } from "./build-client.js"
 import { withGeneratedPcbDraft } from "./pcb-draft.js"
@@ -751,7 +753,8 @@ class ProjectService {
     try {
       const dir = path.join(this.projectDir(id), ".workbench", "designs")
       await mkdir(dir, { recursive: true })
-      const summary = summarizeDesign(circuitJson, revision)
+      const designChecks = await runCircuitDesignChecks(circuitJson).catch(() => undefined)
+      const summary = summarizeDesign(circuitJson, revision, new Date().toISOString(), designChecks?.issues.length)
       const temporary = path.join(dir, revision + ".json." + randomUUID() + ".tmp")
       await writeFile(temporary, JSON.stringify(summary))
       await rename(temporary, path.join(dir, revision + ".json"))
@@ -764,6 +767,15 @@ class ProjectService {
     } catch (error) {
       console.error(`Design summary could not be retained for project ${id}`, error)
     }
+  }
+
+  /** The newest retained build summary for a revision other than the one given, used as a regression baseline. */
+  async baselineDesignSummary(id: string, excludeRevision: string): Promise<DesignSummary | undefined> {
+    const dir = path.join(this.projectDir(id), ".workbench", "designs")
+    const names = (await readdir(dir).catch(() => [])).filter((name) => name.endsWith(".json"))
+    const summaries = (await Promise.all(names.map((name) => this.readDesignSummary(id, name.replace(/\.json$/, "")))))
+      .filter((summary): summary is DesignSummary => summary !== undefined && summary.revision !== excludeRevision)
+    return summaries.sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
   }
 
   private async readDesignSummary(id: string, revision: string): Promise<DesignSummary | undefined> {
@@ -964,8 +976,9 @@ export function createApp(options: AppOptions = {}): Express {
   app.get("/healthz", (_request, response) => response.json({ status: "ok" }))
   const token = options.mcpAuthToken ?? process.env.MCP_AUTH_TOKEN
   const sourcing = createConfiguredSourcing(options.componentSourcing)
-  mountMcp(app, service, token, sourcing)
-  mountManufacturingRoutes(app, service, sourcing)
+  const assertionReport = async (id: string) => (await checkAssertions(id).catch(() => undefined))?.report
+  mountMcp(app, service, token, sourcing, assertionReport)
+  mountManufacturingRoutes(app, service, sourcing, assertionReport)
   app.get("/api/components/:part", async (request, response, next) => {
     try {
       if (!sourcing) return response.status(503).json({ configured: false, error: "No component sourcing provider is configured. Set COMPONENT_SOURCING_URL to enable supplier lookups." })
@@ -1181,6 +1194,28 @@ export function createApp(options: AppOptions = {}): Express {
       response.json({ revision: preview.revision, ...buildNetTraceIndex(preview.circuitJson) })
     } catch (error) { next(error) }
   })
+  app.get("/api/projects/:id/assertions", async (request, response, next) => {
+    try {
+      const files = await service.getFileList(request.params.id!)
+      const project = await service.get(request.params.id!)
+      if (!files.includes("assertions.json")) return response.json({ configured: false, revision: project.revision, assertions: null })
+      const file = await service.readFile(request.params.id!, "assertions.json")
+      response.json({ configured: true, ...file, assertions: parseAssertions(file.content) })
+    } catch (error) { next(error) }
+  })
+  app.put("/api/projects/:id/assertions", async (request, response, next) => {
+    try {
+      const match = request.get("If-Match")?.replace(/^"|"$/g, "")
+      if (!match || request.body?.revision !== match) throw badRequest("If-Match and body revision must match")
+      const content = JSON.stringify(request.body?.assertions, null, 2) + "\n"
+      const assertions = parseAssertions(content)
+      const saved = await service.writeFile(request.params.id!, "assertions.json", JSON.stringify(assertions, null, 2) + "\n", match)
+      response.json({ configured: true, path: saved.path, revision: saved.revision, assertions })
+    } catch (error) { next(error) }
+  })
+  app.get("/api/projects/:id/assertions/check", async (request, response, next) => {
+    try { response.json(await checkAssertions(request.params.id!)) } catch (error) { next(error) }
+  })
   app.get("/api/projects/:id/requirements", async (request, response, next) => {
     try {
       const files = await service.getFileList(request.params.id!)
@@ -1217,6 +1252,40 @@ export function createApp(options: AppOptions = {}): Express {
       response.json({ configured: true, stale: false, revision: project.revision, previewRevision: preview.revision, ...validation })
     } catch (error) { next(error) }
   })
+
+  /** Evaluate a project's assertions against its latest successful build. */
+  async function checkAssertions(id: string): Promise<{ configured: boolean; revision: string; previewRevision?: string; report?: AssertionReport; message?: string }> {
+    const files = await service.getFileList(id)
+    const project = await service.get(id)
+    if (!files.includes("assertions.json")) return {
+      configured: false,
+      revision: project.revision,
+      message: "This project has no assertions.json document, so no regression assertions were evaluated.",
+    }
+    const [file, preview] = await Promise.all([service.readFile(id, "assertions.json"), service.preview(id)])
+    const document = parseAssertions(file.content)
+    const [baseline, designChecks] = await Promise.all([
+      service.baselineDesignSummary(id, preview.revision),
+      runCircuitDesignChecks(preview.circuitJson).catch(() => undefined),
+    ])
+    const power = analyzePower(preview.circuitJson)
+    const bomCost = sourcing
+      ? await estimateBomCost(preview.circuitJson, sourcing, document.assertions.cost_board_quantity ?? 1).catch(() => undefined)
+      : undefined
+    return {
+      configured: true,
+      revision: project.revision,
+      previewRevision: preview.revision,
+      report: evaluateAssertions(document, {
+        circuitJson: preview.circuitJson,
+        ...(designChecks?.issues === undefined ? {} : { designCheckFindings: designChecks.issues.length }),
+        ...(baseline ? { baseline } : {}),
+        power,
+        ...(bomCost ? { bomCost } : {}),
+        sourcingConfigured: Boolean(sourcing),
+      }),
+    }
+  }
 
   const webDist = options.webDist ?? path.resolve(process.cwd(), "web/dist")
   app.use(express.static(webDist))

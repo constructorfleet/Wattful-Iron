@@ -24,6 +24,7 @@ const api = vi.hoisted(() => ({
   getSimulation: vi.fn(),
   getNets: vi.fn(),
   getPower: vi.fn(),
+  getAssertionCheck: vi.fn(),
   getBomCost: vi.fn(),
   getComponentSourcing: vi.fn(),
   getManufacturingProfiles: vi.fn(),
@@ -80,6 +81,7 @@ beforeEach(() => {
   ] })
   api.getManufacturingPreflight.mockResolvedValue({ preflight: { ready: true, profile: { id: 'board-default', label: 'Board defaults' }, checks: [{ id: 'circuit-errors', status: 'not-evaluated', message: 'Circuit JSON contains no ERC/DRC error records; no validator result confirms this check passed.' }] } })
   api.getSimulation.mockResolvedValue({ revision: 'rev-1', status: 'not_configured', experiments: [], signals: [], operatingPoints: [], sweeps: [], analyses: [], diagnostics: [], notEvaluated: [] })
+  api.getAssertionCheck.mockResolvedValue({ configured: false, revision: 'rev-1', message: 'This project has no assertions.json document, so no regression assertions were evaluated.' })
   api.getBomCost.mockResolvedValue({ configured: false, revision: 'rev-1', parts: [], message: 'No component sourcing provider is configured, so no prices or stock were looked up. Set COMPONENT_SOURCING_URL to enable it.' })
   api.getComponentSourcing.mockResolvedValue({ configured: false })
   api.getPower.mockResolvedValue({ revision: 'rev-1', status: 'not-evaluated', assumptions: ['IPC-2221 current capacity at a 10 degree Celsius temperature rise.'], traceCapacity: [], nodeVoltages: [], branchCurrents: [], componentPower: [], supplyLoads: [], traceLoads: [], notEvaluated: [{ quantity: 'Thermal rise of components and planes', reason: 'Not implemented. No thermal model or copper area analysis is performed.' }] })
@@ -454,6 +456,30 @@ describe('workbench', () => {
     expect(within(inspector).getByText('912,345')).toBeInTheDocument()
     expect(within(inspector).getByText('$0.002')).toBeInTheDocument()
     expect(within(inspector).getByText('Basic part')).toBeInTheDocument()
+  })
+
+  it('shows each project assertion result in the manufacturing dialog', async () => {
+    api.getAssertionCheck.mockResolvedValue({
+      configured: true, revision: 'rev-1', previewRevision: 'rev-1',
+      report: {
+        results: [
+          { id: 'net-connected-GND', status: 'pass', message: "Net 'GND' connects 4 component pins; copper routing is routed." },
+          { id: 'max-dissipation', status: 'fail', message: 'Calculated dissipation is 1.4 W, above the limit of 1 W.' },
+          { id: 'max-component-cost', status: 'not-evaluated', message: 'Component cost budget of $12 could not be checked: no component sourcing provider is configured.' },
+        ],
+        passed: 1, failed: 1, notEvaluated: 1, baselineRevision: 'rev-0abcdef0',
+      },
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /LED Board TSX project/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Rule checks · Manufacturing/ }))
+
+    const assertions = await screen.findByRole('region', { name: 'Project assertions' })
+    expect(within(assertions).getByText('1 passed · 1 failed · 1 not evaluated · baseline rev-0abc')).toBeInTheDocument()
+    expect(within(assertions).getByText(/copper routing is routed/)).toBeInTheDocument()
+    expect(within(assertions).getByText(/above the limit of 1 W/)).toBeInTheDocument()
+    expect(within(assertions).getByText(/no component sourcing provider is configured/)).toBeInTheDocument()
   })
 
   it('estimates component cost for a board quantity in the manufacturing dialog', async () => {

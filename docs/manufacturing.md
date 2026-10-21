@@ -80,3 +80,11 @@ rather than a quote. Parts without an LCSC part number or price appear under
 **Unpriced** with the reason. Without a configured provider, availability
 reports `not-evaluated` and the cost panel says sourcing is not configured;
 neither blocks the export.
+
+## Regression assertions
+
+Preflight includes a `regression-assertions` check when the project declares an
+`assertions.json` document. A failed assertion blocks the export, like the other
+blocking checks; assertions that cannot be evaluated warn instead, and neither a
+missing document nor an unevaluable assertion blocks anything. Each result is
+listed in the manufacturing dialog. See [project assertions](assertions.md).

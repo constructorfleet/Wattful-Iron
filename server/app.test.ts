@@ -519,6 +519,51 @@ test("configured sourcing prices the BOM and flags short stock in preflight", as
   } finally { await f.cleanup() }
 })
 
+test("assertion endpoints save a document and evaluate it against the latest build", async () => {
+  const assertedCircuit = [
+    { type: "source_component", source_component_id: "sc1", name: "R1", ftype: "simple_resistor", resistance: 220 },
+    { type: "source_component", source_component_id: "sc2", name: "D1", ftype: "simple_led" },
+    { type: "source_port", source_port_id: "sp1", source_component_id: "sc1", name: "pin2", subcircuit_connectivity_map_key: "net1" },
+    { type: "source_port", source_port_id: "sp2", source_component_id: "sc2", name: "anode", subcircuit_connectivity_map_key: "net1" },
+    { type: "source_trace", source_trace_id: "st1", name: "SIGNAL", connected_source_port_ids: ["sp1", "sp2"], connected_source_net_ids: [], subcircuit_connectivity_map_key: "net1" },
+  ]
+  const f = await fixture(async () => assertedCircuit)
+  try {
+    const { body: project } = await request(f.app).post("/api/projects").send({ name: "Assertions" }).expect(201)
+    await waitForBuild(f.app, project.id, "ready")
+
+    const unconfigured = await request(f.app).get(`/api/projects/${project.id}/assertions/check`).expect(200)
+    assert.equal(unconfigured.body.configured, false)
+    assert.match(unconfigured.body.message, /no assertions.json document/)
+    const absent = await request(f.app).get(`/api/projects/${project.id}/assertions`).expect(200)
+    assert.equal(absent.body.configured, false)
+
+    const current = await request(f.app).get(`/api/projects/${project.id}`).expect(200)
+    const assertions = { version: 1, assertions: { nets_connected: ["SIGNAL", "GND"], components_present: ["R1"], max_supply_current_a: 0.5 } }
+    await request(f.app).put(`/api/projects/${project.id}/assertions`)
+      .set("If-Match", current.body.revision).send({ revision: current.body.revision, assertions }).expect(200)
+    await request(f.app).put(`/api/projects/${project.id}/assertions`)
+      .set("If-Match", current.body.revision).send({ revision: current.body.revision, assertions: { version: 1, assertions: { unknown: true } } }).expect(400)
+
+    const saved = await request(f.app).get(`/api/projects/${project.id}`).expect(200)
+    await waitForBuild(f.app, saved.body.revision, "ready").catch(() => undefined)
+    const checked = await request(f.app).get(`/api/projects/${project.id}/assertions/check`).expect(200)
+    assert.equal(checked.body.configured, true)
+    const byId = Object.fromEntries(checked.body.report.results.map((item: { id: string; status: string }) => [item.id, item.status]))
+    assert.equal(byId["net-connected-SIGNAL"], "pass")
+    assert.equal(byId["net-connected-GND"], "fail")
+    assert.equal(byId["component-present-R1"], "pass")
+    // No simulation configures a supply current, so the limit must not be reported as met.
+    assert.equal(byId["max-supply-current"], "not-evaluated")
+
+    const preflight = await request(f.app).get(`/api/projects/${project.id}/manufacturing`).expect(200)
+    const check = preflight.body.preflight.checks.find((item: { id: string }) => item.id === "regression-assertions")
+    assert.equal(check.status, "fail")
+    assert.match(check.message, /Net 'GND' is not present/)
+    assert.equal(preflight.body.preflight.ready, false)
+  } finally { await f.cleanup() }
+})
+
 test("power endpoint reports operating-point loads against trace capacity", async () => {
   const poweredCircuit = [
     { type: "source_component", source_component_id: "sc-v1", name: "V1", ftype: "simple_voltage_source", voltage: 5 },

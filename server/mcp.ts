@@ -9,6 +9,7 @@ import { checkManufacturability } from "./manufacturing.js"
 import { checkConnectivity, getBoardProperties, getComponent, getPinConnections, listComponents, listNets, traceNet } from "./circuit-inspection.js"
 import { buildNetTraceIndex, findNet } from "./net-trace.js"
 import { parseRequirements, validateRequirements } from "./requirements.js"
+import type { AssertionReport } from "./assertions.js"
 import { addComponent, connectComponents, listSourceComponents, removeComponent, setBoardDimensions, setComponentProperties } from "./circuit-source.js"
 import { checkRouting, runDesignRuleCheck, runElectricalRuleCheck } from "./rule-checks.js"
 import { analyzePower } from "./power-analysis.js"
@@ -47,7 +48,7 @@ const toolError = (error: unknown) => ({
   content: [{ type: "text" as const, text: error instanceof Error ? error.message : JSON.stringify(error, null, 2) ?? String(error) }],
 })
 
-export function mountMcp(app: Express, service: ProjectService, configuredToken?: string, sourcing?: SourcingClient) {
+export function mountMcp(app: Express, service: ProjectService, configuredToken?: string, sourcing?: SourcingClient, assertions?: (id: string) => Promise<AssertionReport | undefined>) {
   if (!configuredToken) {
     app.all("/mcp", (_request, response) => response.status(503).json({ error: "MCP_AUTH_TOKEN must be configured" }))
     return
@@ -65,7 +66,7 @@ export function mountMcp(app: Express, service: ProjectService, configuredToken?
     },
   }
 
-  const mcpHandler = createMcpHandler(() => createServer(service, sourcing), { onerror: (error) => console.error("MCP handler failed", error) })
+  const mcpHandler = createMcpHandler(() => createServer(service, sourcing, assertions), { onerror: (error) => console.error("MCP handler failed", error) })
   const handler = toNodeHandler(mcpHandler)
   service.onClose(() => mcpHandler.close())
   const auth = requireBearerAuth({ verifier })
@@ -80,7 +81,7 @@ export function mountMcp(app: Express, service: ProjectService, configuredToken?
   })
 }
 
-function createServer(service: ProjectService, sourcing?: SourcingClient): McpServer {
+function createServer(service: ProjectService, sourcing?: SourcingClient, assertions?: (id: string) => Promise<AssertionReport | undefined>): McpServer {
   const server = new McpServer({ name: "circuits-workbench", version: "0.2.0" })
   server.registerTool("list_projects", {
     title: "List projects",
@@ -316,6 +317,16 @@ function createServer(service: ProjectService, sourcing?: SourcingClient): McpSe
     return { configured: true, stale: false, revision: project.revision, previewRevision: preview.revision, ...validateRequirements(parseRequirements(file.content), preview.circuitJson) }
   }))
 
+  server.registerTool("check_project_assertions", {
+    title: "Check project regression assertions",
+    description: "Evaluate the project's assertions.json document against the latest successful build: named nets stay connected, required components exist, supply current and dissipation stay within limits, design check findings do not increase against the previous retained build, component cost stays within budget, and simulation values stay within range. Each assertion reports pass, fail, or not evaluated with the reason; nothing passes on missing evidence.",
+    inputSchema: z.object({ projectId }),
+  }, async ({ projectId }) => safeTool(async () => {
+    const report = await assertions?.(projectId)
+    if (!report) return { configured: false, message: "This project declares no assertions.json document, so no regression assertions were evaluated." }
+    return { configured: true, ...report }
+  }))
+
   server.registerTool("run_simulation", {
     title: "Build and inspect simulation",
     description: "Build the current project with tscircuit, then return any supported SPICE simulation results and waveform diagnostics in its Circuit JSON.",
@@ -425,6 +436,7 @@ function createServer(service: ProjectService, sourcing?: SourcingClient): McpSe
         project.revision,
         undefined,
         sourcing,
+        await assertions?.(projectId),
       ),
     }
   }))

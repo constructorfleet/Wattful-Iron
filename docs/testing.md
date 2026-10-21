@@ -35,7 +35,11 @@ covers the workflow this project defines as done:
 12. Confirm history is Git-backed, every revision carries a commit, and
     comparing two built revisions reports the added components in its design
     comparison.
-13. Run manufacturing preflight and confirm the export agrees with its verdict.
+13. Save an `assertions.json` document, rebuild, and confirm the connected-net,
+    required-component, and design-check-comparison assertions pass, that the
+    cost budget is reported as not evaluated because sourcing is disabled, and
+    that preflight does not report passing assertions as a failure.
+14. Run manufacturing preflight and confirm the export agrees with its verdict.
 
 The circuit covers power input, passives, an LED, a header, and multiple nets,
 and it routes completely, so step 13 exercises a ready preflight and a real

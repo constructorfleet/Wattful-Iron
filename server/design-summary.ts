@@ -18,6 +18,8 @@ export type DesignNetSummary = { name: string; pinCount: number; routing: string
 export type DesignSummary = {
   revision: string
   createdAt: string
+  /** How many findings the supported tscircuit design checks reported for this build. */
+  designCheckFindings?: number
   board?: { widthMm?: number; heightMm?: number; layers?: number }
   components: DesignComponentSummary[]
   nets: DesignNetSummary[]
@@ -39,6 +41,7 @@ export type DesignDiff = {
     changed: Array<{ name: string; changes: Array<{ property: string; before?: string | number; after?: string | number }> }>
   }
   counts: Array<{ metric: string; before: number; after: number }>
+  designCheckFindings?: { before?: number; after?: number }
   simulation: Array<{ property: string; before: string | number; after: string | number }>
   limitations: string[]
 }
@@ -52,7 +55,7 @@ const DIFF_LIMITATIONS = [
 ]
 
 /** Summarize a build's Circuit JSON into the fields worth comparing between revisions. */
-export function summarizeDesign(circuitJson: unknown, revision: string, createdAt = new Date().toISOString()): DesignSummary {
+export function summarizeDesign(circuitJson: unknown, revision: string, createdAt = new Date().toISOString(), designCheckFindings?: number): DesignSummary {
   const elements = Array.isArray(circuitJson) ? circuitJson.filter(isElement) : []
   const board = elements.find((element) => element.type === "pcb_board")
   const sourceComponents = elements.filter((element) => element.type === "source_component")
@@ -80,6 +83,7 @@ export function summarizeDesign(circuitJson: unknown, revision: string, createdA
   return {
     revision,
     createdAt,
+    ...(designCheckFindings === undefined ? {} : { designCheckFindings }),
     ...(board ? {
       board: {
         ...(finite(board.width) === undefined ? {} : { widthMm: finite(board.width) }),
@@ -147,6 +151,12 @@ export function diffDesignSummaries(before: DesignSummary, after: DesignSummary)
         return changes.length ? [{ name: net.name, changes }] : []
       }),
     },
+    ...(before.designCheckFindings === after.designCheckFindings ? {} : {
+      designCheckFindings: {
+        ...(before.designCheckFindings === undefined ? {} : { before: before.designCheckFindings }),
+        ...(after.designCheckFindings === undefined ? {} : { after: after.designCheckFindings }),
+      },
+    }),
     counts: (Object.keys(after.counts) as Array<keyof DesignSummary["counts"]>)
       .flatMap((metric) => before.counts[metric] === after.counts[metric] ? [] : [{ metric, before: before.counts[metric], after: after.counts[metric] }]),
     simulation: (Object.keys(after.simulation) as Array<keyof DesignSummary["simulation"]>)

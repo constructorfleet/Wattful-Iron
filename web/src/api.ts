@@ -129,6 +129,14 @@ export type BomCost = {
   parts?: Array<{ name: string; quantity: number; lcscPartNumbers: string[]; manufacturerPartNumber?: string }>
   message?: string
 }
+export type AssertionResult = { id: string; status: 'pass' | 'fail' | 'not-evaluated'; message: string }
+export type AssertionCheck = {
+  configured: boolean
+  revision: string
+  previewRevision?: string
+  message?: string
+  report?: { results: AssertionResult[]; passed: number; failed: number; notEvaluated: number; baselineRevision?: string }
+}
 export type ManufacturingProfile = { id: string; label: string; description: string; rules: { minTraceWidthMm: number; minNonPlatedHoleMm: number; copperToBoardEdgeMm: number } }
 export type ManufacturingCheckIssue = { severity: 'error' | 'warning'; type: string; category: string; message: string; affectedIds: string[] }
 export type ManufacturingCheck = { id: string; status: 'pass' | 'fail' | 'warning' | 'not-evaluated'; message: string; issues?: ManufacturingCheckIssue[] }
@@ -266,6 +274,8 @@ export const getBomCost = (id: string, boards = 1, fetcher?: Fetcher) => request
   undefined,
   fetcher,
 )
+
+export const getAssertionCheck = (id: string, fetcher?: Fetcher) => request<AssertionCheck>(`/api/projects/${encodeURIComponent(id)}/assertions/check`, undefined, fetcher)
 
 export const getPower = (id: string, fetcher?: Fetcher) => request<PowerAnalysis>(`/api/projects/${encodeURIComponent(id)}/power`, undefined, fetcher)
 

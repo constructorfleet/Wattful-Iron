@@ -161,6 +161,14 @@ button { color: inherit; cursor: pointer; }
 .design-diff dd { margin: 0; color: #d5dee2; font: 10px var(--mono); }
 .design-added { color: #72d4af; }
 .design-removed { color: #e58b7b; }
+.assertion-results { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid #263036; }
+.assertion-results h3 { margin: 0 0 7px; color: #cfd9de; font-size: 11px; }
+.assertion-summary { margin: 0 0 7px; color: #93a0a8; font: 10px var(--mono); }
+.assertion-result { margin: 4px 0; color: #c6d2d8; font-size: 10px; line-height: 1.45; }
+.assertion-result strong { font-weight: 500; }
+.assertion-result.pass strong { color: #72d4af; }
+.assertion-result.fail strong { color: #e58b7b; }
+.assertion-result.not-evaluated strong { color: #e8c37a; }
 .bom-cost { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid #263036; }
 .bom-cost-heading { display: flex; align-items: center; justify-content: space-between; }
 .bom-cost-heading h3 { margin: 0; color: #cfd9de; font-size: 11px; }

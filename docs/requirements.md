@@ -28,4 +28,6 @@ The schema accepts positive board dimensions and layer counts, power values, int
 
 Power characteristics, interface counts, and assembler compatibility are stored but currently return `not-evaluated`: the workbench does not infer those facts from Circuit JSON. No requirements file returns `configured: false`.
 
+For regression checks against the previous build — connected nets, current and dissipation limits, design-check finding counts, cost budgets, and simulation ranges — see [project assertions](assertions.md), which are a separate `assertions.json` document.
+
 The authenticated MCP tools `get_project_requirements` and `validate_project_requirements` provide the same document and checks to agents. The validator is a requirements check for the supported fields, not a complete ERC, DRC, electrical, or fabricator sign-off.

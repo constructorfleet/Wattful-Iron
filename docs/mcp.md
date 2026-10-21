@@ -48,6 +48,7 @@ This is a shared bearer token. Anyone holding it can read and modify every proje
 | `get_board_properties` | Return the emitted `pcb_board` elements, including dimensions, material, stackup, and design-rule properties. |
 | `check_connectivity` | Summarize source-port links emitted in Circuit JSON, including ports with no emitted trace and trace references to missing ports. |
 | `get_project_requirements` | Read a project's revisioned `requirements.json` document, when configured. |
+| `check_project_assertions` | Evaluate the project's `assertions.json` regression assertions against the latest successful build, reporting each as pass, fail, or not evaluated. |
 | `validate_project_requirements` | Compare supported board requirements with the latest successful build and report unsupported checks as not evaluated. |
 | `run_simulation` | Build the current source and return transient SPICE results emitted by tscircuit, when configured. |
 | `get_simulation_results` | Read transient waveforms, DC operating-point values, DC/AC sweeps, and probe/net information from the latest successful build. |
@@ -194,6 +195,17 @@ point, total current demand, component dissipation, and trace loading are also
 reported as not evaluated rather than estimated. The same analysis is available
 over REST at `GET /api/projects/:id/power`, which accepts the same
 `temperatureRiseC` and `copperOunces` query parameters.
+
+Projects can also declare regression assertions in `assertions.json`:
+connected nets, required components, supply-current and dissipation limits, a
+design-check finding count that must not increase against the previous retained
+build, a component-cost budget, and simulation value ranges.
+`check_project_assertions` evaluates them against the latest successful build.
+Nothing passes on missing evidence: without an operating point, a baseline
+build, or a configured sourcing provider, the dependent assertions are reported
+as not evaluated with the reason. A failed assertion blocks the manufacturing
+export through the `regression-assertions` preflight check. See
+[Project assertions](assertions.md).
 
 Projects can define engineering constraints in `requirements.json`. The
 requirements MCP tools expose the document and compare board dimensions and
