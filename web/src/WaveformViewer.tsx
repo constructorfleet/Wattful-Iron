@@ -102,9 +102,10 @@ function Waveform({ signal, visible, onVisibilityChange }: { signal: Signal; vis
       <button type="button" title="Place cursor B" aria-label={`Place second cursor for ${signal.name}`} aria-pressed={placingSecondCursor} disabled={firstCursor === null} onClick={() => setPlacingSecondCursor(true)}>B</button>
       <button type="button" aria-label={`Download ${signal.name} CSV`} onClick={downloadCsv}>CSV</button>
       <button type="button" onClick={() => { setRange([fullStart, fullEnd]); setFirstCursor(null); setSecondCursor(null); setPlacingSecondCursor(false) }}>Reset</button>
-      <span className="waveform-range" aria-label={`Time range for ${signal.name}`}>{formatTime(range[0])}–{formatTime(range[1])} ms</span>
+      <output className="waveform-range" aria-label={`Time range for ${signal.name}`}>{formatTime(range[0])}–{formatTime(range[1])} ms</output>
     </div>
     {visible && <>
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: placing the first cursor has no keyboard equivalent yet; tracked in docs/linting.md */}
       <svg viewBox="0 0 600 150" role="img" aria-label={`${signal.name} waveform`} preserveAspectRatio="none" onClick={handlePlotClick}>
         <path className="waveform-grid" d={`M${plot.left} 30H${plot.right}M${plot.left} 67H${plot.right}M${plot.left} 104H${plot.right}M175 ${plot.top}V${plot.bottom}M310 ${plot.top}V${plot.bottom}M445 ${plot.top}V${plot.bottom}`} />
         {points && <polyline className="waveform-line" points={points} />}
