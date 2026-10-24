@@ -176,7 +176,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and publish release image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         id: image
         with:
           context: .
