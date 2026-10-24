@@ -16,7 +16,7 @@
     "@tscircuit/checks": "0.0.259",
     "@tscircuit/circuit-json-util": "0.0.122",
     "calculate-packing": "0.0.90",
-    "chokidar": "5.0.0",
+    "chokidar": "6.0.0",
     "circuit-json-to-connectivity-map": "0.0.33",
     "circuit-json-to-tscircuit": "0.0.93",
     "easyeda2kicad6": "https://github.com/yaybee/easyeda2kicad6/archive/217d5063b0b4425df21f71af1292282bd5cd592a.tar.gz",
